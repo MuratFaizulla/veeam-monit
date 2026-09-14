@@ -1,0 +1,22 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets: .env holds the Veeam service account and the Telegram bot token.
+# Only .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Runtime state written by the app
+logs/
+data/
+backend/telegram-routes.json
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
