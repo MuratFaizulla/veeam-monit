@@ -668,7 +668,7 @@ test('the live status is one message per topic, edited in place on later cycles'
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
     w.api.of('createForumTopic').map((t) => t.name),
-    ['🩺 Состояние сервера', '▶️ Сейчас выполняется'],
+    ['🩺 Monitor health', '▶️ Running now'],
   );
 
   w.api.reset();
