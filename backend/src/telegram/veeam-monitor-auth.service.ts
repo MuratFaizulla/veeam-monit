@@ -40,6 +40,12 @@ export class VeeamMonitorAuthService {
     return this.pending;
   }
 
+  /** Forces the next request to refresh after Veeam rejects the access token. */
+  invalidateAccessToken(): void {
+    this.accessToken = '';
+    this.expiresAt = 0;
+  }
+
   private async authenticate(): Promise<string> {
     let token: VeeamTokenResponse;
     try {

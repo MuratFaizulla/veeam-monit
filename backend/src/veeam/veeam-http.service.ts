@@ -178,7 +178,7 @@ export class VeeamHttpService {
 
     this.logger.error(`${path}: ${message}`);
 
-    return new VeeamApiError(message);
+    return new VeeamApiError(message, null);
   }
 
   /** Veeam answered with a 4xx/5xx and, usually, an Error model in the body. */
@@ -192,6 +192,6 @@ export class VeeamHttpService {
 
     this.logger.warn(`${path}: HTTP ${status} — ${message}`);
 
-    return new VeeamApiError(message);
+    return new VeeamApiError(message, status);
   }
 }

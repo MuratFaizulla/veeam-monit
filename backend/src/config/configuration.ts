@@ -50,7 +50,9 @@ export interface AppConfig {
      * Topics that hold one always-current message instead of a stream of them.
      * These are state, not events: they are edited in place, never appended to.
      */
-    liveTopics: { health: string; running: string; schedule: string };
+    liveTopics: { health: string; running: string; schedule: string; performance: string };
+    /** Existing forum thread for the Performance live message. 0 auto-creates by name. */
+    performanceTopicId: number;
     /** Rewrite an unchanged live message at least this often, as a heartbeat. */
     liveRefreshMs: number;
     /** IANA zone used to render times for humans. Empty means the server's own. */
@@ -156,7 +158,9 @@ export const configuration = (): AppConfig => ({
       health: text(process.env.TELEGRAM_TOPIC_HEALTH, '🩺 Monitor health'),
       running: text(process.env.TELEGRAM_TOPIC_RUNNING, '▶️ Running now'),
       schedule: text(process.env.TELEGRAM_TOPIC_SCHEDULE, '📅 Today'),
+      performance: text(process.env.TELEGRAM_TOPIC_PERFORMANCE, '📈 Performance'),
     },
+    performanceTopicId: int(process.env.TELEGRAM_PERFORMANCE_TOPIC_ID, 0),
     liveRefreshMs: int(process.env.TELEGRAM_LIVE_REFRESH_MIN, 5) * 60_000,
     timezone: text(process.env.TELEGRAM_TIMEZONE, ''),
   },
