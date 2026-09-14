@@ -6,19 +6,11 @@ export type TelegramRoutingMode = 'job' | 'severity' | 'kind' | 'single';
 
 export interface AppConfig {
   port: number;
-  corsOrigins: string[];
   veeam: {
     baseUrl: string;
     apiVersion: string;
     insecureTls: boolean;
     timeoutMs: number;
-    /** How long a GET response stays reusable. 0 disables caching. */
-    cacheTtlMs: number;
-  };
-  session: {
-    ttlMs: number;
-    cookieName: string;
-    cookieSecure: boolean;
   };
   telegram: {
     botToken: string;
@@ -90,22 +82,12 @@ const severities = (value: string | undefined): NotificationSeverity[] => {
 
 export const configuration = (): AppConfig => ({
   port: int(process.env.PORT, 3000),
-  corsOrigins: (process.env.CORS_ORIGIN ?? 'http://localhost:5173')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
   veeam: {
     // Trailing slashes would produce "//api/v1/..." paths, so strip them once here.
     baseUrl: (process.env.VEEAM_BASE_URL ?? 'https://localhost:9419').replace(/\/+$/, ''),
     apiVersion: process.env.VEEAM_API_VERSION ?? '1.2-rev1',
     insecureTls: bool(process.env.VEEAM_INSECURE_TLS, true),
     timeoutMs: int(process.env.VEEAM_TIMEOUT_MS, 30000),
-    cacheTtlMs: int(process.env.VEEAM_CACHE_TTL_MS, 15000),
-  },
-  session: {
-    ttlMs: int(process.env.SESSION_TTL_MIN, 60) * 60 * 1000,
-    cookieName: process.env.SESSION_COOKIE_NAME ?? 'vbr_sid',
-    cookieSecure: bool(process.env.COOKIE_SECURE, false),
   },
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',

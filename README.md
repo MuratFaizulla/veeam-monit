@@ -1,210 +1,66 @@
-# Veeam Dashboard
+# Veeam Telegram Monitor
 
-Веб-приложение поверх Veeam Backup & Replication REST API (спецификация `1.2-rev1`).
+Сервис на NestJS, который следит за Veeam Backup & Replication через его REST API
+и присылает в Telegram **только изменения**: новые ошибки и предупреждения заданий,
+их восстановление, пропажу и возврат связи с сервером, отказ служебной учётной
+записи и нехватку места в репозиториях.
 
-**Только чтение.** Приложение обращается к Veeam исключительно GET-запросами; исключение —
-три OAuth-вызова (`token`, `refresh`, `logout`), которые технически POST, но ничего
-не меняют в инфраструктуре. Запуск заданий, restore, failover и правка конфигурации
-не реализованы намеренно.
+> **Ветка `telegram-only`.** Здесь нет веб-дашборда: удалены React-фронтенд,
+> браузерные сессии и все read-эндпоинты, которые его обслуживали
+> (`/api/jobs`, `/api/dashboard`, `/api/infrastructure`, `/api/backups`,
+> `/api/replicas`, `/api/compliance`, `/api/reports`, `/api/auth`).
+> Полная версия с дашбордом осталась в ветке `main`.
 
-- **backend** — NestJS, проксирует Veeam API и хранит токены на сервере.
-- **frontend** — React + Vite + TanStack Query.
+## Что осталось
 
-## Как работает вход
-
-1. Пользователь вводит логин/пароль **своей учётной записи Veeam**.
-2. Бэкенд обменивает их на `access_token` / `refresh_token` через `POST /api/oauth2/token`.
-3. Токены остаются на бэкенде, в браузер уходит только http-only cookie `vbr_sid`
-   с непредсказуемым идентификатором сессии.
-4. Access token обновляется автоматически за минуту до истечения; при `401` от Veeam
-   выполняется один повтор после refresh.
-
-Права в приложении = права роли пользователя в Veeam. Например, `/api/v1/serverInfo`
-требует claim `ViewServices`: если его нет, карточка сервера просто не заполняется,
-страница не ломается.
+```
+backend/src/
+  telegram/            маршрутизация, темы, транспорт, состояние, монитор
+  veeam/               транспорт к Veeam REST API, типы, ошибки
+  config/              чтение переменных окружения
+  logging/             файловый лог и тайминги запросов
+  health.controller.ts неаутентифицированная проба доступности
+```
 
 ## Требования
 
-Node.js 20 LTS или новее.
-Скачать: https://nodejs.org/en/download
+- Node.js 20+
+- Доступ по сети до Veeam Backup & Replication (порт 9419)
+- Служебная учётная запись Veeam — достаточно роли Veeam Backup Viewer
+- Бот в Telegram, добавленный в группу администратором
 
 ## Запуск
 
-```powershell
-# 1. Бэкенд
+```bash
 cd backend
-Copy-Item .env.example .env      # проверь VEEAM_BASE_URL
 npm install
-npm run start:dev                # http://localhost:3000/api
-
-# 2. Фронтенд (во втором терминале)
-cd frontend
-npm install
-npm run dev                      # http://localhost:5173
+cp .env.example .env     # заполнить токен бота и учётную запись Veeam
+npm run start:dev        # или npm run build && npm run start:prod
 ```
 
-Vite проксирует `/api` на бэкенд, поэтому в браузере всё работает с одного origin
-и cookie отправляется без дополнительных настроек CORS.
+Проверки: `npm run lint` (`tsc --noEmit`) и `npm test` (сборка + `node:test`).
 
-Проверить связь с Veeam до логина:
+## Настройки
 
-```powershell
-curl http://localhost:3000/api/health
+Все параметры с комментариями — в `backend/.env.example`. Минимум для старта:
+
+```env
+VEEAM_BASE_URL=https://veeam.example:9419
+VEEAM_MONITOR_USERNAME=<служебная учётная запись>
+VEEAM_MONITOR_PASSWORD=<её пароль>
+TELEGRAM_BOT_TOKEN=<токен из BotFather>
+TELEGRAM_CHAT_IDS=-1001234567890
+TELEGRAM_ADMIN_KEY=<длинная случайная строка>
 ```
 
-Эндпоинт дёргает `/api/v1/serverTime`, который не требует токена.
+## HTTP-поверхность
 
-## Настройки бэкенда (`backend/.env`)
+Осталось два набора маршрутов — проба и управление мониторингом:
 
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `PORT` | `3000` | Порт бэкенда |
-| `CORS_ORIGIN` | `http://localhost:5173` | Origin фронтенда (список через запятую) |
-| `VEEAM_BASE_URL` | `https://localhost:9419` | Адрес VBR REST API |
-| `VEEAM_API_VERSION` | `1.2-rev1` | Значение заголовка `x-api-version` |
-| `VEEAM_INSECURE_TLS` | `true` | Не проверять TLS-сертификат VBR (он self-signed) |
-| `VEEAM_TIMEOUT_MS` | `30000` | Таймаут запроса к Veeam |
-| `SESSION_TTL_MIN` | `60` | Idle-таймаут сессии приложения |
-| `SESSION_COOKIE_NAME` | `vbr_sid` | Имя cookie сессии |
-| `COOKIE_SECURE` | `false` | Ставить `true`, когда бэкенд за HTTPS |
+- `GET /api/health` — неаутентифицированная проба: отвечает ли Veeam вообще.
+- `GET|POST /api/telegram/*` — см. раздел «Эндпоинты» ниже.
 
-## API бэкенда
-
-| Метод | Путь | Описание |
-| --- | --- | --- |
-| `GET` | `/api/health` | Доступность VBR, без авторизации |
-| `POST` | `/api/auth/login` | `{ username, password }` → cookie сессии |
-| `POST` | `/api/auth/logout` | Завершает сессию и токены в Veeam |
-| `GET` | `/api/auth/me` | Текущий пользователь |
-| `GET` | `/api/dashboard/summary` | Сводка: сервер, счётчики статусов, проблемные и ближайшие задания, последние сессии |
-| `GET` | `/api/jobs` | Список заданий со статусами |
-| `GET` | `/api/jobs/:id` | Задание: параметры, объекты, история запусков |
-| `GET` | `/api/jobs/:id/sessions?limit=20` | Сессии задания |
-| `GET` | `/api/infrastructure` | Репозитории (свободное место), прокси, серверы, WAN |
-| `GET` | `/api/backups` | Бэкапы |
-| `GET` | `/api/backups/objects` | Объекты внутри бэкапов |
-| `GET` | `/api/backups/objects/:id` | Объект и его точки восстановления |
-| `GET` | `/api/replicas` | Реплики и их отставание |
-| `GET` | `/api/replicas/:id` | Реплика и её точки восстановления |
-| `GET` | `/api/license` | Лицензия и топ потребителей |
-| `GET` | `/api/security` | Security & Compliance Analyzer, события malware |
-
-### Используемые эндпоинты Veeam
-
-| Путь | Проверен по спецификации |
-| --- | --- |
-| `/api/oauth2/token`, `/api/oauth2/logout` | да, документация |
-| `/api/v1/serverTime`, `/api/v1/serverInfo`, `/api/v1/services` | да |
-| `/api/v1/license`, `/instances`, `/sockets`, `/capacity` | да |
-| `/api/v1/securityAnalyzer/bestPractices`, `/lastRun` | да |
-| `/api/v1/jobs`, `/api/v1/jobs/{id}`, `/api/v1/sessions` | да |
-| `/api/v1/jobs/states` | да |
-| `/api/v1/backupInfrastructure/repositories` (+`/states`), `/scaleOutRepositories`, `/proxies`, `/managedServers`, `/wanAccelerators` | да |
-| `/api/v1/backups`, `/api/v1/backupObjects`, `/api/v1/backupObjects/{id}/restorePoints` | да |
-| `/api/v1/replicas`, `/api/v1/replicaPoints`, `/api/v1/replicas/{id}/replicaPoints` | да |
-| `/api/v1/malwareDetection/events` | да |
-
-Проверено 11.09.2026 по Swagger установленного сервера, версия `1.2-rev1`:
-`https://veeam01ast01.t-cloud.kz:9419/swagger/v1.2-rev1/swagger.json`.
-Снимок для воспроизводимых тестов: [veeam-swagger.json](veeam-swagger.json).
-
-### Доступ Veeam Restore Operator
-
-Доступны задания, сессии, бэкапы, объекты, точки восстановления, реплики, репозитории,
-scale-out, прокси и управляемые серверы. Лицензия и WAN требуют Backup Administrator;
-Analyzer — Backup Administrator или Security Administrator; malware — Backup Administrator
-или Incident API Operator.
-
-`GET /api/access` проверяет фактическую доступность лицензии и безопасности с токеном
-пользователя. Недоступные пункты скрываются из меню; прямые ссылки показывают состояние
-недоступности. Роль не назначается по умолчанию: OAuth-модель этой версии не гарантирует поле `role`.
-
-Точки объекта читаются через `/backupObjects/{id}/restorePoints` без query-параметров:
-ответ не содержит `backupObjectId`, связь задаёт путь. Точки реплик читаются через
-`/replicas/{id}/replicaPoints`, а общий `/replicaPoints` используется для количества и отставания.
-`/replicaRestorePoints` ошибочно упомянут в описании Swagger, но отсутствует в карте путей.
-Analyzer возвращает массив `items`, capacity license — `workloads`; оба запроса без пагинации.
-
-### Как приложение переносит отсутствие эндпоинта
-
-`VeeamClientService.getOptional` и `.collection` возвращают `null` на `404` и `403`
-вместо исключения. Ошибки `400`, сети и сервера не скрываются. В ответе
-бэкенда каждая секция помечена флагом `available`, и UI показывает «раздел недоступен
-на этой сборке VBR или для текущей роли» вместо пустой таблицы или ошибки. Один
-неподдерживаемый раздел не ломает остальную страницу.
-
-Отдельный случай — `/api/v1/jobs/states`: если его нет, статусы заданий
-восстанавливаются из последних сессий (`JobsService.lastSessionByJob`).
-
-Коллекции читаются постранично. Для карточек объектов используются отдельные запросы по ID,
-поэтому отказ `403` не подменяется сообщением «объект не найден».
-Отказ в чтении заданий или сессий не скрывает доступную часть сводки.
-Объекты и бэкапы на странице загружаются независимо; новый вход очищает кэш предыдущего пользователя.
-
-### Отчёт внутри задания
-
-Откройте **Задания → имя задания → Отчёт и статистика**. Доступны периоды 7/30/90 дней,
-успешность, ошибки, длительность, график последних 60 запусков и полная история за период.
-Выберите запуск в истории или на графике: ниже появятся статистика ВМ и журнал.
-Имя ВМ открывает её подробный журнал. Параметры задания вынесены на отдельную вкладку.
-
-В Swagger `1.2-rev1` нет готового HTML/PDF-отчёта задания. Приложение формирует его из:
-
-| Запрос Veeam | Назначение |
-| --- | --- |
-| `GET /api/v1/sessions?jobIdFilter={id}&createdAfterFilter=...&createdBeforeFilter=...` | Запуски задания за период, с пагинацией |
-| `GET /api/v1/sessions/{id}` | Результат, время, состояние и прогресс запуска |
-| `GET /api/v1/sessions/{id}/taskSessions` | Статистика каждого объекта: объёмы, скорость, узкое место |
-| `GET /api/v1/sessions/{id}/logs` | Журнал запуска |
-| `GET /api/v1/taskSessions/{id}` | Принадлежность объекта запуску |
-| `GET /api/v1/taskSessions/{id}/logs` | Журнал объекта |
-
-Все перечисленные GET доступны Restore Operator по Swagger. Scoped taskSessions/logs
-не принимают query-параметры. Поле передачи данных называется `transferredSize`, но
-поддерживается и `transferedSize` из примеров этого сервера. Байты показываются в КиБ/МиБ/ГиБ.
-Успешность считается только по завершённым Success/Warning/Failed; незавершённые сессии
-не входят в среднюю длительность. История зависит от срока хранения сессий на Veeam.
-
-Новые маршруты приложения (все требуют сессию):
-
-| Маршрут | Результат |
-| --- | --- |
-| `GET /api/jobs/:id/report?days=7` | JSON отчёта задания |
-| `GET /api/jobs/:id/report.csv?days=7` | CSV истории запусков |
-| `GET /api/jobs/:id/report.html?days=7` | Отчёт задания для печати |
-| `GET /api/jobs/:id/sessions/:sessionId/report` | JSON статистики объектов и журнала запуска |
-| `GET /api/jobs/:id/sessions/:sessionId/report.html` | Отчёт запуска для печати |
-| `GET /api/jobs/:id/sessions/:sessionId/tasks/:taskId/logs` | Журнал отдельного объекта |
-
-HTML-отчёты открываются в новой вкладке и сохраняются в PDF через печать браузера.
-CSV содержит точные метки времени и длительность в секундах. Перед чтением статистики
-проверяется принадлежность запуска заданию, а объекта — запуску.
-
-### Проверки
-
-В каждой папке (`backend`, `frontend`): `npm test` и `npm run build`.
-Тесты бэкенда сверяют запросы со снимком Swagger, проверяют пагинацию и отказы в доступе.
-Тесты фронтенда проверяют рендер навигации, сводки, объектов и сообщения `403`.
-Это локальные проверки с подставными ответами, а не вход под реальной учётной записью Veeam.
-
-## Что осознанно не сделано
-
-- **Любые изменяющие операции** — start/stop/retry заданий, restore, failover/failback,
-  Data Integration API, создание репозиториев. Это POST/PUT/DELETE, они вне read-only политики.
-- **MFA** — вход с обязательной многофакторной аутентификацией отклоняется с понятной
-  ошибкой; для поддержки нужен второй вызов `/api/oauth2/token` с `mfa_token` и кодом.
-- **Хранилище сессий** — in-memory `Map`. Перезапуск бэкенда разлогинивает всех, а для
-  нескольких инстансов понадобится общий стор (Redis).
-- **CSRF** — защита держится на `SameSite=Lax` для cookie. Для продакшена стоит добавить
-  явный CSRF-токен на мутирующие запросы.
-- **`VEEAM_INSECURE_TLS=true`** по умолчанию: VBR ставится с self-signed сертификатом.
-  Как только сертификат добавлен в доверенные на машине бэкенда — переключить в `false`.
-
-## Мониторинг в Telegram
-
-Бэкенд опрашивает Veeam и отправляет в Telegram только **изменения**: новые
-ошибки и предупреждения заданий, их восстановление, пропажу и возврат связи с
-сервером, отказ служебной учётной записи и нехватку места в репозиториях.
+## Как работает маршрутизация
 
 ### Маршрутизация по темам (topics)
 

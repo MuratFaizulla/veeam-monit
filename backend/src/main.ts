@@ -2,7 +2,6 @@ import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
@@ -15,22 +14,19 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
 
   app.setGlobalPrefix('api');
-  app.use(cookieParser());
   app.useGlobalInterceptors(new TimingInterceptor());
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
-  app.enableCors({
-    origin: config.getOrThrow<AppConfig['corsOrigins']>('corsOrigins'),
-    credentials: true,
-  });
 
   const port = config.getOrThrow<number>('port');
   await app.listen(port);
 
   const veeam = config.getOrThrow<AppConfig['veeam']>('veeam');
+  const telegram = config.getOrThrow<AppConfig['telegram']>('telegram');
   const logger = new Logger('Bootstrap');
   logger.log(`Listening on http://localhost:${port}/api — Veeam: ${veeam.baseUrl}`);
+  logger.log(`Telegram routing mode: ${telegram.routingMode}, state: ${telegram.stateFile}`);
   logger.log(`Writing logs to ${logFile}`);
 }
 
