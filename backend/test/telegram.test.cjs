@@ -111,6 +111,8 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
     '/api/v1/jobs/states': () => ({ data: states }),
     '/api/v1/sessions': { data: [{ result: { message: 'Agent failed to process method' } }] },
+    '/api/v1/backups': { data: [] },
+    '/api/v1/restorePoints': { data: [] },
     ...extraRoutes,
   });
   const auth = { configured: true, username: 'svc@example.com', getAccessToken: async () => 'tok' };
@@ -665,12 +667,12 @@ test('the live status is one message per topic, edited in place on later cycles'
 
   await w.monitor.check();
   const opening = w.api.sent();
-  assert.equal(opening.length, 5, 'health, running, schedule, performance and repositories');
+  assert.equal(opening.length, 6, 'health, running, schedule, performance, repositories, protection');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
     w.api.of('createForumTopic').map((t) => t.name),
-    ['🩺 Monitor health', '▶️ Running now', '📅 Today', '📈 Performance', '💾 Repositories'],
+    ['🩺 Monitor health', '▶️ Running now', '📅 Today', '📈 Performance', '💾 Repositories', '🛡 Protection'],
   );
 
   w.api.reset();
@@ -739,7 +741,7 @@ test('the live message survives a restart instead of starting a second one', asy
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
   first.store.flush();
-  assert.equal(first.api.sent().length, 5);
+  assert.equal(first.api.sent().length, 6);
 
   const w = world(LIVE, {}, first.file);
   const veeam = veeamFake({
@@ -800,7 +802,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
   const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
-  assert.equal(w.api.sent().length, 5);
+  assert.equal(w.api.sent().length, 6);
 
   w.api.reset();
   await monitor.check();
@@ -908,4 +910,146 @@ test('a long list fills the message to Telegram’s limit instead of an invented
   );
   assert.ok(many.length <= 4096, `message is ${many.length} characters`);
   assert.match(many, /…и ещё \d+ задани/);
+});
+
+/* ------------------------------------------------------------------ *
+ * Protection: what is actually recoverable
+ * ------------------------------------------------------------------ */
+
+const DAY_MS = 86_400_000;
+
+/** Restore points every `everyDays`, the newest `ageDays` old. */
+const points = (now, ageDays, everyDays, count = 8) =>
+  Array.from({ length: count }, (_, i) => now - (ageDays + i * everyDays) * DAY_MS);
+
+const assess = (overrides) => {
+  const { assessProtection } = require('../dist/telegram/telegram-protection');
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  return assessProtection({
+    jobs: [],
+    pointsByJob: new Map(),
+    streakByJob: new Map(),
+    now,
+    staleDays: 3,
+    overdueFactor: 2.5,
+    minStreak: 3,
+    ...overrides,
+  });
+};
+
+test('a job succeeding on paper but producing nothing for months is reported', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'CLT_AIFC_archive', type: 'Backup', lastRun: '2026-06-19T11:57:52Z' }],
+    pointsByJob: new Map([['1', points(now, 87, 1)]]),
+  });
+
+  assert.equal(snapshot.risks.length, 1, 'lastResult=Success hides this from every other alert');
+  assert.equal(snapshot.risks[0].severity, 'critical');
+  assert.equal(Math.floor(snapshot.risks[0].ageDays), 87);
+});
+
+test('a job with no restore point at all is critical, and says when it last ran', async () => {
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'TTC_Konaev_EM_DB', lastRun: '2026-08-12T10:01:00Z' }],
+  });
+
+  assert.equal(snapshot.risks.length, 1);
+  assert.equal(snapshot.risks[0].ageDays, null);
+  assert.equal(snapshot.risks[0].severity, 'critical');
+
+  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const text = renderProtection(snapshot, { now: new Date(Date.UTC(2026, 8, 14, 12)), timezone: 'UTC' });
+  assert.match(text, /точек восстановления нет/);
+  assert.match(text, /последний запуск 12\.08/);
+});
+
+test('a weekly job is judged against its own rhythm, not against a flat threshold', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+
+  // Five days old, but this job only ever produces a point every five days.
+  const onSchedule = assess({
+    jobs: [{ id: '1', name: 'TTC_ASUEDT_REMS_REMS03' }],
+    pointsByJob: new Map([['1', points(now, 5, 5)]]),
+  });
+  assert.deepEqual(onSchedule.risks, [], 'a flat 3-day rule would cry wolf here');
+  assert.equal(onSchedule.protectedJobs, 1);
+
+  // The same job, now three of its own intervals late.
+  const late = assess({
+    jobs: [{ id: '1', name: 'TTC_ASUEDT_REMS_REMS03' }],
+    pointsByJob: new Map([['1', points(now, 16, 5)]]),
+  });
+  assert.equal(late.risks.length, 1);
+  assert.equal(Math.round(late.risks[0].intervalDays), 5);
+});
+
+test('a daily job that missed a single run is not reported', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'SQL Daily Backup' }],
+    pointsByJob: new Map([['1', points(now, 2, 1)]]),
+  });
+  assert.deepEqual(snapshot.risks, [], 'the floor protects hourly and daily jobs from noise');
+});
+
+test('repeated failures are reported even while the restore point is still fresh', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'TTC_SMAX_SAM' }],
+    pointsByJob: new Map([['1', points(now, 0.2, 1)]]),
+    streakByJob: new Map([['1', 5]]),
+  });
+
+  assert.equal(snapshot.risks.length, 1);
+  assert.equal(snapshot.risks[0].severity, 'warning', 'the data is still recoverable');
+  assert.equal(snapshot.risks[0].failures, 5);
+
+  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' });
+  assert.match(text, /5 неуспехов подряд/);
+});
+
+test('one or two failures are not a streak', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'SQL Daily Backup' }],
+    pointsByJob: new Map([['1', points(now, 0.2, 1)]]),
+    streakByJob: new Map([['1', 2]]),
+  });
+  assert.deepEqual(snapshot.risks, []);
+});
+
+test('the worst offenders come first, and an all-clear says so', async () => {
+  const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const snapshot = assess({
+    jobs: [
+      { id: '1', name: 'mild' },
+      { id: '2', name: 'worst' },
+      { id: '3', name: 'none-at-all' },
+    ],
+    pointsByJob: new Map([
+      ['1', points(now, 4, 1)],
+      ['2', points(now, 40, 1)],
+    ]),
+  });
+  assert.deepEqual(snapshot.risks.map((r) => r.name), ['none-at-all', 'worst', 'mild']);
+
+  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const clear = renderProtection(
+    assess({ jobs: [{ id: '1', name: 'ok' }], pointsByJob: new Map([['1', points(now, 0.5, 1)]]) }),
+    { now: new Date(now), timezone: 'UTC' },
+  );
+  assert.match(clear, /🟢 <b>Все задания защищены<\/b>/);
+});
+
+test('an unread scan admits it instead of claiming everything is protected', async () => {
+  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const text = renderProtection(
+    { risks: [], totalJobs: 112, protectedJobs: 0, staleDays: 3, overdueFactor: 2.5, minStreak: 3,
+      unavailable: 'Точки восстановления ещё не прочитаны.' },
+    { now: new Date(), timezone: 'UTC' },
+  );
+  assert.match(text, /Защищённость не проверена/);
+  assert.ok(!/Все задания защищены/.test(text));
 });
