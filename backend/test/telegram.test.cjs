@@ -97,8 +97,8 @@ function veeamFake(routes) {
   };
 }
 
-function monitorWorld(env, jobStates, extraRoutes = {}) {
-  const w = world(env);
+function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
+  const w = world(env, handlers);
   let states = jobStates;
   const veeam = veeamFake({
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
@@ -490,4 +490,130 @@ test('a repository below the free-space threshold is reported once per cooldown'
   w.api.reset();
   await monitor.check();
   assert.equal(w.api.sent().filter((payload) => /Repo0/.test(payload.text)).length, 0);
+});
+
+/* ------------------------------------------------------------------ *
+ * Delivery accounting: nothing is marked as reported until it is sent
+ * ------------------------------------------------------------------ */
+
+/** Telegram rejects the message outright; not a rate limit, not a dead chat. */
+const rejectSend = (isBroken) => ({
+  sendMessage: () =>
+    isBroken() ? { ok: false, error_code: 400, description: 'Bad Request: nope' } : undefined,
+});
+
+test('a delivery that reached nobody does not burn the cooldown', async () => {
+  let broken = true;
+  const w = world({}, rejectSend(() => broken));
+  const event = () => ({
+    kind: 'job',
+    severity: 'critical',
+    subject: 'SQL Daily',
+    title: 'SQL Daily: ОШИБКА',
+    dedupeKey: 'job:1:failed',
+    cooldownMs: 60_000,
+  });
+
+  const first = await w.service.notify(event());
+  assert.equal(first.outcome, 'failed');
+  assert.equal(w.store.data.cooldowns['job:1:failed'], undefined, 'окно не должно быть взведено');
+
+  broken = false;
+  const second = await w.service.notify(event());
+  assert.equal(second.outcome, 'delivered', 'повтор проходит, а не глушится кулдауном');
+
+  const third = await w.service.notify(event());
+  assert.equal(third.outcome, 'cooldown', 'после успешной доставки окно взведено');
+});
+
+test('the delivery report names why an event was not sent', async () => {
+  const w = world({ TELEGRAM_SEVERITIES: 'critical' });
+  const base = { kind: 'job', subject: 'A', title: 'a' };
+
+  assert.equal((await w.service.notify({ ...base, severity: 'warning' })).outcome, 'severity-filtered');
+  assert.equal((await w.service.notify({ ...base, severity: 'critical' })).outcome, 'delivered');
+
+  const keyed = { ...base, severity: 'critical', dedupeKey: 'k', cooldownMs: 60_000 };
+  assert.equal((await w.service.notify(keyed)).outcome, 'delivered');
+  assert.equal((await w.service.notify(keyed)).outcome, 'cooldown');
+
+  delete w.store.data.chats[CHAT];
+  assert.equal((await w.service.notify({ ...base, severity: 'critical' })).outcome, 'no-chats');
+});
+
+test('a transition whose delivery failed is retried on the next cycle', async () => {
+  let broken = true;
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {}, rejectSend(() => broken));
+
+  await w.monitor.check();
+  assert.equal(w.store.data.jobResults['1'], 'success', 'первый цикл засеял состояние');
+
+  w.setJobs([job('1', 'SQL Daily', 'Failed')]);
+  await w.monitor.check();
+  assert.equal(
+    w.store.data.jobResults['1'],
+    'success',
+    'провалившаяся отправка не отмечает переход как обработанный',
+  );
+  assert.equal(w.monitor.status.undelivered > 0, true);
+
+  broken = false;
+  w.api.reset();
+  await w.monitor.check();
+
+  const sent = w.api.sent();
+  assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
+  assert.match(sent[0].text, /SQL Daily/);
+  assert.match(sent[0].text, /FAILED/);
+  assert.equal(w.store.data.jobResults['1'], 'failed');
+  assert.equal(w.monitor.status.lastOutcome, 'delivered');
+});
+
+test('a failing job step does not abort the repository check', async () => {
+  const w = world({ TELEGRAM_REPOSITORY_FREE_PERCENT: '10' });
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: 'now' },
+    '/api/v1/jobs/states': () => {
+      throw new Error('Veeam 500 Internal Server Error');
+    },
+    '/api/v1/backupInfrastructure/repositories/states': {
+      data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
+    },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+
+  await monitor.check();
+
+  assert.ok(
+    w.api.sent().some((payload) => /Repo01/.test(payload.text)),
+    'репозитории проверены, несмотря на упавший шаг заданий',
+  );
+  assert.match(monitor.status.lastError, /Veeam 500/);
+  assert.ok(monitor.status.lastCheckAt, 'цикл дошёл до конца');
+});
+
+test('the digest cooldown is armed only once the digest was delivered', async () => {
+  let broken = true;
+  const hour = new Date().getHours();
+  const w = world({ TELEGRAM_DIGEST_HOUR: String(hour) }, rejectSend(() => broken));
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: 'now' },
+    '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+
+  await monitor.check();
+  assert.equal(w.store.data.cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
+
+  broken = false;
+  w.api.reset();
+  await monitor.check();
+
+  assert.ok(
+    w.api.sent().some((payload) => /сводка за сутки/.test(payload.text)),
+    'сводка отправлена на следующем цикле',
+  );
+  assert.ok(w.store.data.cooldowns['digest'] > Date.now(), 'теперь окно взведено');
 });

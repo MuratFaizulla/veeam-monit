@@ -8,7 +8,7 @@ import {
   VeeamRepositoryState,
   VeeamSession,
 } from '../veeam/veeam.types';
-import { TelegramService } from './telegram.service';
+import { DeliveryOutcome, DeliveryReport, TelegramService } from './telegram.service';
 import { TelegramStateStore } from './telegram-state.store';
 import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from './telegram.types';
@@ -25,6 +25,12 @@ export interface MonitorHealth {
   authenticated: boolean | null;
   lastError: string | null;
   trackedJobs: number;
+  /** Events that reached at least one chat since start. */
+  delivered: number;
+  /** Events that were attempted and reached nobody — the number to alarm on. */
+  undelivered: number;
+  /** Outcome of the most recent event, for answering "where did my alert go?". */
+  lastOutcome: DeliveryOutcome | null;
 }
 
 /**
@@ -50,6 +56,9 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     authenticated: null,
     lastError: null,
     trackedJobs: 0,
+    delivered: 0,
+    undelivered: 0,
+    lastOutcome: null,
   };
 
   constructor(
@@ -90,16 +99,24 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       const reachable = await this.checkReachability();
       const token = reachable ? await this.checkAuthentication() : null;
       if (token) {
-        await this.checkJobs(token);
-        await this.checkRepositories(token);
-        await this.maybeSendDigest(token);
+        // Each step is isolated: one hiccup on /jobs/states used to abort the
+        // rest of the cycle, taking the repository check and the digest with it.
+        await this.step('jobs', () => this.checkJobs(token));
+        await this.step('repositories', () => this.checkRepositories(token));
+        await this.step('digest', () => this.maybeSendDigest(token));
       }
       this.health.lastCheckAt = new Date().toISOString();
-    } catch (error) {
-      this.health.lastError = (error as Error).message;
-      this.logger.error(`Veeam monitor cycle failed: ${(error as Error).message}`);
     } finally {
       this.running = false;
+    }
+  }
+
+  private async step(name: string, run: () => Promise<void>): Promise<void> {
+    try {
+      await run();
+    } catch (error) {
+      this.health.lastError = (error as Error).message;
+      this.logger.error(`Veeam monitor step "${name}" failed: ${(error as Error).message}`);
     }
   }
 
@@ -216,12 +233,18 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       if (!job.id) continue;
       const result = job.lastResult?.toLowerCase() || 'none';
       const previous = this.store.data.jobResults[job.id];
-      this.store.data.jobResults[job.id] = result;
+      const severity = seeding || previous === result ? null : this.severityOf(result, previous);
 
-      if (seeding || previous === result) continue;
-      const severity = this.severityOf(result, previous);
-      if (!severity) continue;
-      await this.emit(await this.jobEvent(job, result, previous, severity, accessToken));
+      if (severity) {
+        const report = await this.emit(
+          await this.jobEvent(job, result, previous, severity, accessToken),
+        );
+        // Advancing the remembered result is the record of "this transition has
+        // been dealt with". A delivery that reached nobody has not dealt with
+        // anything, so the transition stays pending and is retried next tick.
+        if (report.outcome === 'failed') continue;
+      }
+      this.store.data.jobResults[job.id] = result;
     }
 
     // Jobs deleted in Veeam must not keep a slot in the state file forever.
@@ -358,7 +381,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private async maybeSendDigest(accessToken: string): Promise<void> {
     const hour = this.config.digestHour;
     if (hour < 0 || new Date().getHours() !== hour) return;
-    if (!this.store.allow('digest', 23 * HOUR)) return;
+    if (this.store.isSuppressed('digest')) return;
 
     const response = await this.veeam.request<VeeamCollection<VeeamJobState>>({
       method: 'GET',
@@ -371,7 +394,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     const failed = by('failed');
     const warning = by('warning');
 
-    await this.emit({
+    const report = await this.emit({
       kind: 'digest',
       severity: failed.length ? 'critical' : warning.length ? 'warning' : 'success',
       title: 'Veeam: сводка за сутки',
@@ -387,12 +410,21 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         .join('\n')
         .slice(0, 3000) || undefined,
     });
+
+    // Arming before the fetch, as this used to, lost the whole digest for 23
+    // hours whenever that request threw.
+    if (report.outcome === 'delivered') this.store.armCooldown('digest', 23 * HOUR);
   }
 
-  private async emit(event: NotificationEvent): Promise<void> {
+  private async emit(event: NotificationEvent): Promise<DeliveryReport> {
     const report = await this.telegram.notify(event);
-    this.logger.debug(
-      `Event "${event.title}" -> topic=${report.topic ?? 'General'} (${report.reason}) sent=${report.sent} failed=${report.failed} skipped=${report.skipped}`,
-    );
+    this.health.lastOutcome = report.outcome;
+    if (report.outcome === 'delivered') this.health.delivered += 1;
+    if (report.outcome === 'failed') this.health.undelivered += 1;
+
+    const line = `Event "${event.title}" -> ${report.outcome} topic=${report.topic ?? 'General'} (${report.reason}) sent=${report.sent} failed=${report.failed}`;
+    if (report.outcome === 'failed') this.logger.error(line);
+    else this.logger.debug(line);
+    return report;
   }
 }

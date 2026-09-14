@@ -81,16 +81,26 @@ export class TelegramStateStore {
     }
   }
 
-  /** True when the condition may be reported now; also arms the next cooldown. */
-  allow(key: string | undefined, cooldownMs: number | undefined): boolean {
-    if (!key || !cooldownMs) return true;
+  /**
+   * True when the condition is still inside its cooldown window.
+   *
+   * Checking and arming are deliberately two operations. Arming on the way in
+   * — as a single `allow()` used to — burns the window even when the message
+   * never reaches Telegram, which silences the next N minutes of a real
+   * outage. Callers arm only once delivery actually succeeded.
+   */
+  isSuppressed(key: string | undefined): boolean {
+    if (!key) return false;
+    return (this.state.cooldowns[key] ?? 0) > Date.now();
+  }
+
+  /** Starts the cooldown window. Call after the report actually went out. */
+  armCooldown(key: string | undefined, cooldownMs: number | undefined): void {
+    if (!key || !cooldownMs) return;
     const now = Date.now();
-    const until = this.state.cooldowns[key] ?? 0;
-    if (until > now) return false;
     this.state.cooldowns[key] = now + cooldownMs;
     this.prune(now);
     this.save();
-    return true;
   }
 
   /** Drops a cooldown so the next occurrence reports immediately. */
