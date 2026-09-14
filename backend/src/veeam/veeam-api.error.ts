@@ -9,8 +9,12 @@
  * so the status, the classification getters and the remap had no observer.
  */
 export class VeeamApiError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly upstreamStatus: number | null = null) {
     super(message);
     this.name = 'VeeamApiError';
+  }
+
+  get isUnauthorized(): boolean {
+    return this.upstreamStatus === 401;
   }
 }

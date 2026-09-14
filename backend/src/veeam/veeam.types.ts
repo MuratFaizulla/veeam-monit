@@ -57,6 +57,7 @@ export interface VeeamSession {
   id?: string;
   name?: string;
   jobId?: string;
+  sessionType?: string;
   creationTime?: string;
   endTime?: string;
   state?: string;
@@ -66,6 +67,24 @@ export interface VeeamSession {
     result?: string;
     message?: string;
   };
+}
+
+export interface VeeamTaskProgress {
+  duration?: string | null;
+  processingRate?: string | null;
+  bottleneck?: string | null;
+  processedSize?: number | null;
+  readSize?: number | null;
+  transferredSize?: number | null;
+}
+
+export interface VeeamTaskSession {
+  id?: string;
+  name?: string;
+  type?: string;
+  state?: string;
+  status?: string;
+  progress?: VeeamTaskProgress | null;
 }
 
 /** Item of .../repositories/states — capacity figures live here, not in the config. */

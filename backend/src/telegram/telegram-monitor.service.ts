@@ -2,11 +2,13 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/veeam-http.service';
+import { VeeamApiError } from '../veeam/veeam-api.error';
 import {
   VeeamCollection,
   VeeamJobState,
   VeeamRepositoryState,
   VeeamSession,
+  VeeamTaskSession,
 } from '../veeam/veeam.types';
 import { DeliveryOutcome, DeliveryReport, TelegramService } from './telegram.service';
 import { TelegramLiveService } from './telegram-live.service';
@@ -22,6 +24,13 @@ import {
 import { TelegramStateStore } from './telegram-state.store';
 import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from './telegram.types';
+import {
+  ACTIVE_SESSION_STATES,
+  PerformanceJob,
+  PerformanceSnapshot,
+  aggregatePerformance,
+  renderPerformance,
+} from './telegram-performance';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -321,6 +330,111 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     );
 
     await this.live.publish('schedule', renderSchedule(this.scheduleState(jobs), clock));
+
+    await this.live.publish(
+      'performance',
+      renderPerformance(await this.performanceState(accessToken), clock),
+    );
+  }
+
+  /** Builds the Performance live slot from active sessions and their tasks. */
+  private async performanceState(accessToken: string | null): Promise<PerformanceSnapshot> {
+    if (!accessToken) {
+      return {
+        jobs: [],
+        activeCount: 0,
+        statisticsAvailable: false,
+        unavailable: 'Служебная учётная запись Veeam не авторизована.',
+      };
+    }
+
+    let sessions: VeeamSession[];
+    try {
+      sessions = (await this.allPages<VeeamSession>(SESSIONS, accessToken, {
+        stateFilter: 'Working',
+        orderColumn: 'CreationTime',
+        orderAsc: false,
+      })).filter((session) => ACTIVE_SESSION_STATES.has((session.state ?? '').toLowerCase()));
+    } catch (error) {
+      this.logger.error(`Performance sessions unavailable: ${(error as Error).message}`);
+      return {
+        jobs: [],
+        activeCount: 0,
+        statisticsAvailable: false,
+        unavailable: (error as Error).message,
+      };
+    }
+
+    if (!sessions.length) return { jobs: [], activeCount: 0, statisticsAvailable: true };
+
+    const jobs: PerformanceJob[] = [];
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < sessions.length) {
+        const session = sessions[next++];
+        if (!session.id) continue;
+        try {
+          const tasks = await this.allPages<VeeamTaskSession>(
+            `/api/v1/sessions/${encodeURIComponent(session.id)}/taskSessions`,
+            accessToken,
+          );
+          jobs.push(aggregatePerformance(session, tasks));
+        } catch (error) {
+          // One inaccessible session must not hide all other performance data.
+          this.logger.warn(`Performance task sessions ${session.id} skipped: ${(error as Error).message}`);
+          jobs.push(aggregatePerformance(session, []));
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(5, sessions.length) }, () => worker()));
+
+    const statisticsAvailable = jobs.some((job) =>
+      [job.rateBps, job.processedSize, job.readSize, job.transferredSize].some(
+        (value) => value !== undefined,
+      ),
+    );
+    this.logger.debug(
+      `Performance refreshed: active=${sessions.length} detailed=${jobs.filter((job) => job.rateBps !== undefined).length}`,
+    );
+    return { jobs, activeCount: sessions.length, statisticsAvailable };
+  }
+
+  /** Reads every page; Veeam may cap the requested limit below our value. */
+  private async allPages<T>(
+    path: string,
+    accessToken: string,
+    params: Record<string, unknown> = {},
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let token = accessToken;
+    let skip = 0;
+    const limit = 100;
+    for (;;) {
+      let page: VeeamCollection<T>;
+      try {
+        page = await this.veeam.request<VeeamCollection<T>>({
+          method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
+        });
+      } catch (error) {
+        if (!(error instanceof VeeamApiError) || !error.isUnauthorized) throw error;
+        this.monitorAuth.invalidateAccessToken();
+        token = await this.monitorAuth.getAccessToken();
+        page = await this.veeam.request<VeeamCollection<T>>({
+          method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
+        });
+      }
+      const data = page.data ?? [];
+      items.push(...data);
+      const total = page.pagination?.total;
+      if (
+        typeof total === 'number'
+          ? items.length >= total
+          : data.length < (page.pagination?.limit ?? limit)
+      ) break;
+      if (!data.length) break;
+      skip += data.length;
+    }
+    return items;
   }
 
   private scheduleState(jobs: VeeamJobState[] | undefined): LiveSchedule {
