@@ -24,6 +24,14 @@ export interface ProtectionJob {
   name: string;
   type?: string;
   lastRun?: string;
+  /** Switched off in Veeam. It is not supposed to be producing anything. */
+  disabled?: boolean;
+  /**
+   * Set to run by hand rather than on a schedule. Undefined means the schedule
+   * could not be read, and an unknown schedule is treated as a real one: a job
+   * is only excused from this list on positive evidence, never on a gap.
+   */
+  unscheduled?: boolean;
 }
 
 export interface ProtectionThresholds {
@@ -34,7 +42,11 @@ export interface ProtectionThresholds {
    * A weekly job is not late after three days; a hourly one is.
    */
   overdueFactor: number;
-  /** Consecutive failed runs that make a job worth reporting on their own. */
+  /**
+   * Consecutive failed runs that make a job worth reporting on their own.
+   * Runs, not sessions: a job with retries enabled produces several failed
+   * sessions per failed run.
+   */
   minStreak: number;
 }
 
@@ -61,9 +73,12 @@ export interface ProtectionRisk {
 
 export interface ProtectionSnapshot extends ProtectionThresholds {
   risks: ProtectionRisk[];
+  /** Jobs actually judged — excludes the ones below. */
   totalJobs: number;
   /** Jobs with a restore point inside their own expected interval. */
   protectedJobs: number;
+  excludedDisabled: number;
+  excludedUnscheduled: number;
   unavailable?: string;
 }
 
@@ -74,8 +89,24 @@ export interface ProtectionSnapshot extends ProtectionThresholds {
 export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => {
   const { jobs, pointsByJob, streakByJob, now, staleDays, overdueFactor, minStreak } = input;
   const risks: ProtectionRisk[] = [];
+  let excludedDisabled = 0;
+  let excludedUnscheduled = 0;
+  let judged = 0;
 
   for (const job of jobs) {
+    // A job that is switched off, or that only runs when somebody starts it,
+    // has no restore point by design. Reporting those buried the four jobs
+    // that are genuinely failing under nineteen that are working as intended.
+    if (job.disabled) {
+      excludedDisabled += 1;
+      continue;
+    }
+    if (job.unscheduled) {
+      excludedUnscheduled += 1;
+      continue;
+    }
+    judged += 1;
+
     const points = [...(pointsByJob.get(job.id) ?? [])].sort((a, b) => b - a);
     const failures = streakByJob.get(job.id) ?? 0;
     const intervalDays = rhythm(points);
@@ -107,8 +138,10 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
 
   return {
     risks,
-    totalJobs: jobs.length,
-    protectedJobs: jobs.length - risks.length,
+    totalJobs: judged,
+    protectedJobs: judged - risks.length,
+    excludedDisabled,
+    excludedUnscheduled,
     staleDays,
     overdueFactor,
     minStreak,
@@ -159,7 +192,20 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
   const rule =
     `<b>Правило:</b> точка старше ${snapshot.staleDays} ${plural(snapshot.staleDays, 'дня', 'дней', 'дней')}` +
     ` или ${trim(snapshot.overdueFactor)}× своего интервала;` +
-    ` ${snapshot.minStreak} ${plural(snapshot.minStreak, 'неуспех', 'неуспеха', 'неуспехов')} подряд`;
+    ` ${snapshot.minStreak} ${plural(snapshot.minStreak, 'неудачный запуск', 'неудачных запуска', 'неудачных запусков')} подряд`;
+
+  const skipped: string[] = [];
+  if (snapshot.excludedDisabled) skipped.push(`${snapshot.excludedDisabled} выключено`);
+  if (snapshot.excludedUnscheduled) {
+    skipped.push(`${snapshot.excludedUnscheduled} без расписания`);
+  }
+  // Said out loud, because a count that silently shrank would be worse than a
+  // count that is too big: the operator must know what is outside the check.
+  const tail = [
+    rule,
+    skipped.length ? `<b>Не учитываются:</b> ${skipped.join(', ')}` : null,
+    footer,
+  ].filter((line): line is string => line !== null);
 
   if (snapshot.risks.length === 0) {
     return [
@@ -167,8 +213,7 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
       '',
       `Свежая точка восстановления есть у всех ${snapshot.totalJobs} ${plural(snapshot.totalJobs, 'задания', 'заданий', 'заданий')}.`,
       '',
-      rule,
-      footer,
+      ...tail,
     ].join('\n');
   }
 
@@ -183,7 +228,7 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
     if (rest > 0) {
       lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`);
     }
-    lines.push('', rule, footer);
+    lines.push('', ...tail);
     return lines.join('\n');
   });
 };
@@ -202,7 +247,7 @@ const riskLine = (risk: ProtectionRisk, clock: LiveClock): string => {
 
   if (risk.failures > 0) {
     reasons.push(
-      `${risk.failures} ${plural(risk.failures, 'неуспех', 'неуспеха', 'неуспехов')} подряд`,
+      `${risk.failures} ${plural(risk.failures, 'неудачный запуск', 'неудачных запуска', 'неудачных запусков')} подряд`,
     );
   }
 

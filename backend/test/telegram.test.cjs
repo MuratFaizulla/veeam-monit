@@ -111,6 +111,7 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
     '/api/v1/jobs/states': () => ({ data: states }),
     '/api/v1/sessions': { data: [{ result: { message: 'Agent failed to process method' } }] },
+    '/api/v1/jobs': { data: [] },
     '/api/v1/backups': { data: [] },
     '/api/v1/restorePoints': { data: [] },
     ...extraRoutes,
@@ -1007,7 +1008,7 @@ test('repeated failures are reported even while the restore point is still fresh
 
   const { renderProtection } = require('../dist/telegram/telegram-protection');
   const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' });
-  assert.match(text, /5 неуспехов подряд/);
+  assert.match(text, /5 неудачных запусков подряд/);
 });
 
 test('one or two failures are not a streak', async () => {
@@ -1052,4 +1053,43 @@ test('an unread scan admits it instead of claiming everything is protected', asy
   );
   assert.match(text, /Защищённость не проверена/);
   assert.ok(!/Все задания защищены/.test(text));
+});
+
+test('a disabled job is not owed a restore point', async () => {
+  const snapshot = assess({
+    jobs: [
+      { id: '1', name: 'OPS_MGMT_VEEAM_OLD', disabled: true },
+      { id: '2', name: 'CUST_live' },
+    ],
+    pointsByJob: new Map([['2', points(Date.UTC(2026, 8, 14, 12), 0.5, 1)]]),
+  });
+
+  assert.deepEqual(snapshot.risks, []);
+  assert.equal(snapshot.excludedDisabled, 1);
+  assert.equal(snapshot.totalJobs, 1, 'the disabled job is not part of the denominator either');
+});
+
+test('a job that only runs by hand is not owed one either', async () => {
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'CUST_FINHUB_archive', unscheduled: true }],
+  });
+
+  assert.deepEqual(snapshot.risks, [], 'no schedule means no expectation');
+  assert.equal(snapshot.excludedUnscheduled, 1);
+  assert.equal(snapshot.totalJobs, 0);
+
+  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const text = renderProtection(snapshot, { now: new Date(), timezone: 'UTC' });
+  assert.match(text, /Не учитываются:.*1 без расписания/, 'what is outside the check is stated');
+});
+
+test('a job whose schedule could not be read is still judged', async () => {
+  // OPS_Billing_DB_file is absent from /api/v1/jobs; an unknown schedule must
+  // not become a silent exemption.
+  const snapshot = assess({
+    jobs: [{ id: '1', name: 'OPS_Billing_DB_file', unscheduled: undefined }],
+  });
+
+  assert.equal(snapshot.risks.length, 1);
+  assert.equal(snapshot.excludedUnscheduled, 0);
 });
