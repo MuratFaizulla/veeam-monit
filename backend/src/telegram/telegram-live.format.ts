@@ -20,7 +20,7 @@ const BAR = 10;
  * itself is the only honest cap, so `build` is asked for progressively shorter
  * lists until one fits.
  */
-const fitted = (count: number, build: (shown: number) => string): string => {
+export const fitted = (count: number, build: (shown: number) => string): string => {
   const whole = build(count);
   if (whole.length <= MAX_LENGTH) return whole;
 
@@ -126,7 +126,7 @@ export const renderHealth = (health: LiveHealth, clock: LiveClock): string => {
     health.reachable && health.serverTime
       ? ` · часы сервера ${escapeHtml(moment(health.serverTime, clock))}`
       : '';
-  lines.push(`<i>Обновлено ${stamp(clock.now, clock)}${serverClock}</i>`);
+  lines.push(`<i>Обновлено ${stampOf(clock.now, clock)}${serverClock}</i>`);
 
   return truncate(lines.join('\n'));
 };
@@ -149,7 +149,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       '',
       escapeHtml(running.unavailable),
       '',
-      `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+      `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
     );
     return truncate(lines.join('\n'));
   }
@@ -164,7 +164,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       // repeating one line of it in two places invites the two to disagree.
       `<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`,
       '',
-      `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+      `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
     );
     return truncate(lines.join('\n'));
   }
@@ -185,7 +185,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       body.push(
         `<b>Заданий всего:</b> ${running.totalJobs}`,
         '',
-        `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+        `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
       );
       return body.join('\n');
     }),
@@ -204,14 +204,14 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
         '',
         escapeHtml(schedule.unavailable),
         '',
-        `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+        `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
       ].join('\n'),
     );
   }
 
   const today = dayKey(clock.now, clock);
   const runs = schedule.upcoming.filter((run) => dayKey(new Date(run.at), clock) === today);
-  const footer = `<i>Обновлено ${stamp(clock.now, clock)}</i>`;
+  const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
 
   if (runs.length === 0) {
     const later = schedule.upcoming[0];
@@ -275,7 +275,7 @@ const nextRunLabel = (
 ): string => {
   if (!next) return 'по расписанию ничего не запланировано';
   const at = Date.parse(next.at);
-  const when = day(next.at, clock);
+  const when = dayOf(next.at, clock);
   const distance = Number.isFinite(at) ? at - clock.now.getTime() : NaN;
   const relative =
     Number.isFinite(distance) && distance > 0 ? ` (через ${duration(distance)})` : '';
@@ -321,7 +321,7 @@ const moment = (iso: string, clock: LiveClock): string => {
   });
 };
 
-const stamp = (value: Date, clock: LiveClock): string =>
+export const stampOf = (value: Date, clock: LiveClock): string =>
   parts(value, clock, {
     day: '2-digit',
     month: '2-digit',
@@ -345,7 +345,7 @@ const dayKey = (value: Date, clock: LiveClock): string =>
   parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 /** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
-const day = (iso: string, clock: LiveClock): string => {
+export const dayOf = (iso: string, clock: LiveClock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return escapeHtml(iso);
   const time = timeOnly(iso, clock);

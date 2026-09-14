@@ -50,7 +50,26 @@ export interface AppConfig {
      * Topics that hold one always-current message instead of a stream of them.
      * These are state, not events: they are edited in place, never appended to.
      */
-    liveTopics: { health: string; running: string; schedule: string; performance: string; repositories: string };
+    liveTopics: {
+      health: string;
+      running: string;
+      schedule: string;
+      performance: string;
+      repositories: string;
+      protection: string;
+    };
+    /**
+     * How often the restore-point scan runs. It reads every restore point, so
+     * it is far heavier than a monitor tick — and far less urgent, since the
+     * age of a backup changes on the scale of hours.
+     */
+    protectionIntervalMs: number;
+    /** Floor before a missing restore point is reported, in days. */
+    protectionStaleDays: number;
+    /** How many of its own intervals a job may miss before it is overdue. */
+    protectionOverdueFactor: number;
+    /** Consecutive failed runs that make a job worth reporting on their own. */
+    protectionFailureStreak: number;
     /** Existing forum thread for the Performance live message. 0 auto-creates by name. */
     performanceTopicId: number;
     repositoriesTopicId: number;
@@ -83,13 +102,6 @@ const list = (value: string | undefined): string[] =>
 const ROUTING_MODES: TelegramRoutingMode[] = ['job', 'severity', 'kind', 'single'];
 const SEVERITIES: NotificationSeverity[] = ['critical', 'warning', 'success', 'info'];
 
-/**
- * Defaults to : a fixed set of topics, with alerts in General.
- *
- *  was the default until a per-job topic had been created for every job
- * that ever changed result, and the topic list stopped being readable. The
- * live status topics are unaffected by the mode — they are state, not events.
- */
 /**
  * Defaults to `single`: a fixed set of topics, with alerts in General.
  *
@@ -161,9 +173,14 @@ export const configuration = (): AppConfig => ({
       schedule: text(process.env.TELEGRAM_TOPIC_SCHEDULE, '📅 Today'),
       performance: text(process.env.TELEGRAM_TOPIC_PERFORMANCE, '📈 Performance'),
       repositories: text(process.env.TELEGRAM_TOPIC_REPOSITORIES_LIVE, '💾 Repositories'),
+      protection: text(process.env.TELEGRAM_TOPIC_PROTECTION, '🛡 Protection'),
     },
     performanceTopicId: int(process.env.TELEGRAM_PERFORMANCE_TOPIC_ID, 0),
     repositoriesTopicId: int(process.env.TELEGRAM_REPOSITORIES_TOPIC_ID, 0),
+    protectionIntervalMs: int(process.env.TELEGRAM_PROTECTION_INTERVAL_MIN, 30) * 60_000,
+    protectionStaleDays: int(process.env.TELEGRAM_PROTECTION_STALE_DAYS, 3),
+    protectionOverdueFactor: Number(process.env.TELEGRAM_PROTECTION_OVERDUE_FACTOR) || 2.5,
+    protectionFailureStreak: int(process.env.TELEGRAM_PROTECTION_FAILURE_STREAK, 3),
     liveRefreshMs: int(process.env.TELEGRAM_LIVE_REFRESH_MIN, 5) * 60_000,
     timezone: text(process.env.TELEGRAM_TIMEZONE, ''),
   },

@@ -87,6 +87,34 @@ export interface VeeamTaskSession {
   progress?: VeeamTaskProgress | null;
 }
 
+/**
+ * Item of GET /api/v1/backups — the link from a restore point back to the job
+ * that produced it. Restore points carry only `backupId`, so without this the
+ * points cannot be attributed to anything.
+ */
+export interface VeeamBackup {
+  id?: string;
+  name?: string;
+  jobId?: string;
+  creationTime?: string;
+}
+
+/**
+ * Item of GET /api/v1/restorePoints — the actual recoverable copy.
+ *
+ * This is the only endpoint that answers "is this data protected". A job can
+ * report Success and still have produced nothing new for months.
+ */
+export interface VeeamRestorePoint {
+  id?: string;
+  /** The protected machine, not the job: one point is created per VM per run. */
+  name?: string;
+  backupId?: string;
+  /** Identifies the run. Every VM of one run shares it. */
+  sessionId?: string;
+  creationTime?: string;
+}
+
 /** Item of .../repositories/states — capacity figures live here, not in the config. */
 export interface VeeamRepositoryState {
   id?: string;

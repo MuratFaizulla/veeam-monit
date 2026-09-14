@@ -7,6 +7,8 @@ import {
   VeeamCollection,
   VeeamJobState,
   VeeamRepositoryState,
+  VeeamBackup,
+  VeeamRestorePoint,
   VeeamSession,
   VeeamTaskSession,
 } from '../veeam/veeam.types';
@@ -32,10 +34,29 @@ import {
   renderPerformance,
 } from './telegram-performance';
 import { renderRepositories } from './telegram-repositories.format';
+import {
+  ProtectionSnapshot,
+  assessProtection,
+  renderProtection,
+} from './telegram-protection';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const SESSIONS = '/api/v1/sessions';
+const BACKUPS = '/api/v1/backups';
+const RESTORE_POINTS = '/api/v1/restorePoints';
+
+/**
+ * Restore points are read a page of this size at a time. The default of 100
+ * would turn a nine-thousand-point estate into ninety requests.
+ */
+const SCAN_PAGE = 500;
+
+/** How far back sessions are read when counting consecutive failures. */
+const STREAK_WINDOW_DAYS = 7;
+
+/** Restore point timestamps kept per job — enough to learn its rhythm. */
+const POINTS_PER_JOB = 11;
 
 /** Veeam results that mean "this run went wrong", lower-cased. */
 const BAD_RESULTS = new Set(['failed', 'warning']);
@@ -88,6 +109,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private lastAuthenticated?: boolean;
   /** Veeam's own clock from the last successful reachability probe. */
   private lastServerTime?: string;
+  /** Newest restore point timestamps per job id, from the last protection scan. */
+  private pointsByJob = new Map<string, number[]>();
+  private streakByJob = new Map<string, number>();
+  private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
     reachable: null,
@@ -340,6 +365,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     );
 
     await this.live.publish('repositories', renderRepositories(repositories, clock));
+
+    await this.live.publish(
+      'protection',
+      renderProtection(await this.protectionState(jobs, accessToken), clock),
+    );
   }
 
   /** Builds the Performance live slot from active sessions and their tasks. */
@@ -404,16 +434,162 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return { jobs, activeCount: sessions.length, statisticsAvailable };
   }
 
+  /* ---------------------------------------------------------------- *
+   * Protection: what is actually recoverable
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Builds the Protection slot.
+   *
+   * The scan reads every restore point in the estate, which costs ~20 requests
+   * and a good few seconds, so it runs on its own slow cadence rather than
+   * every minute. What it caches is the raw evidence, not the verdict: the
+   * verdict is recomputed each cycle against the current clock, so the ages
+   * shown stay right between scans.
+   */
+  private async protectionState(
+    jobs: VeeamJobState[] | undefined,
+    accessToken: string | null,
+  ): Promise<ProtectionSnapshot> {
+    const thresholds = {
+      staleDays: this.config.protectionStaleDays,
+      overdueFactor: this.config.protectionOverdueFactor,
+      minStreak: this.config.protectionFailureStreak,
+    };
+    const blank = (unavailable: string): ProtectionSnapshot => ({
+      risks: [],
+      totalJobs: jobs?.length ?? 0,
+      protectedJobs: 0,
+      ...thresholds,
+      unavailable,
+    });
+
+    if (!jobs || !accessToken) {
+      return blank('Veeam не ответил на этот цикл, поэтому защищённость не пересчитывалась.');
+    }
+
+    if (Date.now() - this.protectionScannedAt >= this.config.protectionIntervalMs) {
+      const scanned = await this.scanProtection(accessToken);
+      if (!scanned && !this.protectionScannedAt) {
+        return blank('Точки восстановления ещё не прочитаны.');
+      }
+    }
+
+    return assessProtection({
+      jobs: jobs
+        .filter((job): job is VeeamJobState & { id: string } => Boolean(job.id))
+        .map((job) => ({
+          id: job.id,
+          name: job.name ?? job.id,
+          type: job.type,
+          lastRun: job.lastRun,
+        })),
+      pointsByJob: this.pointsByJob,
+      streakByJob: this.streakByJob,
+      now: Date.now(),
+      ...thresholds,
+    });
+  }
+
+  /** Refreshes the cached evidence. Returns false when the scan did not finish. */
+  private async scanProtection(accessToken: string): Promise<boolean> {
+    const startedAt = Date.now();
+    try {
+      const backups = await this.allPages<VeeamBackup>(BACKUPS, accessToken, {}, SCAN_PAGE);
+      const jobOfBackup = new Map<string, string>();
+      for (const backup of backups) {
+        if (backup.id && backup.jobId) jobOfBackup.set(backup.id, backup.jobId);
+      }
+
+      const points = await this.allPages<VeeamRestorePoint>(
+        RESTORE_POINTS,
+        accessToken,
+        { orderColumn: 'CreationTime', orderAsc: false },
+        SCAN_PAGE,
+      );
+
+      // One restore point is created per protected machine, so a job covering
+      // eleven VMs produces eleven points minutes apart. Taken raw, that made
+      // a quarterly job look like it ran hourly. Points are therefore folded
+      // down to one timestamp per run, which is what `sessionId` identifies.
+      const runsByJob = new Map<string, Map<string, number>>();
+      for (const point of points) {
+        const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
+        if (!jobId || !point.creationTime) continue;
+        const at = Date.parse(point.creationTime);
+        if (!Number.isFinite(at)) continue;
+
+        const runs = runsByJob.get(jobId) ?? new Map<string, number>();
+        const run = point.sessionId ?? point.creationTime;
+        // Only the newest few runs matter: one for the age, the rest for rhythm.
+        if (!runs.has(run) && runs.size >= POINTS_PER_JOB) continue;
+        runs.set(run, Math.max(runs.get(run) ?? 0, at));
+        runsByJob.set(jobId, runs);
+      }
+
+      this.pointsByJob = new Map(
+        [...runsByJob].map(([jobId, runs]) => [jobId, [...runs.values()]]),
+      );
+      this.streakByJob = await this.failureStreaks(accessToken);
+      this.protectionScannedAt = Date.now();
+      this.logger.log(
+        `Protection scan: ${points.length} restore points, ${runsByJob.size} jobs, ${Date.now() - startedAt}ms`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(`Protection scan failed: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Consecutive failures per job, counted back from its newest session.
+   * A streak breaks at the first success, which is what makes "three in a row"
+   * mean a job that is still broken rather than one that failed thrice ever.
+   */
+  private async failureStreaks(accessToken: string): Promise<Map<string, number>> {
+    const since = new Date(Date.now() - STREAK_WINDOW_DAYS * 86_400_000).toISOString();
+    const sessions = await this.allPages<VeeamSession>(
+      SESSIONS,
+      accessToken,
+      { createdAfterFilter: since, orderColumn: 'CreationTime', orderAsc: false },
+      SCAN_PAGE,
+    );
+
+    const newestFirst = new Map<string, VeeamSession[]>();
+    for (const session of sessions) {
+      if (!session.jobId || !session.endTime) continue;
+      // Only actual job runs. Malware scans, compliance analysis, retention
+      // and configuration backups also appear here and are not the job failing.
+      if (!/Job$/.test(session.sessionType ?? '')) continue;
+      const list = newestFirst.get(session.jobId) ?? [];
+      list.push(session);
+      newestFirst.set(session.jobId, list);
+    }
+
+    const streaks = new Map<string, number>();
+    for (const [jobId, list] of newestFirst) {
+      list.sort((a, b) => Date.parse(b.creationTime ?? '') - Date.parse(a.creationTime ?? ''));
+      let count = 0;
+      for (const session of list) {
+        if ((session.result?.result ?? '').toLowerCase() === 'success') break;
+        count += 1;
+      }
+      if (count > 0) streaks.set(jobId, count);
+    }
+    return streaks;
+  }
+
   /** Reads every page; Veeam may cap the requested limit below our value. */
   private async allPages<T>(
     path: string,
     accessToken: string,
     params: Record<string, unknown> = {},
+    limit = 100,
   ): Promise<T[]> {
     const items: T[] = [];
     let token = accessToken;
     let skip = 0;
-    const limit = 100;
     for (;;) {
       let page: VeeamCollection<T>;
       try {
