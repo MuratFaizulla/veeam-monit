@@ -96,4 +96,5 @@ export interface VeeamRepositoryState {
   capacityGB?: number;
   freeGB?: number;
   usedSpaceGB?: number;
+  isOnline?: boolean;
 }

@@ -8,7 +8,7 @@ import { TelegramApiError, TelegramTransportService } from './telegram-transport
 import { TelegramChat } from './telegram.types';
 
 /** A topic that holds exactly one message, kept current. */
-export type LiveSlot = 'health' | 'running' | 'schedule' | 'performance';
+export type LiveSlot = 'health' | 'running' | 'schedule' | 'performance' | 'repositories';
 
 /**
  * The "one message, always current" module.
@@ -71,7 +71,7 @@ export class TelegramLiveService {
     if (
       previous &&
       previous.hash === hash &&
-      (slot === 'performance' || Date.now() - previous.at < this.config.liveRefreshMs)
+      (['performance', 'repositories'].includes(slot) || Date.now() - previous.at < this.config.liveRefreshMs)
     ) {
       return;
     }
@@ -92,7 +92,7 @@ export class TelegramLiveService {
 
     const messageId = await this.send(chat, slot, text);
     this.store.rememberLiveMessage(chatId, slot, { messageId, hash, at: Date.now() });
-    if (slot === 'performance') await this.pin(chatId, messageId);
+    if (['performance', 'repositories'].includes(slot)) await this.pin(chatId, messageId);
   }
 
   /** True when the existing message now carries `text`. */
@@ -116,9 +116,15 @@ export class TelegramLiveService {
 
   private async send(chat: TelegramChat, slot: LiveSlot, text: string): Promise<number> {
     const topic = this.config.liveTopics[slot];
+    const configuredThread =
+      slot === 'performance'
+        ? this.config.performanceTopicId
+        : slot === 'repositories'
+          ? this.config.repositoriesTopicId
+          : 0;
     const destination =
-      slot === 'performance' && this.config.performanceTopicId > 0 && chat.is_forum
-        ? { chatId: String(chat.id), threadId: this.config.performanceTopicId, topic }
+      configuredThread > 0 && chat.is_forum
+        ? { chatId: String(chat.id), threadId: configuredThread, topic }
         : await this.topics.destination(chat, topic);
     try {
       return await this.transport.sendMessage(destination, text);
