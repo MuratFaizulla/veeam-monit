@@ -1,4 +1,4 @@
-import { Injectable, Logger, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, isAxiosError } from 'axios';
 import { Agent } from 'https';
@@ -75,15 +75,6 @@ export class VeeamHttpService {
         refresh_token: refreshToken,
       }),
     );
-  }
-
-  /** Expires the access and refresh tokens on the backup server. */
-  async logout(accessToken: string): Promise<void> {
-    await this.request<unknown>({
-      method: 'POST',
-      path: '/api/oauth2/logout',
-      accessToken,
-    });
   }
 
   async request<T>(req: RawRequest): Promise<T> {
@@ -187,12 +178,7 @@ export class VeeamHttpService {
 
     this.logger.error(`${path}: ${message}`);
 
-    return new VeeamApiError({
-      message,
-      status: HttpStatus.BAD_GATEWAY,
-      upstreamStatus: null,
-      path,
-    });
+    return new VeeamApiError(message);
   }
 
   /** Veeam answered with a 4xx/5xx and, usually, an Error model in the body. */
@@ -203,18 +189,9 @@ export class VeeamHttpService {
       (typeof payload.error_description === 'string' && payload.error_description) ||
       (typeof payload.error === 'string' && payload.error) ||
       `Veeam API responded with HTTP ${status}`;
-    const errorCode = typeof payload.errorCode === 'string' ? payload.errorCode : undefined;
 
     this.logger.warn(`${path}: HTTP ${status} — ${message}`);
 
-    return new VeeamApiError({
-      message,
-      // 401 from Veeam must not become a 401 for our own client, otherwise the
-      // React app cannot tell "your app session died" from "Veeam rejected us".
-      status: status === HttpStatus.UNAUTHORIZED ? HttpStatus.BAD_GATEWAY : status,
-      upstreamStatus: status,
-      errorCode,
-      path,
-    });
+    return new VeeamApiError(message);
   }
 }
