@@ -34,11 +34,24 @@ export interface RunningJob {
   startedAt?: string;
 }
 
+export interface ScheduledRun {
+  name: string;
+  /** ISO instant of the next scheduled start. */
+  at: string;
+}
+
 export interface LiveRunning {
   jobs: RunningJob[];
   totalJobs: number;
-  next?: { name: string; at: string } | null;
+  /** Only shown while nothing is running; the schedule slot owns the full list. */
+  next?: ScheduledRun | null;
   /** Set when the figures could not be refreshed; says why, in Russian. */
+  unavailable?: string;
+}
+
+export interface LiveSchedule {
+  /** Every future run, ascending. The renderer decides what counts as today. */
+  upcoming: ScheduledRun[];
   unavailable?: string;
 }
 
@@ -138,9 +151,60 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
     lines.push(`<b>Заданий всего:</b> ${running.totalJobs}`);
   }
 
-  lines.push(`<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`);
+  // Only when nothing is running: then "what happens next" is the question
+  // being asked here. Otherwise the schedule slot answers it, in full, and
+  // repeating one line of it in two places invites the two to disagree.
+  if (running.jobs.length === 0) {
+    lines.push(`<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`);
+  }
   lines.push('', `<i>Обновлено ${stamp(clock.now, clock)}</i>`);
 
+  return truncate(lines.join('\n'));
+};
+
+/* ------------------------------------------------------------------ *
+ * Today's schedule
+ * ------------------------------------------------------------------ */
+
+/** Beyond this many entries the list is summarised instead of listed. */
+const MAX_SCHEDULED = 30;
+
+export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string => {
+  if (schedule.unavailable) {
+    return truncate(
+      [
+        '⚠️ <b>Расписание недоступно</b>',
+        '',
+        escapeHtml(schedule.unavailable),
+        '',
+        `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+      ].join('\n'),
+    );
+  }
+
+  const today = dayKey(clock.now, clock);
+  const runs = schedule.upcoming.filter((run) => dayKey(new Date(run.at), clock) === today);
+  const lines: string[] = [];
+
+  if (runs.length === 0) {
+    lines.push('📅 <b>На сегодня запусков больше нет</b>', '');
+    const later = schedule.upcoming[0];
+    lines.push(`<b>Следующий:</b> ${nextRunLabel(later ?? null, clock)}`);
+  } else {
+    lines.push(
+      `📅 <b>Сегодня осталось ${runs.length} ${plural(runs.length, 'запуск', 'запуска', 'запусков')}</b>`,
+      '',
+    );
+    for (const run of runs.slice(0, MAX_SCHEDULED)) {
+      lines.push(`<b>${timeOnly(run.at, clock)}</b> · ${escapeHtml(run.name)}`);
+    }
+    if (runs.length > MAX_SCHEDULED) {
+      const rest = runs.length - MAX_SCHEDULED;
+      lines.push(`…и ещё ${rest} ${plural(rest, 'запуск', 'запуска', 'запусков')}`);
+    }
+  }
+
+  lines.push('', `<i>Обновлено ${stamp(clock.now, clock)}</i>`);
   return truncate(lines.join('\n'));
 };
 
@@ -220,17 +284,23 @@ const timeOnly = (iso: string, clock: LiveClock): string => {
   return parts(date, clock, { hour: '2-digit', minute: '2-digit' });
 };
 
+/**
+ * Which calendar day an instant falls on, in the display timezone. "Today" is
+ * a question about the operator's clock, not about UTC, so every comparison
+ * goes through this rather than through Date's own local-time methods.
+ */
+const dayKey = (value: Date, clock: LiveClock): string =>
+  parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
+
 /** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
 const day = (iso: string, clock: LiveClock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return escapeHtml(iso);
   const time = timeOnly(iso, clock);
-  const dayOf = (value: Date): string =>
-    parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  const today = dayOf(clock.now);
-  const tomorrow = dayOf(new Date(clock.now.getTime() + 86_400_000));
-  const target = dayOf(date);
+  const today = dayKey(clock.now, clock);
+  const tomorrow = dayKey(new Date(clock.now.getTime() + 86_400_000), clock);
+  const target = dayKey(date, clock);
 
   if (target === today) return `сегодня в ${time}`;
   if (target === tomorrow) return `завтра в ${time}`;

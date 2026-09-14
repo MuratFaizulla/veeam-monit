@@ -71,7 +71,9 @@ function world(env = {}, handlers = {}, stateFile) {
     TELEGRAM_SEND_INTERVAL_MS: '0',
     TELEGRAM_REPOSITORY_FREE_PERCENT: '0',
     TELEGRAM_ROUTES_FILE: undefined,
-    TELEGRAM_ROUTING_MODE: undefined,
+    // Most tests below exercise per-job topics, so they ask for that mode; the
+    // shipped default is 'single' and has its own test.
+    TELEGRAM_ROUTING_MODE: 'job',
     TELEGRAM_DIGEST_HOUR: undefined,
     // The live status messages have their own tests; leaving them on would add
     // two sends to every cycle and drown the assertions below.
@@ -663,12 +665,12 @@ test('the live status is one message per topic, edited in place on later cycles'
 
   await w.monitor.check();
   const opening = w.api.sent();
-  assert.equal(opening.length, 2, 'one health message and one running message');
+  assert.equal(opening.length, 3, 'health, running and schedule');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
     w.api.of('createForumTopic').map((t) => t.name),
-    ['🩺 Monitor health', '▶️ Running now'],
+    ['🩺 Monitor health', '▶️ Running now', '📅 Today'],
   );
 
   w.api.reset();
@@ -706,7 +708,10 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
   assert.match(text, /<b>SQL Daily<\/b> — 62%/);
   assert.match(text, /▰▰▰▰▰▰▱▱▱▱/);
   assert.match(text, /идёт 22 мин/);
-  assert.match(text, /Ближайший запуск:.*SQL Daily/);
+  // While something is running, the next run belongs to the schedule slot only.
+  assert.ok(!/Ближайший запуск/.test(text));
+  const schedule = w.api.sent().find((m) => /Today|Сегодня|расписан/.test(m.text)).text;
+  assert.match(schedule, /SQL Daily/);
 });
 
 test('a live message Telegram no longer has is deleted and replaced, not duplicated', async () => {
@@ -734,7 +739,7 @@ test('the live message survives a restart instead of starting a second one', asy
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
   first.store.flush();
-  assert.equal(first.api.sent().length, 2);
+  assert.equal(first.api.sent().length, 3);
 
   const w = world(LIVE, {}, first.file);
   const veeam = veeamFake({
@@ -795,10 +800,78 @@ test('a moving server clock alone does not rewrite the health message', async ()
   const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
-  assert.equal(w.api.sent().length, 2);
+  assert.equal(w.api.sent().length, 3);
 
   w.api.reset();
   await monitor.check();
   assert.deepEqual(w.api.of('editMessageText'), [], 'nothing an operator cares about changed');
   assert.deepEqual(w.api.sent(), []);
+});
+
+test('by default every alert goes to General instead of growing a topic per job', async () => {
+  const saved = process.env.TELEGRAM_ROUTING_MODE;
+  delete process.env.TELEGRAM_ROUTING_MODE;
+  try {
+    assert.equal(configuration().telegram.routingMode, 'single');
+  } finally {
+    if (saved !== undefined) process.env.TELEGRAM_ROUTING_MODE = saved;
+  }
+
+  const w = monitorWorld({ TELEGRAM_ROUTING_MODE: 'single' }, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  w.setJobs([job('1', 'SQL Daily', 'Failed')]);
+  w.api.reset();
+  await w.monitor.check();
+
+  const alert = w.api.sent().find((m) => /SQL Daily/.test(m.text));
+  assert.equal(alert.message_thread_id, undefined, 'General, not a per-job thread');
+  assert.equal(w.api.of('createForumTopic').length, 0);
+});
+
+test('the schedule slot lists what is still due today, and says so when nothing is', async () => {
+  const { renderSchedule } = require('../dist/telegram/telegram-live.format');
+  const now = new Date('2026-09-14T12:00:00Z');
+  const clock = { now, timezone: 'UTC' };
+  const at = (iso) => new Date(iso).toISOString();
+
+  const today = renderSchedule(
+    {
+      upcoming: [
+        { name: 'OPS_vCloud_vcd02', at: at('2026-09-14T13:13:00Z') },
+        { name: 'SQL Daily Backup', at: at('2026-09-14T20:00:00Z') },
+        { name: 'FS Weekly', at: at('2026-09-15T03:00:00Z') },
+      ],
+    },
+    clock,
+  );
+  assert.match(today, /Сегодня осталось 2 запуска/);
+  assert.match(today, /13:13.*OPS_vCloud_vcd02/);
+  assert.ok(!/FS Weekly/.test(today), 'tomorrow is not today');
+
+  const empty = renderSchedule(
+    { upcoming: [{ name: 'FS Weekly', at: at('2026-09-15T03:00:00Z') }] },
+    clock,
+  );
+  assert.match(empty, /На сегодня запусков больше нет/);
+  assert.match(empty, /Следующий:.*FS Weekly — завтра в 03:00/);
+
+  const none = renderSchedule({ upcoming: [] }, clock);
+  assert.match(none, /по расписанию ничего не запланировано/);
+});
+
+test('a cycle Veeam did not answer leaves the schedule honest about it', async () => {
+  const w = world(LIVE);
+  const veeam = veeamFake({
+    '/api/v1/serverTime': () => {
+      throw new Error('connect ECONNREFUSED');
+    },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+
+  await monitor.check();
+
+  const texts = w.api.sent().map((m) => m.text);
+  assert.ok(texts.some((t) => /Расписание недоступно/.test(t)));
+  assert.ok(!texts.some((t) => /На сегодня запусков больше нет/.test(t)));
 });

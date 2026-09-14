@@ -24,7 +24,9 @@ async function bootstrap(): Promise<void> {
   logger.log(`Telegram routing mode: ${telegram.routingMode}, state: ${telegram.stateFile}`);
   logger.log(
     telegram.live
-      ? `Live topics: "${telegram.liveTopics.health}", "${telegram.liveTopics.running}"`
+      ? `Live topics: ${Object.values(telegram.liveTopics)
+          .map((name) => `"${name}"`)
+          .join(', ')}`
       : 'Live topics disabled (TELEGRAM_LIVE=false)',
   );
   logger.log(`Writing logs to ${logFile}`);
