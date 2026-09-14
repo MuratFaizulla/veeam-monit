@@ -44,6 +44,17 @@ export interface AppConfig {
     repositoryFreePercent: number;
     /** Local hour for the daily digest, or -1 to disable it. */
     digestHour: number;
+    /** Whether the always-current status messages are maintained at all. */
+    live: boolean;
+    /**
+     * Topics that hold one always-current message instead of a stream of them.
+     * These are state, not events: they are edited in place, never appended to.
+     */
+    liveTopics: { health: string; running: string };
+    /** Rewrite an unchanged live message at least this often, as a heartbeat. */
+    liveRefreshMs: number;
+    /** IANA zone used to render times for humans. Empty means the server's own. */
+    timezone: string;
   };
 }
 
@@ -125,5 +136,12 @@ export const configuration = (): AppConfig => ({
     repositoryAlertCooldownMs: int(process.env.TELEGRAM_REPOSITORY_COOLDOWN_MIN, 720) * 60_000,
     repositoryFreePercent: int(process.env.TELEGRAM_REPOSITORY_FREE_PERCENT, 10),
     digestHour: int(process.env.TELEGRAM_DIGEST_HOUR, -1),
+    live: bool(process.env.TELEGRAM_LIVE, true),
+    liveTopics: {
+      health: text(process.env.TELEGRAM_TOPIC_HEALTH, '🩺 Состояние сервера'),
+      running: text(process.env.TELEGRAM_TOPIC_RUNNING, '▶️ Сейчас выполняется'),
+    },
+    liveRefreshMs: int(process.env.TELEGRAM_LIVE_REFRESH_MIN, 5) * 60_000,
+    timezone: text(process.env.TELEGRAM_TIMEZONE, ''),
   },
 });

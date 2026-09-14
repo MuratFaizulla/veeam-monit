@@ -12,6 +12,7 @@ const { TelegramTopicsService } = require('../dist/telegram/telegram-topics.serv
 const { TelegramRoutingService } = require('../dist/telegram/telegram-routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
+const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
 
 const CHAT = '-1001234567890';
 
@@ -72,6 +73,9 @@ function world(env = {}, handlers = {}, stateFile) {
     TELEGRAM_ROUTES_FILE: undefined,
     TELEGRAM_ROUTING_MODE: undefined,
     TELEGRAM_DIGEST_HOUR: undefined,
+    // The live status messages have their own tests; leaving them on would add
+    // two sends to every cycle and drown the assertions below.
+    TELEGRAM_LIVE: 'false',
     ...env,
   });
   const config = { getOrThrow: () => telegram };
@@ -81,9 +85,10 @@ function world(env = {}, handlers = {}, stateFile) {
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
+  const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
-  return { file, config, store, api, transport, topics, routing, service, telegram };
+  return { file, config, store, api, transport, topics, routing, service, live, telegram };
 }
 
 function veeamFake(routes) {
@@ -107,7 +112,7 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     ...extraRoutes,
   });
   const auth = { configured: true, username: 'svc@example.com', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
   return { ...w, monitor, auth, setJobs: (next) => (states = next) };
 }
 
@@ -340,9 +345,7 @@ test('the first cycle seeds job results silently and the next one reports change
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success'), job('2', 'FS Daily', 'Success')]);
 
   await w.monitor.check();
-  const startup = w.api.sent();
-  assert.equal(startup.length, 1, 'only the startup notice on the first cycle');
-  assert.match(startup[0].text, /Veeam Monitor запущен/);
+  assert.deepEqual(w.api.sent(), [], 'starting up is not an event, so the first cycle is silent');
 
   w.api.reset();
   w.setJobs([job('1', 'SQL Daily', 'Failed'), job('2', 'FS Daily', 'Success')]);
@@ -396,14 +399,13 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/sessions': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
   await monitor.check();
 
-  // Only the startup notice: the persisted result stops a duplicate alert, and
-  // the persisted topic id stops a second "SQL Daily" topic being created.
+  // Nothing at all: the persisted result stops a duplicate alert, and the
+  // persisted topic id stops a second "SQL Daily" topic being created.
   assert.equal(w.api.of('createForumTopic').length, 0);
-  assert.equal(w.api.sent().length, 1);
-  assert.match(w.api.sent()[0].text, /Veeam Monitor запущен/);
+  assert.deepEqual(w.api.sent(), []);
   fs.rmSync(first.file, { force: true });
 });
 
@@ -422,7 +424,7 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
       return 'tok';
     },
   };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /не авторизуется/.test(payload.text));
@@ -452,7 +454,7 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     '/api/v1/jobs/states': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
   w.api.reset();
@@ -479,7 +481,7 @@ test('a repository below the free-space threshold is reported once per cooldown'
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /Repo0/.test(payload.text));
@@ -581,7 +583,7 @@ test('a failing job step does not abort the repository check', async () => {
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
 
@@ -602,7 +604,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
   assert.equal(w.store.snapshot().cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
@@ -643,4 +645,160 @@ test('every state write persists without the caller managing save()', async () =
   reopened.flush();
   assert.equal(new TelegramStateStore(file).jobResult('job-1'), undefined);
   fs.rmSync(file, { force: true });
+});
+
+/* ------------------------------------------------------------------ *
+ * Live status messages
+ * ------------------------------------------------------------------ */
+
+const LIVE = { TELEGRAM_LIVE: 'true' };
+const running = (name, extra = {}) => ({
+  ...job('1', name, 'Success'),
+  status: 'Working',
+  ...extra,
+});
+
+test('the live status is one message per topic, edited in place on later cycles', async () => {
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+
+  await w.monitor.check();
+  const opening = w.api.sent();
+  assert.equal(opening.length, 2, 'one health message and one running message');
+  assert.ok(opening.some((m) => /всё работает/.test(m.text)));
+  assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
+  assert.deepEqual(
+    w.api.of('createForumTopic').map((t) => t.name),
+    ['🩺 Состояние сервера', '▶️ Сейчас выполняется'],
+  );
+
+  w.api.reset();
+  w.setJobs([running('SQL Daily')]);
+  await w.monitor.check();
+
+  assert.deepEqual(w.api.sent(), [], 'a restart-free change never posts a second message');
+  const edits = w.api.of('editMessageText');
+  assert.equal(edits.length, 1, 'only the message whose content actually changed');
+  assert.match(edits[0].text, /Сейчас выполняется: 1 задание/);
+});
+
+test('an unchanged live message is left alone instead of rewritten every cycle', async () => {
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+
+  w.api.reset();
+  await w.monitor.check();
+  await w.monitor.check();
+
+  assert.deepEqual(w.api.sent(), []);
+  assert.deepEqual(w.api.of('editMessageText'), []);
+});
+
+test('a running job is shown with its progress, elapsed time and next run', async () => {
+  const startedAt = new Date(Date.now() - 22 * 60_000).toISOString();
+  const nextRun = new Date(Date.now() + 3 * 3_600_000).toISOString();
+  const w = monitorWorld(LIVE, [running('SQL Daily', { nextRun })], {
+    '/api/v1/sessions': { data: [{ jobId: '1', state: 'Working', progressPercent: 62, creationTime: startedAt }] },
+  });
+
+  await w.monitor.check();
+
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
+  assert.match(text, /<b>SQL Daily<\/b> — 62%/);
+  assert.match(text, /▰▰▰▰▰▰▱▱▱▱/);
+  assert.match(text, /идёт 22 мин/);
+  assert.match(text, /Ближайший запуск:.*SQL Daily/);
+});
+
+test('a live message Telegram no longer has is deleted and replaced, not duplicated', async () => {
+  let gone = false;
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')], {}, {
+    editMessageText: () =>
+      gone
+        ? { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' }
+        : undefined,
+  });
+  await w.monitor.check();
+
+  w.api.reset();
+  gone = true;
+  w.setJobs([running('SQL Daily')]);
+  await w.monitor.check();
+
+  assert.equal(w.api.of('deleteMessage').length, 1, 'the stale message is removed');
+  assert.equal(w.api.sent().length, 1, 'exactly one replacement');
+  assert.match(w.api.sent()[0].text, /Сейчас выполня[ею]тся/);
+  assert.equal(w.api.of('createForumTopic').length, 0, 'the topic itself is still known');
+});
+
+test('the live message survives a restart instead of starting a second one', async () => {
+  const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  await first.monitor.check();
+  first.store.flush();
+  assert.equal(first.api.sent().length, 2);
+
+  const w = world(LIVE, {}, first.file);
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
+    '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  await monitor.check();
+
+  assert.deepEqual(w.api.sent(), [], 'the persisted message id is reused');
+  assert.equal(w.api.of('createForumTopic').length, 0);
+  fs.rmSync(first.file, { force: true });
+});
+
+test('an unreachable Veeam is reported as unknown, not as "nothing is running"', async () => {
+  const w = world(LIVE);
+  const veeam = veeamFake({
+    '/api/v1/serverTime': () => {
+      throw new Error('connect ECONNREFUSED');
+    },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+
+  await monitor.check();
+
+  const texts = w.api.sent().map((m) => m.text);
+  assert.ok(texts.some((t) => /🔴 <b>Veeam — сервер недоступен/.test(t)));
+  assert.ok(texts.some((t) => /Данные о заданиях недоступны/.test(t)));
+  assert.ok(!texts.some((t) => /не выполняется ни одно задание/.test(t)));
+});
+
+test('counts are written in Russian, with the right form for 1, 2 and 5', async () => {
+  const { plural, duration } = require('../dist/telegram/telegram-live.format');
+  const jobs = (n) => `${n} ${plural(n, 'задание', 'задания', 'заданий')}`;
+  assert.equal(jobs(1), '1 задание');
+  assert.equal(jobs(2), '2 задания');
+  assert.equal(jobs(5), '5 заданий');
+  assert.equal(jobs(11), '11 заданий');
+  assert.equal(jobs(21), '21 задание');
+  assert.equal(duration(45_000), '45 с');
+  assert.equal(duration(22 * 60_000), '22 мин');
+  assert.equal(duration(3 * 3_600_000 + 33 * 60_000), '3 ч 33 мин');
+  assert.equal(duration(50 * 3_600_000), '2 д 2 ч');
+});
+
+test('a moving server clock alone does not rewrite the health message', async () => {
+  let minute = 0;
+  const w = world(LIVE);
+  const veeam = veeamFake({
+    '/api/v1/serverTime': () => ({
+      serverTime: new Date(Date.UTC(2026, 8, 14, 11, minute++, 0)).toISOString(),
+    }),
+    '/api/v1/jobs/states': { data: [] },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
+  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+
+  await monitor.check();
+  assert.equal(w.api.sent().length, 2);
+
+  w.api.reset();
+  await monitor.check();
+  assert.deepEqual(w.api.of('editMessageText'), [], 'nothing an operator cares about changed');
+  assert.deepEqual(w.api.sent(), []);
 });
