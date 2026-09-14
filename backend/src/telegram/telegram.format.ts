@@ -18,9 +18,6 @@ export const SEVERITY_ICON: Record<NotificationSeverity, string> = {
   info: 'ℹ️',
 };
 
-/** Telegram only accepts these six colours for a forum topic icon. */
-export const TOPIC_COLORS = [0x6fb9f0, 0xffd67e, 0xcb86db, 0x8eee98, 0xff93b2, 0xfb6f5f] as const;
-
 export const SEVERITY_TOPIC_COLOR: Record<NotificationSeverity, number> = {
   critical: 0xfb6f5f,
   warning: 0xffd67e,

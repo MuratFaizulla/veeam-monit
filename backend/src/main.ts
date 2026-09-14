@@ -1,12 +1,11 @@
 import 'reflect-metadata';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 import { FileLogger } from './logging/file-logger';
-import { TimingInterceptor } from './logging/timing.interceptor';
 
 async function bootstrap(): Promise<void> {
   const logFile = process.env.LOG_FILE ?? join(process.cwd(), 'logs', 'backend.log');
@@ -14,10 +13,6 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
 
   app.setGlobalPrefix('api');
-  app.useGlobalInterceptors(new TimingInterceptor());
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
-  );
 
   const port = config.getOrThrow<number>('port');
   await app.listen(port);

@@ -1,6 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
 import { VeeamHttpService } from './veeam/veeam-http.service';
-import { VeeamApiError } from './veeam/veeam-api.error';
 
 @Controller('health')
 export class HealthController {
@@ -29,13 +28,9 @@ export class HealthController {
         },
       };
     } catch (error) {
-      const message =
-        error instanceof VeeamApiError
-          ? ((error.getResponse() as { message?: string }).message ?? error.message)
-          : (error as Error).message;
       return {
         status: 'degraded',
-        veeam: { baseUrl: this.veeam.baseUrl, reachable: false, error: message },
+        veeam: { baseUrl: this.veeam.baseUrl, reachable: false, error: (error as Error).message },
       };
     }
   }
