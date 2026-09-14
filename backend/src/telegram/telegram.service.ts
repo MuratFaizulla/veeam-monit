@@ -13,13 +13,44 @@ import {
   TelegramUpdate,
 } from './telegram.types';
 
+/**
+ * Why an event did or did not reach Telegram. Every non-delivery used to
+ * collapse into `skipped: true`, which made "the alert never arrived" an
+ * unanswerable question without reading four modules.
+ */
+export type DeliveryOutcome =
+  | 'delivered'
+  /** A rule in the routes file matched and asked for silence. */
+  | 'dropped-by-rule'
+  /** TELEGRAM_SEVERITIES excludes this severity. */
+  | 'severity-filtered'
+  /** The same condition was reported recently and is still inside its window. */
+  | 'cooldown'
+  /** No bot token, so there is nowhere to send. */
+  | 'transport-disabled'
+  /** The bot belongs to no chat yet. */
+  | 'no-chats'
+  /** Delivery was attempted against every chat and none accepted it. */
+  | 'failed';
+
 export interface DeliveryReport {
+  outcome: DeliveryOutcome;
   sent: number;
   failed: number;
+  /** True when nothing was attempted, as opposed to attempted and rejected. */
   skipped: boolean;
   topic: string | null;
+  /** Which part of the routing configuration chose the topic. */
   reason: string;
 }
+
+const NOT_ATTEMPTED: DeliveryOutcome[] = [
+  'dropped-by-rule',
+  'severity-filtered',
+  'cooldown',
+  'transport-disabled',
+  'no-chats',
+];
 
 /**
  * Entry point for every notification. It owns the chat registry and the update
@@ -112,19 +143,25 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
    */
   async notify(event: NotificationEvent): Promise<DeliveryReport> {
     const decision = this.routing.route(event);
-    const skipped =
-      decision.drop === true ||
-      !this.config.severities.includes(event.severity) ||
-      !this.store.allow(event.dedupeKey, event.cooldownMs);
+    const report = (outcome: DeliveryOutcome, sent = 0, failed = 0): DeliveryReport => ({
+      outcome,
+      sent,
+      failed,
+      skipped: NOT_ATTEMPTED.includes(outcome),
+      topic: decision.topic,
+      reason: decision.reason,
+    });
 
-    if (skipped || !this.transport.enabled) {
-      return { sent: 0, failed: 0, skipped: true, topic: decision.topic, reason: decision.reason };
-    }
+    if (decision.drop === true) return report('dropped-by-rule');
+    if (!this.config.severities.includes(event.severity)) return report('severity-filtered');
+    if (this.store.isSuppressed(event.dedupeKey)) return report('cooldown');
+    if (!this.transport.enabled) return report('transport-disabled');
 
     const text = renderEvent(event);
     const chats = Object.entries(this.store.data.chats).filter(
       ([id]) => !decision.chatId || decision.chatId === id,
     );
+    if (chats.length === 0) return report('no-chats');
 
     let sent = 0;
     let failed = 0;
@@ -137,7 +174,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.onDeliveryFailure(id, error);
       }
     }
-    return { sent, failed, skipped: false, topic: decision.topic, reason: decision.reason };
+
+    if (sent === 0) return report('failed', 0, failed);
+    // Only a delivered report starts the quiet period. Arming on the way in
+    // would silence the next window after a send that never happened.
+    this.store.armCooldown(event.dedupeKey, event.cooldownMs);
+    return report('delivered', sent, failed);
   }
 
   /**
