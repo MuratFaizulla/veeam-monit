@@ -875,3 +875,37 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
   assert.ok(texts.some((t) => /Расписание недоступно/.test(t)));
   assert.ok(!texts.some((t) => /На сегодня запусков больше нет/.test(t)));
 });
+
+test('a long list fills the message to Telegram’s limit instead of an invented cap', async () => {
+  const { renderSchedule, renderRunning } = require('../dist/telegram/telegram-live.format');
+  const now = new Date('2026-09-14T00:00:00Z');
+  const clock = { now, timezone: 'UTC' };
+  const runs = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `OPS_JOB_${String(i).padStart(3, '0')}`,
+      at: new Date(now.getTime() + (i + 1) * 60_000).toISOString(),
+    }));
+
+  // 42 entries used to be cut to 30 for no reason; they fit with room to spare.
+  const short = renderSchedule({ upcoming: runs(42) }, clock);
+  assert.match(short, /Сегодня осталось 42 запуска/);
+  assert.ok(!/…и ещё/.test(short), 'nothing needs hiding at this size');
+  assert.equal((short.match(/OPS_JOB_/g) ?? []).length, 42);
+
+  // A day where everything is scheduled does not overflow and says what it hid.
+  const long = renderSchedule({ upcoming: runs(400) }, clock);
+  assert.ok(long.length <= 4096, `message is ${long.length} characters`);
+  const hidden = /…и ещё (\d+) запуск/.exec(long);
+  assert.ok(hidden, 'the remainder is counted, not silently dropped');
+  assert.equal((long.match(/OPS_JOB_/g) ?? []).length + Number(hidden[1]), 400);
+
+  const many = renderRunning(
+    {
+      jobs: runs(300).map((r) => ({ name: r.name, type: 'Backup', percent: 50, startedAt: r.at })),
+      totalJobs: 300,
+    },
+    clock,
+  );
+  assert.ok(many.length <= 4096, `message is ${many.length} characters`);
+  assert.match(many, /…и ещё \d+ задани/);
+});
