@@ -26,7 +26,7 @@ export const SEVERITY_TOPIC_COLOR: Record<NotificationSeverity, number> = {
 };
 
 /** Telegram rejects sendMessage over 4096 characters. */
-const MAX_LENGTH = 4096;
+export const MAX_LENGTH = 4096;
 
 export const renderEvent = (event: NotificationEvent): string => {
   const lines = [`${SEVERITY_ICON[event.severity]} <b>${escapeHtml(event.title)}</b>`];

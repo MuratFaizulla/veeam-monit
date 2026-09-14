@@ -1,4 +1,4 @@
-import { escapeHtml, truncate } from './telegram.format';
+import { escapeHtml, MAX_LENGTH, truncate } from './telegram.format';
 
 /**
  * Renders the two always-current status messages.
@@ -8,11 +8,33 @@ import { escapeHtml, truncate } from './telegram.format';
  * operator actually see at 03:00 when the server is down" a testable question.
  */
 
-/** Beyond this many running jobs the list is summarised instead of listed. */
-const MAX_LISTED = 20;
-
 /** Width of the progress bar, in characters. */
 const BAR = 10;
+
+/**
+ * Renders as many of `count` items as Telegram's message limit allows.
+ *
+ * A fixed cap is always wrong in one direction: 30 entries left 12 unshown on a
+ * day that would have fit all 42, and a cap large enough for the busy days
+ * overflows the 4096-character limit and gets the message rejected. The limit
+ * itself is the only honest cap, so `build` is asked for progressively shorter
+ * lists until one fits.
+ */
+const fitted = (count: number, build: (shown: number) => string): string => {
+  const whole = build(count);
+  if (whole.length <= MAX_LENGTH) return whole;
+
+  // Binary search rather than one item at a time: with a hundred running jobs
+  // the linear walk rebuilt the message a hundred times per cycle.
+  let fits = 0;
+  let tooMany = count;
+  while (fits < tooMany) {
+    const middle = Math.ceil((fits + tooMany) / 2);
+    if (build(middle).length <= MAX_LENGTH) fits = middle;
+    else tooMany = middle - 1;
+  }
+  return build(fits);
+};
 
 export interface LiveHealth {
   reachable: boolean;
@@ -133,41 +155,46 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
   }
 
   if (running.jobs.length === 0) {
-    lines.push('💤 <b>Сейчас не выполняется ни одно задание</b>', '');
-    lines.push(`<b>Заданий всего:</b> ${running.totalJobs}`);
-  } else {
     lines.push(
-      `▶️ <b>Сейчас ${plural(running.jobs.length, 'выполняется', 'выполняются', 'выполняются')}: ` +
-        `${running.jobs.length} ${plural(running.jobs.length, 'задание', 'задания', 'заданий')}</b>`,
+      '💤 <b>Сейчас не выполняется ни одно задание</b>',
       '',
+      `<b>Заданий всего:</b> ${running.totalJobs}`,
+      // Only when nothing is running: then "what happens next" is the question
+      // being asked here. Otherwise the schedule slot answers it, in full, and
+      // repeating one line of it in two places invites the two to disagree.
+      `<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`,
+      '',
+      `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
     );
-    for (const job of running.jobs.slice(0, MAX_LISTED)) {
-      lines.push(...jobBlock(job, clock), '');
-    }
-    if (running.jobs.length > MAX_LISTED) {
-      const rest = running.jobs.length - MAX_LISTED;
-      lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`, '');
-    }
-    lines.push(`<b>Заданий всего:</b> ${running.totalJobs}`);
+    return truncate(lines.join('\n'));
   }
 
-  // Only when nothing is running: then "what happens next" is the question
-  // being asked here. Otherwise the schedule slot answers it, in full, and
-  // repeating one line of it in two places invites the two to disagree.
-  if (running.jobs.length === 0) {
-    lines.push(`<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`);
-  }
-  lines.push('', `<i>Обновлено ${stamp(clock.now, clock)}</i>`);
-
-  return truncate(lines.join('\n'));
+  const count = running.jobs.length;
+  return truncate(
+    fitted(count, (shown) => {
+      const body: string[] = [
+        `▶️ <b>Сейчас ${plural(count, 'выполняется', 'выполняются', 'выполняются')}: ` +
+          `${count} ${plural(count, 'задание', 'задания', 'заданий')}</b>`,
+        '',
+      ];
+      for (const job of running.jobs.slice(0, shown)) body.push(...jobBlock(job, clock), '');
+      const rest = count - shown;
+      if (rest > 0) {
+        body.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`, '');
+      }
+      body.push(
+        `<b>Заданий всего:</b> ${running.totalJobs}`,
+        '',
+        `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+      );
+      return body.join('\n');
+    }),
+  );
 };
 
 /* ------------------------------------------------------------------ *
  * Today's schedule
  * ------------------------------------------------------------------ */
-
-/** Beyond this many entries the list is summarised instead of listed. */
-const MAX_SCHEDULED = 30;
 
 export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string => {
   if (schedule.unavailable) {
@@ -184,28 +211,38 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
 
   const today = dayKey(clock.now, clock);
   const runs = schedule.upcoming.filter((run) => dayKey(new Date(run.at), clock) === today);
-  const lines: string[] = [];
+  const footer = `<i>Обновлено ${stamp(clock.now, clock)}</i>`;
 
   if (runs.length === 0) {
-    lines.push('📅 <b>На сегодня запусков больше нет</b>', '');
     const later = schedule.upcoming[0];
-    lines.push(`<b>Следующий:</b> ${nextRunLabel(later ?? null, clock)}`);
-  } else {
-    lines.push(
-      `📅 <b>Сегодня осталось ${runs.length} ${plural(runs.length, 'запуск', 'запуска', 'запусков')}</b>`,
-      '',
+    return truncate(
+      [
+        '📅 <b>На сегодня запусков больше нет</b>',
+        '',
+        `<b>Следующий:</b> ${nextRunLabel(later ?? null, clock)}`,
+        '',
+        footer,
+      ].join('\n'),
     );
-    for (const run of runs.slice(0, MAX_SCHEDULED)) {
-      lines.push(`<b>${timeOnly(run.at, clock)}</b> · ${escapeHtml(run.name)}`);
-    }
-    if (runs.length > MAX_SCHEDULED) {
-      const rest = runs.length - MAX_SCHEDULED;
-      lines.push(`…и ещё ${rest} ${plural(rest, 'запуск', 'запуска', 'запусков')}`);
-    }
   }
 
-  lines.push('', `<i>Обновлено ${stamp(clock.now, clock)}</i>`);
-  return truncate(lines.join('\n'));
+  return truncate(
+    fitted(runs.length, (shown) => {
+      const lines = [
+        `📅 <b>Сегодня осталось ${runs.length} ${plural(runs.length, 'запуск', 'запуска', 'запусков')}</b>`,
+        '',
+      ];
+      for (const run of runs.slice(0, shown)) {
+        lines.push(`<b>${timeOnly(run.at, clock)}</b> · ${escapeHtml(run.name)}`);
+      }
+      const rest = runs.length - shown;
+      if (rest > 0) {
+        lines.push(`…и ещё ${rest} ${plural(rest, 'запуск', 'запуска', 'запусков')}`);
+      }
+      lines.push('', footer);
+      return lines.join('\n');
+    }),
+  );
 };
 
 const jobBlock = (job: RunningJob, clock: LiveClock): string[] => {
@@ -249,11 +286,26 @@ const nextRunLabel = (
  * Time and language
  * ------------------------------------------------------------------ */
 
-const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOptions): string =>
-  new Intl.DateTimeFormat('ru-RU', {
-    timeZone: clock.timezone || undefined,
-    ...options,
-  }).format(value);
+/**
+ * Constructing an Intl.DateTimeFormat is the expensive half of formatting a
+ * date; `.format()` on an existing one is cheap. A message listing a hundred
+ * jobs asks for hundreds of them, so the handful of shapes actually used are
+ * built once and kept.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOptions): string => {
+  const key = `${clock.timezone}|${Object.entries(options).join(',')}`;
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: clock.timezone || undefined,
+      ...options,
+    });
+    formatters.set(key, formatter);
+  }
+  return formatter.format(value);
+};
 
 /** An ISO instant as "14.09.2026, 14:27:39", or the raw string if unparsable. */
 const moment = (iso: string, clock: LiveClock): string => {
