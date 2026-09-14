@@ -1,0 +1,264 @@
+import { escapeHtml, truncate } from './telegram.format';
+
+/**
+ * Renders the two always-current status messages.
+ *
+ * These are deliberately pure: the text for any situation can be asserted
+ * without a Telegram, a Veeam or a clock, which is what makes "what does the
+ * operator actually see at 03:00 when the server is down" a testable question.
+ */
+
+/** Beyond this many running jobs the list is summarised instead of listed. */
+const MAX_LISTED = 20;
+
+/** Width of the progress bar, in characters. */
+const BAR = 10;
+
+export interface LiveHealth {
+  reachable: boolean;
+  /** Null when no monitor account is configured at all. */
+  authenticated: boolean | null;
+  serverUrl: string;
+  /** Veeam's own clock, as returned by /api/v1/serverTime. */
+  serverTime?: string;
+  error?: string | null;
+  trackedJobs: number;
+  intervalMs: number;
+}
+
+export interface RunningJob {
+  name: string;
+  type?: string;
+  /** Absent while Veeam has not reported progress for the session yet. */
+  percent?: number;
+  startedAt?: string;
+}
+
+export interface LiveRunning {
+  jobs: RunningJob[];
+  totalJobs: number;
+  next?: { name: string; at: string } | null;
+  /** Set when the figures could not be refreshed; says why, in Russian. */
+  unavailable?: string;
+}
+
+/** Formatting options shared by both renderers. */
+export interface LiveClock {
+  now: Date;
+  /** IANA zone, or empty for the server's own. */
+  timezone: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Health
+ * ------------------------------------------------------------------ */
+
+export const renderHealth = (health: LiveHealth, clock: LiveClock): string => {
+  const lines: string[] = [];
+
+  if (!health.reachable) {
+    lines.push('🔴 <b>Veeam — сервер недоступен</b>');
+  } else if (health.authenticated === false) {
+    lines.push('🟡 <b>Veeam — сервер отвечает, вход не выполнен</b>');
+  } else if (health.authenticated === null) {
+    lines.push('🟡 <b>Veeam — сервер отвечает, мониторинг заданий выключен</b>');
+  } else {
+    lines.push('🟢 <b>Veeam — всё работает</b>');
+  }
+
+  lines.push('', `<b>Сервер:</b> <code>${escapeHtml(health.serverUrl)}</code>`);
+
+  if (health.reachable) {
+    lines.push(
+      '<b>Связь:</b> есть',
+      `<b>Учётная запись мониторинга:</b> ${authLabel(health.authenticated)}`,
+      `<b>Заданий под наблюдением:</b> ${health.trackedJobs}`,
+    );
+  } else {
+    lines.push('<b>Связь:</b> нет');
+  }
+
+  if (health.error && (!health.reachable || health.authenticated === false)) {
+    lines.push('', `<b>Причина:</b> ${escapeHtml(health.error)}`);
+  }
+
+  lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
+
+  // Veeam's own clock belongs on the volatile line: it moves every poll, and a
+  // field that always differs would mean rewriting this message every minute
+  // just to say the same thing.
+  const serverClock =
+    health.reachable && health.serverTime
+      ? ` · часы сервера ${escapeHtml(moment(health.serverTime, clock))}`
+      : '';
+  lines.push(`<i>Обновлено ${stamp(clock.now, clock)}${serverClock}</i>`);
+
+  return truncate(lines.join('\n'));
+};
+
+const authLabel = (authenticated: boolean | null): string => {
+  if (authenticated === null) return 'не настроена';
+  return authenticated ? 'авторизована' : 'вход не выполнен';
+};
+
+/* ------------------------------------------------------------------ *
+ * Running jobs
+ * ------------------------------------------------------------------ */
+
+export const renderRunning = (running: LiveRunning, clock: LiveClock): string => {
+  const lines: string[] = [];
+
+  if (running.unavailable) {
+    lines.push(
+      '⚠️ <b>Данные о заданиях недоступны</b>',
+      '',
+      escapeHtml(running.unavailable),
+      '',
+      `<i>Обновлено ${stamp(clock.now, clock)}</i>`,
+    );
+    return truncate(lines.join('\n'));
+  }
+
+  if (running.jobs.length === 0) {
+    lines.push('💤 <b>Сейчас не выполняется ни одно задание</b>', '');
+    lines.push(`<b>Заданий всего:</b> ${running.totalJobs}`);
+  } else {
+    lines.push(
+      `▶️ <b>Сейчас ${plural(running.jobs.length, 'выполняется', 'выполняются', 'выполняются')}: ` +
+        `${running.jobs.length} ${plural(running.jobs.length, 'задание', 'задания', 'заданий')}</b>`,
+      '',
+    );
+    for (const job of running.jobs.slice(0, MAX_LISTED)) {
+      lines.push(...jobBlock(job, clock), '');
+    }
+    if (running.jobs.length > MAX_LISTED) {
+      const rest = running.jobs.length - MAX_LISTED;
+      lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`, '');
+    }
+    lines.push(`<b>Заданий всего:</b> ${running.totalJobs}`);
+  }
+
+  lines.push(`<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`);
+  lines.push('', `<i>Обновлено ${stamp(clock.now, clock)}</i>`);
+
+  return truncate(lines.join('\n'));
+};
+
+const jobBlock = (job: RunningJob, clock: LiveClock): string[] => {
+  const head = job.percent === undefined
+    ? `<b>${escapeHtml(job.name)}</b>`
+    : `<b>${escapeHtml(job.name)}</b> — ${Math.round(job.percent)}%`;
+
+  const details: string[] = [];
+  if (job.percent !== undefined) details.push(bar(job.percent));
+  if (job.startedAt) {
+    details.push(`старт ${timeOnly(job.startedAt, clock)}`);
+    const elapsed = clock.now.getTime() - Date.parse(job.startedAt);
+    if (Number.isFinite(elapsed) && elapsed > 0) details.push(`идёт ${duration(elapsed)}`);
+  }
+  if (job.type) details.push(escapeHtml(job.type));
+
+  return details.length ? [head, details.join(' · ')] : [head];
+};
+
+/** A filled/empty block bar. Telegram has no progress widget, so this is it. */
+const bar = (percent: number): string => {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * BAR);
+  return `${'▰'.repeat(filled)}${'▱'.repeat(BAR - filled)}`;
+};
+
+const nextRunLabel = (
+  next: { name: string; at: string } | null | undefined,
+  clock: LiveClock,
+): string => {
+  if (!next) return 'по расписанию ничего не запланировано';
+  const at = Date.parse(next.at);
+  const when = day(next.at, clock);
+  const distance = Number.isFinite(at) ? at - clock.now.getTime() : NaN;
+  const relative =
+    Number.isFinite(distance) && distance > 0 ? ` (через ${duration(distance)})` : '';
+  return `${escapeHtml(next.name)} — ${when}${relative}`;
+};
+
+/* ------------------------------------------------------------------ *
+ * Time and language
+ * ------------------------------------------------------------------ */
+
+const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOptions): string =>
+  new Intl.DateTimeFormat('ru-RU', {
+    timeZone: clock.timezone || undefined,
+    ...options,
+  }).format(value);
+
+/** An ISO instant as "14.09.2026, 14:27:39", or the raw string if unparsable. */
+const moment = (iso: string, clock: LiveClock): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return parts(date, clock, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+};
+
+const stamp = (value: Date, clock: LiveClock): string =>
+  parts(value, clock, {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+const timeOnly = (iso: string, clock: LiveClock): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return escapeHtml(iso);
+  return parts(date, clock, { hour: '2-digit', minute: '2-digit' });
+};
+
+/** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
+const day = (iso: string, clock: LiveClock): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return escapeHtml(iso);
+  const time = timeOnly(iso, clock);
+  const dayOf = (value: Date): string =>
+    parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  const today = dayOf(clock.now);
+  const tomorrow = dayOf(new Date(clock.now.getTime() + 86_400_000));
+  const target = dayOf(date);
+
+  if (target === today) return `сегодня в ${time}`;
+  if (target === tomorrow) return `завтра в ${time}`;
+  return `${parts(date, clock, { day: '2-digit', month: '2-digit' })} в ${time}`;
+};
+
+/** "45 с", "22 мин", "3 ч 33 мин", "2 д 4 ч" — never more than two units. */
+export const duration = (ms: number): string => {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds} с`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+  }
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return rest ? `${days} д ${rest} ч` : `${days} д`;
+};
+
+/** Russian needs three forms; "1 задание, 2 задания, 5 заданий". */
+export const plural = (count: number, one: string, few: string, many: string): string => {
+  const mod100 = Math.abs(count) % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = mod100 % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+};

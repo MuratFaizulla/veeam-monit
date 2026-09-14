@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpModule } from '../veeam/veeam-http.module';
 import { TelegramController } from './telegram.controller';
+import { TelegramLiveService } from './telegram-live.service';
 import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramService } from './telegram.service';
@@ -29,6 +30,7 @@ import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
       useFactory: (config: ConfigService) => new TelegramTransportService(config),
     },
     TelegramTopicsService,
+    TelegramLiveService,
     TelegramRoutingService,
     TelegramService,
     TelegramMonitorService,

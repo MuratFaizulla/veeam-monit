@@ -9,15 +9,38 @@ import {
   VeeamSession,
 } from '../veeam/veeam.types';
 import { DeliveryOutcome, DeliveryReport, TelegramService } from './telegram.service';
+import { TelegramLiveService } from './telegram-live.service';
+import {
+  LiveClock,
+  LiveRunning,
+  renderHealth,
+  renderRunning,
+} from './telegram-live.format';
 import { TelegramStateStore } from './telegram-state.store';
 import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from './telegram.types';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
+const SESSIONS = '/api/v1/sessions';
 
 /** Veeam results that mean "this run went wrong", lower-cased. */
 const BAD_RESULTS = new Set(['failed', 'warning']);
+
+/**
+ * Job statuses that count as "running right now", lower-cased. `Idle` is
+ * deliberately absent: a continuously running job sits in it between transfers,
+ * and listing those as active would make the live message permanently wrong.
+ */
+const RUNNING_STATUSES = new Set([
+  'working',
+  'running',
+  'starting',
+  'stopping',
+  'pausing',
+  'resuming',
+  'postprocessing',
+]);
 
 export interface MonitorHealth {
   lastCheckAt: string | null;
@@ -50,6 +73,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private running = false;
   private lastReachable?: boolean;
   private lastAuthenticated?: boolean;
+  /** Veeam's own clock from the last successful reachability probe. */
+  private lastServerTime?: string;
   private health: MonitorHealth = {
     lastCheckAt: null,
     reachable: null,
@@ -67,6 +92,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     private readonly telegram: TelegramService,
     private readonly monitorAuth: VeeamMonitorAuthService,
     private readonly store: TelegramStateStore,
+    private readonly live: TelegramLiveService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -98,25 +124,30 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     try {
       const reachable = await this.checkReachability();
       const token = reachable ? await this.checkAuthentication() : null;
+      let jobs: VeeamJobState[] | undefined;
       if (token) {
         // Each step is isolated: one hiccup on /jobs/states used to abort the
         // rest of the cycle, taking the repository check and the digest with it.
-        await this.step('jobs', () => this.checkJobs(token));
+        jobs = await this.step('jobs', () => this.checkJobs(token));
         await this.step('repositories', () => this.checkRepositories(token));
         await this.step('digest', () => this.maybeSendDigest(token));
       }
       this.health.lastCheckAt = new Date().toISOString();
+      // Last, so it reports what this cycle actually found — including the
+      // cycles where Veeam answered nothing at all.
+      await this.step('live', () => this.publishLive(jobs, token));
     } finally {
       this.running = false;
     }
   }
 
-  private async step(name: string, run: () => Promise<void>): Promise<void> {
+  private async step<T>(name: string, run: () => Promise<T>): Promise<T | undefined> {
     try {
-      await run();
+      return await run();
     } catch (error) {
       this.health.lastError = (error as Error).message;
       this.logger.error(`Veeam monitor step "${name}" failed: ${(error as Error).message}`);
+      return undefined;
     }
   }
 
@@ -130,24 +161,17 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       });
       reachable = true;
       detail = result.serverTime ?? '';
+      this.lastServerTime = result.serverTime;
     } catch (error) {
       detail = (error as Error).message;
       this.health.lastError = detail;
     }
     this.health.reachable = reachable;
 
-    if (this.lastReachable === undefined) {
-      await this.emit({
-        kind: 'infrastructure',
-        severity: reachable ? 'info' : 'critical',
-        title: `Veeam Monitor запущен — сервер ${reachable ? 'доступен' : 'НЕДОСТУПЕН'}`,
-        fields: [
-          ['Сервер', this.veeam.baseUrl],
-          [reachable ? 'Время сервера' : 'Ошибка', detail],
-          ['Интервал проверки', `${Math.round(this.config.monitorIntervalMs / 1000)} с`],
-        ],
-      });
-    } else if (this.lastReachable !== reachable) {
+    // Starting up is not an event. It used to be announced every time, which
+    // put six "монитор запущен" messages in the chat over one afternoon of
+    // restarts; the live health message answers the same question, once.
+    if (this.lastReachable !== undefined && this.lastReachable !== reachable) {
       await this.emit({
         kind: 'infrastructure',
         severity: reachable ? 'success' : 'critical',
@@ -216,7 +240,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkJobs(accessToken: string): Promise<void> {
+  /** Returns the states it just read, so the live message reuses that fetch. */
+  private async checkJobs(accessToken: string): Promise<VeeamJobState[]> {
     const response = await this.veeam.request<VeeamCollection<VeeamJobState>>({
       method: 'GET',
       path: '/api/v1/jobs/states',
@@ -252,6 +277,124 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     if (seeding) {
       this.logger.log(`Veeam monitor seeded with ${jobs.length} job states, alerts start next cycle`);
     }
+
+    return jobs;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Live status
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Refreshes the two always-current messages: is the monitor working, and
+   * what is running right now. Both are state rather than events, so they are
+   * edited in place and never queue up behind the alert pipeline.
+   */
+  private async publishLive(
+    jobs: VeeamJobState[] | undefined,
+    accessToken: string | null,
+  ): Promise<void> {
+    const clock: LiveClock = { now: new Date(), timezone: this.config.timezone };
+
+    await this.live.publish(
+      'health',
+      renderHealth(
+        {
+          reachable: this.health.reachable === true,
+          authenticated: this.health.authenticated,
+          serverUrl: this.veeam.baseUrl,
+          serverTime: this.lastServerTime,
+          error: this.health.lastError,
+          trackedJobs: this.store.trackedJobs(),
+          intervalMs: this.config.monitorIntervalMs,
+        },
+        clock,
+      ),
+    );
+
+    await this.live.publish(
+      'running',
+      renderRunning(await this.runningState(jobs, accessToken), clock),
+    );
+  }
+
+  private async runningState(
+    jobs: VeeamJobState[] | undefined,
+    accessToken: string | null,
+  ): Promise<LiveRunning> {
+    if (!jobs || !accessToken) {
+      // Saying "nothing is running" when we simply could not ask would be a
+      // lie, and this message is the one an operator trusts at a glance.
+      return {
+        jobs: [],
+        totalJobs: this.store.trackedJobs(),
+        unavailable:
+          this.health.reachable === false
+            ? 'Сервер Veeam не отвечает, поэтому список заданий не обновляется.'
+            : 'Служебная учётная запись Veeam не авторизована, поэтому список заданий не обновляется.',
+      };
+    }
+
+    const active = jobs.filter((job) => RUNNING_STATUSES.has((job.status ?? '').toLowerCase()));
+    // The percentage lives on the session, not the job state, so that call is
+    // made only when something is actually running.
+    const sessions = active.length ? await this.runningSessions(accessToken) : new Map();
+
+    return {
+      jobs: active.map((job) => {
+        const session = job.id ? sessions.get(job.id) : undefined;
+        return {
+          name: job.name ?? job.id ?? 'без имени',
+          type: job.type,
+          percent: session?.progressPercent,
+          startedAt: session?.creationTime ?? job.lastRun,
+        };
+      }),
+      totalJobs: jobs.length,
+      next: this.nextRun(jobs),
+    };
+  }
+
+  /** Newest working session per job. Best effort: progress is a nicety. */
+  private async runningSessions(accessToken: string): Promise<Map<string, VeeamSession>> {
+    const byJob = new Map<string, VeeamSession>();
+    try {
+      const response = await this.veeam.request<VeeamCollection<VeeamSession>>({
+        method: 'GET',
+        path: SESSIONS,
+        accessToken,
+        params: {
+          skip: 0,
+          limit: 100,
+          orderColumn: 'CreationTime',
+          orderAsc: false,
+          stateFilter: 'Working',
+        },
+      });
+      for (const session of response.data ?? []) {
+        if (session.jobId && !byJob.has(session.jobId)) byJob.set(session.jobId, session);
+      }
+    } catch (error) {
+      this.logger.debug(`No running session detail: ${(error as Error).message}`);
+    }
+    return byJob;
+  }
+
+  /** The soonest scheduled run still in the future, across every job. */
+  private nextRun(jobs: VeeamJobState[]): { name: string; at: string } | null {
+    const now = Date.now();
+    let soonest: { name: string; at: string } | null = null;
+    let soonestAt = Number.POSITIVE_INFINITY;
+
+    for (const job of jobs) {
+      if (!job.nextRun) continue;
+      const at = Date.parse(job.nextRun);
+      if (!Number.isFinite(at) || at <= now || at >= soonestAt) continue;
+      soonestAt = at;
+      soonest = { name: job.name ?? job.id ?? 'без имени', at: job.nextRun };
+    }
+
+    return soonest;
   }
 
   /** Null means the transition is not worth a message (e.g. into "running"). */
@@ -312,7 +455,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     try {
       const response = await this.veeam.request<VeeamCollection<VeeamSession>>({
         method: 'GET',
-        path: '/api/v1/sessions',
+        path: SESSIONS,
         accessToken,
         params: {
           skip: 0,

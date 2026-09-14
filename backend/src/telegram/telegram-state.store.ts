@@ -13,6 +13,21 @@ interface TelegramState {
   jobResults: Record<string, string>;
   /** dedupeKey -> epoch ms after which the same condition may be reported again. */
   cooldowns: Record<string, number>;
+  /** chat id -> slot -> the one message that slot keeps current. */
+  liveMessages: Record<string, Record<string, LiveMessageRef>>;
+}
+
+/**
+ * The single message a live slot owns. Surviving a restart is the whole point:
+ * without the id, every start would post a fresh "current state" message next
+ * to the previous one, which is exactly the pile this replaces.
+ */
+export interface LiveMessageRef {
+  messageId: number;
+  /** Hash of the meaningful content, so an unchanged message is not rewritten. */
+  hash: string;
+  /** Epoch ms of the last write, for the heartbeat refresh. */
+  at: number;
 }
 
 const empty = (): TelegramState => ({
@@ -21,6 +36,7 @@ const empty = (): TelegramState => ({
   topics: {},
   jobResults: {},
   cooldowns: {},
+  liveMessages: {},
 });
 
 /**
@@ -85,6 +101,7 @@ export class TelegramStateStore implements OnModuleDestroy {
   dropChat(chatId: string): void {
     delete this.state.chats[chatId];
     delete this.state.topics[chatId];
+    delete this.state.liveMessages[chatId];
     this.save();
   }
 
@@ -181,6 +198,26 @@ export class TelegramStateStore implements OnModuleDestroy {
   clearCooldown(key: string): void {
     if (this.state.cooldowns[key] === undefined) return;
     delete this.state.cooldowns[key];
+    this.save();
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Live messages
+   * ---------------------------------------------------------------- */
+
+  liveMessage(chatId: string, slot: string): LiveMessageRef | undefined {
+    return this.state.liveMessages[chatId]?.[slot];
+  }
+
+  rememberLiveMessage(chatId: string, slot: string, ref: LiveMessageRef): void {
+    (this.state.liveMessages[chatId] ??= {})[slot] = ref;
+    this.save();
+  }
+
+  /** Called when Telegram no longer holds the message, so the next pass resends. */
+  forgetLiveMessage(chatId: string, slot: string): void {
+    if (this.state.liveMessages[chatId]?.[slot] === undefined) return;
+    delete this.state.liveMessages[chatId][slot];
     this.save();
   }
 

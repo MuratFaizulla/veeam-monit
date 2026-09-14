@@ -49,15 +49,19 @@ export interface VeeamJobState {
 }
 
 /**
- * Item of GET /api/v1/sessions. Only `result.message` is read — it supplies the
- * reason a job failed, which the job state itself does not carry.
+ * Item of GET /api/v1/sessions. Two things are read: `result.message`, which
+ * supplies the reason a job failed, and `progressPercent`/`creationTime` for
+ * the sessions that are still running.
  */
 export interface VeeamSession {
   id?: string;
+  name?: string;
   jobId?: string;
   creationTime?: string;
   endTime?: string;
   state?: string;
+  /** 0-100 while the session is working; absent before it reports any. */
+  progressPercent?: number;
   result?: {
     result?: string;
     message?: string;
