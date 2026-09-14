@@ -8,7 +8,7 @@ import { TelegramApiError, TelegramTransportService } from './telegram-transport
 import { TelegramChat } from './telegram.types';
 
 /** A topic that holds exactly one message, kept current. */
-export type LiveSlot = 'health' | 'running';
+export type LiveSlot = 'health' | 'running' | 'schedule';
 
 /**
  * The "one message, always current" module.

@@ -50,7 +50,7 @@ export interface AppConfig {
      * Topics that hold one always-current message instead of a stream of them.
      * These are state, not events: they are edited in place, never appended to.
      */
-    liveTopics: { health: string; running: string };
+    liveTopics: { health: string; running: string; schedule: string };
     /** Rewrite an unchanged live message at least this often, as a heartbeat. */
     liveRefreshMs: number;
     /** IANA zone used to render times for humans. Empty means the server's own. */
@@ -80,9 +80,24 @@ const list = (value: string | undefined): string[] =>
 const ROUTING_MODES: TelegramRoutingMode[] = ['job', 'severity', 'kind', 'single'];
 const SEVERITIES: NotificationSeverity[] = ['critical', 'warning', 'success', 'info'];
 
+/**
+ * Defaults to : a fixed set of topics, with alerts in General.
+ *
+ *  was the default until a per-job topic had been created for every job
+ * that ever changed result, and the topic list stopped being readable. The
+ * live status topics are unaffected by the mode — they are state, not events.
+ */
+/**
+ * Defaults to `single`: a fixed set of topics, with alerts in General.
+ *
+ * `job` was the default until a per-job topic had been created for every job
+ * that ever changed result, and the topic list stopped being readable. The
+ * live status topics are unaffected by the mode — they are state, not events,
+ * and never pass through the router.
+ */
 const routingMode = (value: string | undefined): TelegramRoutingMode => {
   const mode = (value ?? '').trim().toLowerCase() as TelegramRoutingMode;
-  return ROUTING_MODES.includes(mode) ? mode : 'job';
+  return ROUTING_MODES.includes(mode) ? mode : 'single';
 };
 
 const severities = (value: string | undefined): NotificationSeverity[] => {
@@ -140,6 +155,7 @@ export const configuration = (): AppConfig => ({
     liveTopics: {
       health: text(process.env.TELEGRAM_TOPIC_HEALTH, '🩺 Monitor health'),
       running: text(process.env.TELEGRAM_TOPIC_RUNNING, '▶️ Running now'),
+      schedule: text(process.env.TELEGRAM_TOPIC_SCHEDULE, '📅 Today'),
     },
     liveRefreshMs: int(process.env.TELEGRAM_LIVE_REFRESH_MIN, 5) * 60_000,
     timezone: text(process.env.TELEGRAM_TIMEZONE, ''),

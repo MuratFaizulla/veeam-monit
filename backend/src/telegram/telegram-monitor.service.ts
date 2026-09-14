@@ -13,8 +13,11 @@ import { TelegramLiveService } from './telegram-live.service';
 import {
   LiveClock,
   LiveRunning,
+  LiveSchedule,
+  ScheduledRun,
   renderHealth,
   renderRunning,
+  renderSchedule,
 } from './telegram-live.format';
 import { TelegramStateStore } from './telegram-state.store';
 import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
@@ -316,6 +319,18 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       'running',
       renderRunning(await this.runningState(jobs, accessToken), clock),
     );
+
+    await this.live.publish('schedule', renderSchedule(this.scheduleState(jobs), clock));
+  }
+
+  private scheduleState(jobs: VeeamJobState[] | undefined): LiveSchedule {
+    if (!jobs) {
+      return {
+        upcoming: [],
+        unavailable: 'Расписание не удалось прочитать: Veeam не ответил на этот цикл.',
+      };
+    }
+    return { upcoming: this.upcomingRuns(jobs) };
   }
 
   private async runningState(
@@ -351,7 +366,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         };
       }),
       totalJobs: jobs.length,
-      next: this.nextRun(jobs),
+      next: this.upcomingRuns(jobs)[0] ?? null,
     };
   }
 
@@ -380,21 +395,25 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return byJob;
   }
 
-  /** The soonest scheduled run still in the future, across every job. */
-  private nextRun(jobs: VeeamJobState[]): { name: string; at: string } | null {
+  /**
+   * Every scheduled run still in the future, soonest first. The formatter
+   * decides which of them fall on today, because "today" depends on the
+   * display timezone rather than on the server's.
+   */
+  private upcomingRuns(jobs: VeeamJobState[]): ScheduledRun[] {
     const now = Date.now();
-    let soonest: { name: string; at: string } | null = null;
-    let soonestAt = Number.POSITIVE_INFINITY;
+    const runs: Array<ScheduledRun & { ms: number }> = [];
 
     for (const job of jobs) {
       if (!job.nextRun) continue;
-      const at = Date.parse(job.nextRun);
-      if (!Number.isFinite(at) || at <= now || at >= soonestAt) continue;
-      soonestAt = at;
-      soonest = { name: job.name ?? job.id ?? 'без имени', at: job.nextRun };
+      const ms = Date.parse(job.nextRun);
+      if (!Number.isFinite(ms) || ms <= now) continue;
+      runs.push({ name: job.name ?? job.id ?? 'без имени', at: job.nextRun, ms });
     }
 
-    return soonest;
+    return runs
+      .sort((a, b) => a.ms - b.ms)
+      .map(({ name, at }) => ({ name, at }));
   }
 
   /** Null means the transition is not worth a message (e.g. into "running"). */
