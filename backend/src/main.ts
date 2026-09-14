@@ -22,6 +22,11 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   logger.log(`Listening on http://localhost:${port}/api — Veeam: ${veeam.baseUrl}`);
   logger.log(`Telegram routing mode: ${telegram.routingMode}, state: ${telegram.stateFile}`);
+  logger.log(
+    telegram.live
+      ? `Live topics: "${telegram.liveTopics.health}", "${telegram.liveTopics.running}"`
+      : 'Live topics disabled (TELEGRAM_LIVE=false)',
+  );
   logger.log(`Writing logs to ${logFile}`);
 }
 
