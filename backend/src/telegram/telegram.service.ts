@@ -76,7 +76,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     for (const id of this.config.chatIds) {
       // A configured chat is usable before any update arrives; onModuleInit
       // then fills in the title and, crucially, whether it is a forum.
-      this.store.data.chats[id] ??= { id: Number(id), type: 'supergroup' };
+      this.store.seedChat(id, { id: Number(id), type: 'supergroup' });
     }
   }
 
@@ -85,7 +85,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn('Telegram disabled: TELEGRAM_BOT_TOKEN is empty');
       return;
     }
-    await Promise.all(Object.keys(this.store.data.chats).map((id) => this.refreshChat(id)));
+    await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
 
     if (this.config.webhookUrl) {
       await this.configureWebhook();
@@ -97,7 +97,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     this.stopping = true;
     this.polling = false;
-    this.store.flush();
   }
 
   get enabled(): boolean {
@@ -129,7 +128,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   listChats(): Array<TelegramChat & { topics: Record<string, number> }> {
-    return Object.entries(this.store.data.chats).map(([id, chat]) => ({
+    return this.store.chats().map(([id, chat]) => ({
       ...chat,
       topics: this.topics.list(id),
     }));
@@ -158,9 +157,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     if (!this.transport.enabled) return report('transport-disabled');
 
     const text = renderEvent(event);
-    const chats = Object.entries(this.store.data.chats).filter(
-      ([id]) => !decision.chatId || decision.chatId === id,
-    );
+    const chats = this.store
+      .chats()
+      .filter(([id]) => !decision.chatId || decision.chatId === id);
     if (chats.length === 0) return report('no-chats');
 
     let sent = 0;
@@ -204,9 +203,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
   private onDeliveryFailure(chatId: string, error: unknown): void {
     if (error instanceof TelegramApiError && error.isChatGone) {
-      delete this.store.data.chats[chatId];
-      delete this.store.data.topics[chatId];
-      this.store.save();
+      this.store.dropChat(chatId);
       this.logger.warn(`Telegram chat ${chatId} is no longer reachable and was unregistered`);
       return;
     }
@@ -276,11 +273,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   private registerChat(chat: TelegramChat): void {
-    const id = String(chat.id);
-    const previous = this.store.data.chats[id];
-    this.store.data.chats[id] = { ...previous, ...chat };
-    if (chat.is_forum && previous?.is_forum !== true) this.topics.unblock();
-    this.store.save();
+    const { becameForum } = this.store.mergeChat(chat);
+    if (becameForum) this.topics.unblock();
   }
 
   /** Learns title and forum flag for chats that were configured, not discovered. */

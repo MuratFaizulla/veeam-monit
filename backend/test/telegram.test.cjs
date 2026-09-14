@@ -82,7 +82,7 @@ function world(env = {}, handlers = {}, stateFile) {
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
   // Configured chats only learn they are forums from getChat or an update.
-  store.data.chats[CHAT] = { id: Number(CHAT), type: 'supergroup', is_forum: true };
+  store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
   return { file, config, store, api, transport, topics, routing, service, telegram };
 }
 
@@ -178,7 +178,7 @@ test('single mode restores the old behaviour of posting everything to General', 
 
 test('a non-forum chat never gets a thread id', async () => {
   const w = world();
-  w.store.data.chats[CHAT] = { id: Number(CHAT), type: 'group', is_forum: false };
+  w.store.mergeChat({ id: Number(CHAT), type: 'group', is_forum: false });
   await w.service.notify({ kind: 'job', severity: 'critical', subject: 'A', title: 'a' });
 
   assert.equal(w.api.of('createForumTopic').length, 0);
@@ -238,13 +238,13 @@ test('a deleted topic is forgotten, re-created and the message still arrives', a
       return undefined;
     },
   });
-  w.store.data.topics[CHAT] = { 'SQL Daily': 55 };
+  w.store.rememberTopic(CHAT, 'SQL Daily', 55);
 
   const report = await w.service.notify({ kind: 'job', severity: 'critical', subject: 'SQL Daily', title: 'a' });
 
   assert.equal(report.sent, 1);
   assert.equal(w.api.of('createForumTopic').length, 1);
-  assert.equal(w.store.data.topics[CHAT]['SQL Daily'], 101, 'the stale thread id was replaced');
+  assert.equal(w.store.threadId(CHAT, 'SQL Daily'), 101, 'the stale thread id was replaced');
   deleted = false;
 });
 
@@ -270,7 +270,7 @@ test('a chat the bot was removed from is unregistered instead of retried forever
 
   const report = await w.service.notify({ kind: 'job', severity: 'critical', subject: 'A', title: 'a' });
   assert.equal(report.failed, 1);
-  assert.deepEqual(Object.keys(w.store.data.chats), []);
+  assert.deepEqual(w.store.chats(), []);
 });
 
 test('job names are HTML-escaped so Telegram cannot reject or mis-render them', async () => {
@@ -516,7 +516,7 @@ test('a delivery that reached nobody does not burn the cooldown', async () => {
 
   const first = await w.service.notify(event());
   assert.equal(first.outcome, 'failed');
-  assert.equal(w.store.data.cooldowns['job:1:failed'], undefined, 'окно не должно быть взведено');
+  assert.equal(w.store.snapshot().cooldowns['job:1:failed'], undefined, 'окно не должно быть взведено');
 
   broken = false;
   const second = await w.service.notify(event());
@@ -537,7 +537,7 @@ test('the delivery report names why an event was not sent', async () => {
   assert.equal((await w.service.notify(keyed)).outcome, 'delivered');
   assert.equal((await w.service.notify(keyed)).outcome, 'cooldown');
 
-  delete w.store.data.chats[CHAT];
+  w.store.dropChat(CHAT);
   assert.equal((await w.service.notify({ ...base, severity: 'critical' })).outcome, 'no-chats');
 });
 
@@ -546,12 +546,12 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {}, rejectSend(() => broken));
 
   await w.monitor.check();
-  assert.equal(w.store.data.jobResults['1'], 'success', 'первый цикл засеял состояние');
+  assert.equal(w.store.jobResult('1'), 'success', 'первый цикл засеял состояние');
 
   w.setJobs([job('1', 'SQL Daily', 'Failed')]);
   await w.monitor.check();
   assert.equal(
-    w.store.data.jobResults['1'],
+    w.store.jobResult('1'),
     'success',
     'провалившаяся отправка не отмечает переход как обработанный',
   );
@@ -565,7 +565,7 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
   assert.match(sent[0].text, /SQL Daily/);
   assert.match(sent[0].text, /FAILED/);
-  assert.equal(w.store.data.jobResults['1'], 'failed');
+  assert.equal(w.store.jobResult('1'), 'failed');
   assert.equal(w.monitor.status.lastOutcome, 'delivered');
 });
 
@@ -605,7 +605,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
   const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store);
 
   await monitor.check();
-  assert.equal(w.store.data.cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
+  assert.equal(w.store.snapshot().cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
 
   broken = false;
   w.api.reset();
@@ -615,5 +615,32 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     w.api.sent().some((payload) => /сводка за сутки/.test(payload.text)),
     'сводка отправлена на следующем цикле',
   );
-  assert.ok(w.store.data.cooldowns['digest'] > Date.now(), 'теперь окно взведено');
+  assert.ok(w.store.snapshot().cooldowns['digest'] > Date.now(), 'теперь окно взведено');
+});
+
+test('every state write persists without the caller managing save()', async () => {
+  const file = path.join(os.tmpdir(), `veeam-telegram-${Math.random().toString(36).slice(2)}.json`);
+  const w = world({}, {}, file);
+
+  w.store.rememberTopic(CHAT, 'SQL Daily', 77);
+  w.store.recordJobResult('job-1', 'failed');
+  w.store.armCooldown('k', 60_000);
+  w.store.flush();
+
+  // A second store over the same file sees everything, and no caller in the
+  // three modules above ever had to remember a save.
+  const reopened = new TelegramStateStore(file);
+  assert.equal(reopened.threadId(CHAT, 'SQL Daily'), 77);
+  assert.equal(reopened.jobResult('job-1'), 'failed');
+  assert.equal(reopened.isSuppressed('k'), true);
+  assert.deepEqual(
+    reopened.chats().map(([id]) => id),
+    [CHAT],
+    'чат, засеянный из конфигурации, тоже сохранён',
+  );
+
+  reopened.forgetJobsExcept(new Set(['other']));
+  reopened.flush();
+  assert.equal(new TelegramStateStore(file).jobResult('job-1'), undefined);
+  fs.rmSync(file, { force: true });
 });

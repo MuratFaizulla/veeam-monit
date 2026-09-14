@@ -83,7 +83,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   get status(): MonitorHealth {
-    return { ...this.health, trackedJobs: Object.keys(this.store.data.jobResults).length };
+    return { ...this.health, trackedJobs: this.store.trackedJobs() };
   }
 
   /** One monitoring pass. Never throws: a bad cycle must not kill the timer. */
@@ -227,12 +227,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     // An empty store means this installation has never been observed. Seeding
     // silently avoids announcing history as if it just happened; every later
     // start compares against the persisted results instead.
-    const seeding = Object.keys(this.store.data.jobResults).length === 0;
+    const seeding = !this.store.hasJobResults();
 
     for (const job of jobs) {
       if (!job.id) continue;
       const result = job.lastResult?.toLowerCase() || 'none';
-      const previous = this.store.data.jobResults[job.id];
+      const previous = this.store.jobResult(job.id);
       const severity = seeding || previous === result ? null : this.severityOf(result, previous);
 
       if (severity) {
@@ -244,15 +244,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         // anything, so the transition stays pending and is retried next tick.
         if (report.outcome === 'failed') continue;
       }
-      this.store.data.jobResults[job.id] = result;
+      this.store.recordJobResult(job.id, result);
     }
 
-    // Jobs deleted in Veeam must not keep a slot in the state file forever.
-    const live = new Set(jobs.map((job) => job.id));
-    for (const id of Object.keys(this.store.data.jobResults)) {
-      if (!live.has(id)) delete this.store.data.jobResults[id];
-    }
-    this.store.save();
+    this.store.forgetJobsExcept(new Set(jobs.map((job) => job.id)));
 
     if (seeding) {
       this.logger.log(`Veeam monitor seeded with ${jobs.length} job states, alerts start next cycle`);

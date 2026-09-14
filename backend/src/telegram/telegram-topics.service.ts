@@ -48,7 +48,7 @@ export class TelegramTopicsService {
     if (!topic || !chat.is_forum) return { chatId };
 
     const name = topicName(topic);
-    const known = this.store.data.topics[chatId]?.[name];
+    const known = this.store.threadId(chatId, name);
     if (known !== undefined) return { chatId, threadId: known, topic: name };
 
     if (!this.config.createTopics || this.creationBlocked.has(chatId)) return { chatId };
@@ -89,10 +89,7 @@ export class TelegramTopicsService {
 
   /** Records a topic seen in an update or created by the bot. */
   remember(chatId: string, name: string, threadId: number): void {
-    const topics = (this.store.data.topics[chatId] ??= {});
-    if (topics[name] === threadId) return;
-    topics[name] = threadId;
-    this.store.save();
+    this.store.rememberTopic(chatId, name, threadId);
   }
 
   /**
@@ -101,15 +98,12 @@ export class TelegramTopicsService {
    */
   forget(chatId: string, name: string | undefined): void {
     if (!name) return;
-    const topics = this.store.data.topics[chatId];
-    if (!topics || topics[name] === undefined) return;
-    delete topics[name];
-    this.creationBlocked.delete(chatId);
-    this.store.save();
+    // A topic that had to be re-created is evidence the chat is usable again.
+    if (this.store.forgetTopic(chatId, name)) this.creationBlocked.delete(chatId);
   }
 
   list(chatId: string): Record<string, number> {
-    return { ...(this.store.data.topics[chatId] ?? {}) };
+    return this.store.topics(chatId);
   }
 
   /** Re-allows topic creation after an administrator fixed the bot rights. */
