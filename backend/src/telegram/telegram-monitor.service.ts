@@ -8,6 +8,7 @@ import {
   VeeamJobState,
   VeeamRepositoryState,
   VeeamBackup,
+  VeeamJob,
   VeeamRestorePoint,
   VeeamSession,
   VeeamTaskSession,
@@ -44,6 +45,7 @@ const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const SESSIONS = '/api/v1/sessions';
 const BACKUPS = '/api/v1/backups';
+const JOB_CONFIGS = '/api/v1/jobs';
 const RESTORE_POINTS = '/api/v1/restorePoints';
 
 /**
@@ -54,6 +56,13 @@ const SCAN_PAGE = 500;
 
 /** How far back sessions are read when counting consecutive failures. */
 const STREAK_WINDOW_DAYS = 7;
+
+/**
+ * Retry window used when the job configuration does not state one. Veeam
+ * defaults to waiting ten minutes between retries; the extra allowance covers
+ * how long the failing run itself took.
+ */
+const DEFAULT_RETRY_WINDOW_MS = 30 * 60_000;
 
 /** Restore point timestamps kept per job — enough to learn its rhythm. */
 const POINTS_PER_JOB = 11;
@@ -112,6 +121,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   /** Newest restore point timestamps per job id, from the last protection scan. */
   private pointsByJob = new Map<string, number[]>();
   private streakByJob = new Map<string, number>();
+  /** Jobs Veeam is set to run only by hand; they owe nobody a restore point. */
+  private unscheduledJobs = new Set<string>();
+  /** Per job: how close two failed sessions must be to count as one run. */
+  private retryWindows = new Map<string, number>();
   private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
@@ -460,6 +473,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       risks: [],
       totalJobs: jobs?.length ?? 0,
       protectedJobs: 0,
+      excludedDisabled: 0,
+      excludedUnscheduled: 0,
       ...thresholds,
       unavailable,
     });
@@ -483,6 +498,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
           name: job.name ?? job.id,
           type: job.type,
           lastRun: job.lastRun,
+          disabled: (job.status ?? '').toLowerCase() === 'disabled',
+          unscheduled: this.unscheduledJobs.has(job.id),
         })),
       pointsByJob: this.pointsByJob,
       streakByJob: this.streakByJob,
@@ -495,6 +512,24 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private async scanProtection(accessToken: string): Promise<boolean> {
     const startedAt = Date.now();
     try {
+      // The runtime state says whether a job is disabled; only the job
+      // configuration says whether it has a schedule at all.
+      const configured = await this.allPages<VeeamJob>(JOB_CONFIGS, accessToken, {}, SCAN_PAGE);
+      this.unscheduledJobs = new Set(
+        configured
+          .filter((job) => job.id && job.schedule?.runAutomatically === false)
+          .map((job) => job.id as string),
+      );
+      this.retryWindows = new Map(
+        configured
+          .filter((job): job is VeeamJob & { id: string } => Boolean(job.id))
+          .map((job) => {
+            const retry = job.schedule?.retry;
+            const await_ = retry?.isEnabled === false ? 0 : retry?.awaitMinutes;
+            return [job.id, ((await_ ?? 10) + 20) * 60_000];
+          }),
+      );
+
       const backups = await this.allPages<VeeamBackup>(BACKUPS, accessToken, {}, SCAN_PAGE);
       const jobOfBackup = new Map<string, string>();
       for (const backup of backups) {
@@ -543,9 +578,18 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Consecutive failures per job, counted back from its newest session.
-   * A streak breaks at the first success, which is what makes "three in a row"
-   * mean a job that is still broken rather than one that failed thrice ever.
+   * Consecutive failed *runs* per job, counted back from its newest session.
+   *
+   * A run is not a session. Veeam retries a failed job automatically, and each
+   * retry is its own session, so a job with the default three retries reports
+   * four failed sessions for one failed run — which made "4 неуспеха подряд"
+   * appear against nearly every currently-failing job and mean nothing.
+   * Sessions closer together than the job's own retry window are therefore
+   * folded into the run that spawned them.
+   *
+   * The streak breaks at the first success, which is what makes "three in a
+   * row" mean a job that is still broken rather than one that failed thrice
+   * at some point.
    */
   private async failureStreaks(accessToken: string): Promise<Map<string, number>> {
     const since = new Date(Date.now() - STREAK_WINDOW_DAYS * 86_400_000).toISOString();
@@ -570,12 +614,20 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     const streaks = new Map<string, number>();
     for (const [jobId, list] of newestFirst) {
       list.sort((a, b) => Date.parse(b.creationTime ?? '') - Date.parse(a.creationTime ?? ''));
-      let count = 0;
+      const window = this.retryWindows.get(jobId) ?? DEFAULT_RETRY_WINDOW_MS;
+
+      let runs = 0;
+      let previousStart = Number.POSITIVE_INFINITY;
       for (const session of list) {
         if ((session.result?.result ?? '').toLowerCase() === 'success') break;
-        count += 1;
+        const startedAt = Date.parse(session.creationTime ?? '');
+        if (!Number.isFinite(startedAt)) continue;
+        // Only a session far enough from the one after it starts a new run;
+        // the rest are that run's retries.
+        if (previousStart - startedAt > window) runs += 1;
+        previousStart = startedAt;
       }
-      if (count > 0) streaks.set(jobId, count);
+      if (runs > 0) streaks.set(jobId, runs);
     }
     return streaks;
   }
