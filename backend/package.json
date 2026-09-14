@@ -1,8 +1,8 @@
 {
-  "name": "veeam-dashboard-backend",
+  "name": "veeam-telegram-monitor",
   "version": "0.1.0",
   "private": true,
-  "description": "NestJS backend proxying the Veeam Backup & Replication REST API",
+  "description": "NestJS service that watches the Veeam Backup & Replication REST API and reports changes to Telegram forum topics",
   "scripts": {
     "test": "npm run build && node test/run.cjs",
     "build": "nest build",
@@ -19,14 +19,12 @@
     "axios": "^1.7.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
-    "cookie-parser": "^1.4.7",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
-    "@types/cookie-parser": "^1.4.8",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.10",
     "typescript": "^5.7.2"
