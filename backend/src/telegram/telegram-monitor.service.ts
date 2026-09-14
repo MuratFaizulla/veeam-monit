@@ -31,6 +31,7 @@ import {
   aggregatePerformance,
   renderPerformance,
 } from './telegram-performance';
+import { renderRepositories } from './telegram-repositories.format';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -137,17 +138,18 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       const reachable = await this.checkReachability();
       const token = reachable ? await this.checkAuthentication() : null;
       let jobs: VeeamJobState[] | undefined;
+      let repositories: VeeamRepositoryState[] | undefined;
       if (token) {
         // Each step is isolated: one hiccup on /jobs/states used to abort the
         // rest of the cycle, taking the repository check and the digest with it.
         jobs = await this.step('jobs', () => this.checkJobs(token));
-        await this.step('repositories', () => this.checkRepositories(token));
+        repositories = await this.step('repositories', () => this.checkRepositories(token));
         await this.step('digest', () => this.maybeSendDigest(token));
       }
       this.health.lastCheckAt = new Date().toISOString();
       // Last, so it reports what this cycle actually found — including the
       // cycles where Veeam answered nothing at all.
-      await this.step('live', () => this.publishLive(jobs, token));
+      await this.step('live', () => this.publishLive(jobs, repositories, token));
     } finally {
       this.running = false;
     }
@@ -304,6 +306,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    */
   private async publishLive(
     jobs: VeeamJobState[] | undefined,
+    repositories: VeeamRepositoryState[] | undefined,
     accessToken: string | null,
   ): Promise<void> {
     const clock: LiveClock = { now: new Date(), timezone: this.config.timezone };
@@ -335,6 +338,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       'performance',
       renderPerformance(await this.performanceState(accessToken), clock),
     );
+
+    await this.live.publish('repositories', renderRepositories(repositories, clock));
   }
 
   /** Builds the Performance live slot from active sessions and their tasks. */
@@ -605,21 +610,16 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkRepositories(accessToken: string): Promise<void> {
-    if (this.config.repositoryFreePercent <= 0) return;
+  private async checkRepositories(accessToken: string): Promise<VeeamRepositoryState[]> {
     let repositories: VeeamRepositoryState[];
     try {
-      const response = await this.veeam.request<VeeamCollection<VeeamRepositoryState>>({
-        method: 'GET',
-        path: REPOSITORIES,
-        accessToken,
-      });
-      repositories = response.data ?? [];
+      repositories = await this.allPages<VeeamRepositoryState>(REPOSITORIES, accessToken);
     } catch (error) {
       this.logger.warn(`Repository capacity check skipped: ${(error as Error).message}`);
-      return;
+      throw error;
     }
 
+    if (this.config.repositoryFreePercent <= 0) return repositories;
     for (const repository of repositories) {
       const capacity = repository.capacityGB ?? 0;
       const free = repository.freeGB ?? 0;
@@ -646,6 +646,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         cooldownMs: this.config.repositoryAlertCooldownMs,
       });
     }
+    return repositories;
   }
 
   /** Once-a-day roll-up, so a quiet channel still proves the monitor is alive. */
