@@ -6,6 +6,7 @@ import { allPages, VeeamReader } from '../veeam/veeam-pages';
 import {
   VeeamBackup,
   VeeamJob,
+  VeeamSchedule,
   VeeamJobState,
   VeeamRestorePoint,
   VeeamSession,
@@ -96,6 +97,8 @@ export interface ScannedEvidence {
   streakByJob: Map<string, number>;
   /** Jobs Veeam will not start on its own; they owe nobody a restore point. */
   unscheduled: ReadonlySet<string>;
+  /** Full schedules, used to validate and describe today's nextRun values. */
+  schedulesByJob: ReadonlyMap<string, VeeamSchedule>;
   depthByJob: Map<string, RetainedHistory>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
@@ -184,6 +187,13 @@ export class BackupEvidenceService {
         configured
           .filter((job) => job.id && job.schedule?.runAutomatically === false)
           .map((job) => job.id as string),
+      );
+      const schedulesByJob = new Map(
+        configured
+          .filter((job): job is VeeamJob & { id: string; schedule: VeeamSchedule } =>
+            Boolean(job.id && job.schedule),
+          )
+          .map((job) => [job.id, job.schedule]),
       );
       const retryWindows = new Map(
         configured
@@ -316,6 +326,7 @@ export class BackupEvidenceService {
         cadenceByJob: new Map([...runs].map(([jobId, kept]) => [jobId, cadenceOf(kept)])),
         streakByJob: failureStreaks(sessions, retryWindows),
         unscheduled,
+        schedulesByJob,
         depthByJob: new Map(
           [...depth].map(([jobId, seen]) => [
             jobId,

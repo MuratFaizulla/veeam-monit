@@ -174,7 +174,7 @@ export const configuration = (): AppConfig => ({
     liveTopics: {
       health: text(process.env.TELEGRAM_TOPIC_HEALTH, '🩺 Monitor health'),
       running: text(process.env.TELEGRAM_TOPIC_RUNNING, '▶️ Running now'),
-      schedule: text(process.env.TELEGRAM_TOPIC_SCHEDULE, '📅 Today'),
+      schedule: text(process.env.TELEGRAM_TOPIC_SCHEDULE, '📅 Upcoming runs'),
       performance: text(process.env.TELEGRAM_TOPIC_PERFORMANCE, '📈 Performance'),
       repositories: text(process.env.TELEGRAM_TOPIC_REPOSITORIES_LIVE, '💾 Repositories'),
       protection: text(process.env.TELEGRAM_TOPIC_PROTECTION, '🛡 Protection'),

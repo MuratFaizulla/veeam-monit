@@ -105,6 +105,7 @@ export interface ScheduledRun {
   name: string;
   /** ISO instant of the next scheduled start. */
   at: string;
+  cadence?: string;
 }
 
 export interface LiveRunning {
@@ -117,8 +118,10 @@ export interface LiveRunning {
 }
 
 export interface LiveSchedule {
-  /** Every future run, ascending. The renderer decides what counts as today. */
+  /** Every remaining run today, ascending. */
   upcoming: ScheduledRun[];
+  /** First known run, including one beyond today. */
+  next?: ScheduledRun | null;
   unavailable?: string;
 }
 
@@ -259,7 +262,7 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
   const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
 
   if (runs.length === 0) {
-    const later = schedule.upcoming[0];
+    const later = schedule.next ?? schedule.upcoming[0];
     return truncate(
       [
         '📅 <b>На сегодня запусков больше нет</b>',
@@ -278,7 +281,8 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
         '',
       ];
       for (const run of runs.slice(0, shown)) {
-        lines.push(`<b>${timeOnly(run.at, clock)}</b> · ${escapeHtml(run.name)}`);
+        const kind = run.cadence ? ` <i>· ${escapeHtml(run.cadence)}</i>` : '';
+        lines.push(`${timeOnly(run.at, clock)} · ${escapeHtml(run.name)}${kind}`);
       }
       const rest = runs.length - shown;
       if (rest > 0) {
