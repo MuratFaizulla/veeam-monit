@@ -747,6 +747,26 @@ test('a live message Telegram no longer has is deleted and replaced, not duplica
   assert.equal(w.api.of('createForumTopic').length, 0, 'the topic itself is still known');
 });
 
+test('a slot too long for one message owns a second, and drops it when it shrinks', async () => {
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+
+  w.api.reset();
+  await w.live.publish('restorePoints', ['страница один', 'страница два']);
+  assert.equal(w.api.sent().length, 1, 'the continuation is a message of its own');
+  assert.equal(w.api.of('editMessageText').length, 1, 'the first page keeps its message');
+
+  w.api.reset();
+  await w.live.publish('restorePoints', ['страница один, иначе', 'страница два, иначе']);
+  assert.equal(w.api.sent().length, 0, 'both pages are edited in place');
+  assert.equal(w.api.of('editMessageText').length, 2);
+
+  w.api.reset();
+  await w.live.publish('restorePoints', ['теперь всё помещается']);
+  assert.equal(w.api.of('deleteMessage').length, 1, 'the page nothing fills is removed');
+  assert.equal(w.api.sent().length, 0);
+});
+
 test('the live message survives a restart instead of starting a second one', async () => {
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
@@ -1110,7 +1130,7 @@ test('a job whose schedule could not be read is still judged', async () => {
 const DAY = 86400000;
 const NOW = Date.UTC(2026, 8, 15, 12);
 
-const depth = (over) => {
+const depthPages = (over) => {
   const { renderRestorePoints } = require('../dist/telegram/telegram-restore-points');
   return renderRestorePoints(
     {
@@ -1125,6 +1145,9 @@ const depth = (over) => {
     { now: new Date(NOW), timezone: 'UTC' },
   );
 };
+
+/** The whole topic as one string, for assertions that do not care about pages. */
+const depth = (over) => depthPages(over).join('\n');
 
 test('a row says the name, the point count and exactly when the newest was taken', async () => {
   const text = depth({
@@ -1192,23 +1215,44 @@ test('jobs that are not supposed to run are left out, and said to be left out', 
   assert.match(text, /Не учитываются:<\/b> 31 без расписания, 4 выключено/);
 });
 
-test('the list fills the message, keeping the ones that are behind', async () => {
-  const many = Array.from({ length: 400 }, (_, i) => ({
+const estate = (size) =>
+  Array.from({ length: size }, (_, i) => ({
     name: `OPS_JOB_${String(i).padStart(3, '0')}`,
     runs: 10,
     points: 10,
     machines: 1,
     intervalDays: 1,
-    // Job 000 is three days behind, job 399 is current.
-    newest: NOW - (400 - i) * 0.01 * DAY - (i === 0 ? 3 * DAY : 0),
+    // Job 000 is three days behind, the rest are current.
+    newest: NOW - (size - i) * 0.01 * DAY - (i === 0 ? 3 * DAY : 0),
   }));
-  const text = depth({ jobs: many });
 
-  assert.ok(text.length <= 4096, `message is ${text.length} characters`);
+test('a list too long for one message continues into a second', async () => {
+  const pages = depthPages({ jobs: estate(90) });
+
+  assert.equal(pages.length, 2, 'ninety spelled-out rows do not fit in one message');
+  for (const page of pages) {
+    assert.ok(page.length <= 4096, `page is ${page.length} characters`);
+  }
+  assert.match(pages[1], /^🗂 <b>Точки восстановления — продолжение<\/b>/);
+  // The totals belong to the list, not to a page: repeated under the first
+  // message they would be read as that page's own count.
+  assert.ok(!/Заданий:/.test(pages[0]));
+  assert.match(pages[1], /Заданий:<\/b> 90/);
+  assert.equal(
+    pages.join('\n').match(/OPS_JOB_/g).length,
+    90,
+    'every job appears exactly once across the pages',
+  );
+});
+
+test('the pages fill up, keeping the ones that are behind', async () => {
+  const pages = depthPages({ jobs: estate(400) });
+  const text = pages.join('\n');
+
   const hidden = /…и ещё (\d+) задани\S* по графику/.exec(text);
   assert.ok(hidden, 'the ones on schedule are the ones worth dropping');
-  assert.equal((text.match(/OPS_JOB_/g) ?? []).length + Number(hidden[1]), 400);
-  assert.match(text, /OPS_JOB_000/, 'the one that is behind is always shown');
+  assert.equal(text.match(/OPS_JOB_/g).length + Number(hidden[1]), 400);
+  assert.match(pages[0], /OPS_JOB_000/, 'the one that is behind is always shown');
 });
 
 test('an unread scan says so rather than showing an empty estate', async () => {

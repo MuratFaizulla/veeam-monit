@@ -23,17 +23,62 @@ const BAR = 10;
 export const fitted = (count: number, build: (shown: number) => string): string => {
   const whole = build(count);
   if (whole.length <= MAX_LENGTH) return whole;
+  return build(largest(count, (shown) => build(shown).length <= MAX_LENGTH));
+};
 
-  // Binary search rather than one item at a time: with a hundred running jobs
-  // the linear walk rebuilt the message a hundred times per cycle.
-  let fits = 0;
-  let tooMany = count;
-  while (fits < tooMany) {
-    const middle = Math.ceil((fits + tooMany) / 2);
-    if (build(middle).length <= MAX_LENGTH) fits = middle;
+/**
+ * The largest `n` up to `limit` for which `fits(n)` holds.
+ *
+ * Binary search rather than one item at a time: with a hundred running jobs the
+ * linear walk rebuilt the message a hundred times per cycle.
+ */
+const largest = (limit: number, fits: (n: number) => boolean): number => {
+  let ok = 0;
+  let tooMany = limit;
+  while (ok < tooMany) {
+    const middle = Math.ceil((ok + tooMany) / 2);
+    if (fits(middle)) ok = middle;
     else tooMany = middle - 1;
   }
-  return build(fits);
+  return ok;
+};
+
+/**
+ * Renders `count` items across as many messages as they need, up to `maxPages`.
+ *
+ * One message can hold about fifty spelled-out rows, and an estate has twice
+ * that. Dropping the overflow is the wrong trade when the list is the point of
+ * the topic, so the list is allowed to continue into a second message that is
+ * kept current exactly like the first.
+ *
+ * `build(from, take, tail)` renders items `[from, from + take)`. `tail` asks for
+ * the closing summary, and is only true on the page that ends the list — a
+ * total repeated under every page would be read as a per-page total.
+ */
+export const paged = (
+  count: number,
+  maxPages: number,
+  build: (from: number, take: number, tail: boolean) => string,
+): string[] => {
+  const out: string[] = [];
+  let from = 0;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rest = count - from;
+    const whole = build(from, rest, true);
+    if (whole.length <= MAX_LENGTH) {
+      out.push(whole);
+      return out;
+    }
+    // The last page allowed must carry the summary even though it cannot carry
+    // every remaining row; the summary is what says how many were left out.
+    const closing = page === maxPages - 1;
+    const take = largest(rest, (n) => build(from, n, closing).length <= MAX_LENGTH);
+    out.push(build(from, take, closing));
+    from += take;
+    // A single row that does not fit on its own would loop forever otherwise.
+    if (take === 0) return out;
+  }
+  return out;
 };
 
 export interface LiveHealth {

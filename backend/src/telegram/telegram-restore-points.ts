@@ -1,5 +1,5 @@
 import { escapeHtml } from './telegram.format';
-import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegram-live.format';
+import { dayOf, LiveClock, longMoment, paged, plural, stampOf } from './telegram-live.format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
@@ -70,20 +70,32 @@ const missedRuns = (job: JobDepth, now: number): number | null => {
   return Math.max(0, Math.floor(ageDays / job.intervalDays) - 1);
 };
 
+/**
+ * Messages this topic may occupy.
+ *
+ * One message holds about fifty of these rows and the estate has ninety, so a
+ * single message would mean either dropping half the list or going back to
+ * rows too terse to read. The list continues into a second message instead,
+ * kept current exactly like the first.
+ */
+const MAX_PAGES = 2;
+
 export const renderRestorePoints = (
   snapshot: RestorePointsSnapshot,
   clock: LiveClock,
-): string => {
+): string[] => {
   const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
 
   if (snapshot.unavailable) {
     return [
-      '⚠️ <b>Точки восстановления не прочитаны</b>',
-      '',
-      escapeHtml(snapshot.unavailable),
-      '',
-      footer,
-    ].join('\n');
+      [
+        '⚠️ <b>Точки восстановления не прочитаны</b>',
+        '',
+        escapeHtml(snapshot.unavailable),
+        '',
+        footer,
+      ].join('\n'),
+    ];
   }
 
   const now = clock.now.getTime();
@@ -99,9 +111,11 @@ export const renderRestorePoints = (
   const skippedLine = skipped.length ? `<b>Не учитываются:</b> ${skipped.join(', ')}` : null;
 
   if (snapshot.jobs.length === 0) {
-    return ['🗂 <b>Точек восстановления нет ни у одного задания</b>', '', skippedLine, footer]
-      .filter((line): line is string => line !== null)
-      .join('\n');
+    return [
+      ['🗂 <b>Точек восстановления нет ни у одного задания</b>', '', skippedLine, footer]
+        .filter((line): line is string => line !== null)
+        .join('\n'),
+    ];
   }
 
   // Furthest behind its own schedule first. That end of the list is the one
@@ -134,16 +148,28 @@ export const renderRestorePoints = (
     footer,
   ].filter((line): line is string => line !== null);
 
-  return fitted(sorted.length, (shown) => {
-    const lines = [
-      '🗂 <b>Точки восстановления</b>',
-      '<i>Сначала те, кто отстал от своего расписания.</i>',
-      '',
-    ];
-    for (const job of sorted.slice(0, shown)) {
+  return paged(sorted.length, MAX_PAGES, (from, take, closing) => {
+    const lines =
+      from === 0
+        ? [
+            '🗂 <b>Точки восстановления</b>',
+            '<i>Сначала те, кто отстал от своего расписания.</i>',
+            '',
+          ]
+        : ['🗂 <b>Точки восстановления — продолжение</b>', ''];
+
+    for (const job of sorted.slice(from, from + take)) {
       lines.push(depthLine(job, missed.get(job) ?? null, clock));
     }
-    const rest = sorted.length - shown;
+
+    if (!closing) {
+      // Every page carries the timestamp, so a page that stopped being
+      // refreshed is visible on its own rather than only next to its first.
+      lines.push('', footer);
+      return lines.join('\n');
+    }
+
+    const rest = sorted.length - (from + take);
     if (rest > 0) {
       lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} по графику`);
     }
