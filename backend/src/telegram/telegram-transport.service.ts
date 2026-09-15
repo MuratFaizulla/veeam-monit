@@ -108,14 +108,16 @@ export class TelegramTransportService implements OnModuleDestroy {
     return this.transport !== null || this.client !== null;
   }
 
-  get pending(): number {
-    let total = 0;
-    for (const queue of this.queues.values()) total += queue.items.length;
-    return total;
-  }
-
-  get droppedCount(): number {
-    return this.dropped;
+  /**
+   * What is waiting and what was thrown away, as the status endpoint reports
+   * it. One getter rather than two: nobody has ever wanted one number without
+   * the other, and a queue that is draining is only alarming next to a drop
+   * count that is not.
+   */
+  get queue(): { pending: number; dropped: number } {
+    let pending = 0;
+    for (const queue of this.queues.values()) pending += queue.items.length;
+    return { pending, dropped: this.dropped };
   }
 
   /** Direct Bot API call, used for everything that is not a chat message. */

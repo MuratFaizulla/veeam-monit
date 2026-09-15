@@ -13,6 +13,7 @@ import { AppConfig } from '../config/configuration';
 import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramService } from './telegram.service';
+import { TelegramUpdatesService } from './telegram-updates.service';
 import { NotificationEvent, NotificationKind, NotificationSeverity, TelegramUpdate } from './telegram.types';
 
 const KINDS: NotificationKind[] = [
@@ -32,6 +33,7 @@ export class TelegramController {
   constructor(
     config: ConfigService,
     private readonly telegram: TelegramService,
+    private readonly updates: TelegramUpdatesService,
     private readonly routing: TelegramRoutingService,
     private readonly monitor: TelegramMonitorService,
   ) {
@@ -40,20 +42,15 @@ export class TelegramController {
 
   @Get('status')
   status() {
+    const reach = this.telegram.reach;
     return {
-      enabled: this.telegram.enabled,
-      mode: !this.telegram.enabled
-        ? 'disabled'
-        : this.telegram.pollingEnabled
-          ? 'polling'
-          : 'webhook',
-      webhookConfigured: this.telegram.webhookConfigured,
+      enabled: reach.enabled,
+      mode: this.updates.mode,
+      webhookConfigured: this.updates.webhookConfigured,
       routingMode: this.config.routingMode,
-      discoveredChats: this.telegram.listChats().length,
-      knownTopics: this.telegram
-        .listChats()
-        .reduce((total, chat) => total + Object.keys(chat.topics).length, 0),
-      queue: { pending: this.telegram.pendingMessages, dropped: this.telegram.droppedMessages },
+      discoveredChats: reach.chats,
+      knownTopics: reach.topics,
+      queue: reach.queue,
       monitor: this.monitor.status,
     };
   }
@@ -64,7 +61,7 @@ export class TelegramController {
     @Body() update: TelegramUpdate,
   ): Promise<{ ok: true }> {
     if (!this.telegram.acceptsWebhookSecret(secret)) throw new ForbiddenException();
-    await this.telegram.handleUpdate(update);
+    await this.updates.handleUpdate(update);
     return { ok: true };
   }
 

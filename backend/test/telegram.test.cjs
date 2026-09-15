@@ -11,6 +11,7 @@ const { TelegramTransportService } = require('../dist/telegram/telegram-transpor
 const { TelegramTopicsService } = require('../dist/telegram/telegram-topics.service');
 const { TelegramRoutingService } = require('../dist/telegram/telegram-routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
+const { TelegramUpdatesService } = require('../dist/telegram/telegram-updates.service');
 const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
 const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
 const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
@@ -82,16 +83,17 @@ function world(env = {}, handlers = {}, stateFile) {
     ...env,
   });
   const config = { getOrThrow: () => telegram };
-  const store = new TelegramStateStore(file);
+  const store = new TelegramStateStore(file, telegram.chatIds);
   const api = fakeBotApi(handlers);
   const transport = new TelegramTransportService(config, api.fn);
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
+  const updates = new TelegramUpdatesService(config, transport, topics, store);
   const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
-  return { file, config, store, api, transport, topics, routing, service, live, telegram };
+  return { file, config, store, api, transport, topics, routing, service, updates, live, telegram };
 }
 
 function veeamFake(routes) {
@@ -317,9 +319,53 @@ test('messages are cut to Telegram’s 4096-character limit', async () => {
  * Update handling
  * ------------------------------------------------------------------ */
 
+test('a chat named in configuration is registered before any update arrives', async () => {
+  const file = path.join(os.tmpdir(), `veeam-seed-${Math.random().toString(36).slice(2)}.json`);
+  const telegram = telegramConfig({ TELEGRAM_CHAT_IDS: CHAT, TELEGRAM_STATE_FILE: file });
+  // The registry is asked on its own, with no service constructed at all: the
+  // seeding must not depend on which provider Nest happens to build first.
+  const store = new TelegramStateStore(file, telegram.chatIds);
+
+  assert.deepEqual(
+    store.chats().map(([id]) => id),
+    [CHAT],
+  );
+  fs.rmSync(file, { force: true });
+});
+
+test('the reported mode follows the transport, not a flag somebody set', async () => {
+  const w = world();
+  // No webhook URL and the polling loop was never started, so neither transport
+  // is up. Reporting "webhook" here is what used to hide a failed start.
+  assert.equal(w.updates.mode, 'starting');
+  assert.equal(w.updates.webhookConfigured, false);
+
+  const file = path.join(os.tmpdir(), `veeam-off-${Math.random().toString(36).slice(2)}.json`);
+  const off = telegramConfig({ TELEGRAM_BOT_TOKEN: '', TELEGRAM_STATE_FILE: file });
+  const store = new TelegramStateStore(file);
+  const config = { getOrThrow: () => off };
+  const transport = new TelegramTransportService(config);
+  const topics = new TelegramTopicsService(config, transport, store);
+  assert.equal(new TelegramUpdatesService(config, transport, topics, store).mode, 'disabled');
+  fs.rmSync(file, { force: true });
+});
+
+test('status counts every chat and every topic the bot knows', async () => {
+  const w = world();
+  w.topics.remember(CHAT, '🔴 Errors', 11);
+  w.topics.remember(CHAT, '🟡 Warnings', 12);
+
+  assert.deepEqual(w.service.reach, {
+    enabled: true,
+    chats: 1,
+    topics: 2,
+    queue: { pending: 0, dropped: 0 },
+  });
+});
+
 test('a topic created by a human in the group is learned from the update', async () => {
   const w = world();
-  await w.service.handleUpdate({
+  await w.updates.handleUpdate({
     update_id: 1,
     message: {
       message_id: 5,
@@ -334,7 +380,7 @@ test('a topic created by a human in the group is learned from the update', async
 
 test('/start answers inside the topic it was asked in', async () => {
   const w = world();
-  await w.service.handleUpdate({
+  await w.updates.handleUpdate({
     update_id: 2,
     message: {
       message_id: 6,

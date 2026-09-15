@@ -7,6 +7,7 @@ import { TelegramLiveService } from './telegram-live.service';
 import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramService } from './telegram.service';
+import { TelegramUpdatesService } from './telegram-updates.service';
 import { TelegramStateStore } from './telegram-state.store';
 import { TelegramTopicsService } from './telegram-topics.service';
 import { TelegramTransportService } from './telegram-transport.service';
@@ -21,7 +22,10 @@ import { BackupEvidenceService } from './backup-evidence.service';
       provide: TelegramStateStore,
       inject: [ConfigService],
       useFactory: (config: ConfigService) =>
-        new TelegramStateStore(config.getOrThrow<AppConfig['telegram']>('telegram').stateFile),
+        new TelegramStateStore(
+          config.getOrThrow<AppConfig['telegram']>('telegram').stateFile,
+          config.getOrThrow<AppConfig['telegram']>('telegram').chatIds,
+        ),
     },
     {
       // Built by hand because the optional transport seam the tests use is a
@@ -34,6 +38,7 @@ import { BackupEvidenceService } from './backup-evidence.service';
     TelegramLiveService,
     TelegramRoutingService,
     TelegramService,
+    TelegramUpdatesService,
     TelegramMonitorService,
     VeeamMonitorAuthService,
     BackupEvidenceService,

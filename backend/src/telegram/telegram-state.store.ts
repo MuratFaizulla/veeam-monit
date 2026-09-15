@@ -59,8 +59,18 @@ export class TelegramStateStore implements OnModuleDestroy {
   private readonly state: TelegramState;
   private writeQueued = false;
 
-  constructor(private readonly filePath: string) {
+  /**
+   * `chatIds` are the chats named in configuration. They are registered here
+   * rather than by whichever service happens to be constructed first: a
+   * configured chat is usable before any update arrives, and making that depend
+   * on provider order is how a monitor tick can find an empty registry.
+   */
+  constructor(
+    private readonly filePath: string,
+    chatIds: string[] = [],
+  ) {
     this.state = this.load();
+    for (const id of chatIds) this.seedChat(id, { id: Number(id), type: 'supergroup' });
   }
 
   /** The debounced write may still be pending when the process stops. */
