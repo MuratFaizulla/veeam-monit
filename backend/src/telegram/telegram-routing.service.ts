@@ -81,7 +81,13 @@ export class TelegramRoutingService {
 
   private byStrategy(event: NotificationEvent): RoutingDecision {
     const mode = this.config.routingMode;
-    if (mode === 'single') return { topic: null, reason: 'mode=single' };
+    if (mode === 'single') {
+      const isAlert = event.severity === 'critical' || event.severity === 'warning';
+      return {
+        topic: isAlert ? topicName(this.config.alertsTopic) : null,
+        reason: isAlert ? 'mode=single alert' : 'mode=single',
+      };
+    }
     if (mode === 'severity') {
       return { topic: this.severityTopic(event), reason: 'mode=severity' };
     }

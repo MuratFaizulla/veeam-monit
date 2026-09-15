@@ -241,12 +241,14 @@ test('severity mode groups every kind into one topic per severity', async () => 
   assert.notEqual(sent[1].message_thread_id, sent[2].message_thread_id);
 });
 
-test('single mode restores the old behaviour of posting everything to General', async () => {
+test('single mode sends failures to Alerts and keeps non-alerts in General', async () => {
   const w = world({ TELEGRAM_ROUTING_MODE: 'single' });
   await w.service.notify({ kind: 'job', severity: 'critical', subject: 'A', title: 'a' });
+  await w.service.notify({ kind: 'job', severity: 'success', subject: 'A', title: 'recovered' });
 
-  assert.equal(w.api.of('createForumTopic').length, 0);
-  assert.equal(w.api.sent()[0].message_thread_id, undefined);
+  assert.deepEqual(w.api.of('createForumTopic').map((topic) => topic.name), ['🚨 Alerts']);
+  assert.equal(w.api.sent()[0].message_thread_id, 101);
+  assert.equal(w.api.sent()[1].message_thread_id, undefined);
 });
 
 test('a non-forum chat never gets a thread id', async () => {
@@ -1086,7 +1088,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
   assert.deepEqual(w.api.sent(), []);
 });
 
-test('by default every alert goes to General instead of growing a topic per job', async () => {
+test('by default every failure goes to the shared Alerts topic', async () => {
   const saved = process.env.TELEGRAM_ROUTING_MODE;
   delete process.env.TELEGRAM_ROUTING_MODE;
   try {
@@ -1102,8 +1104,8 @@ test('by default every alert goes to General instead of growing a topic per job'
   await w.monitor.check();
 
   const alert = w.api.sent().find((m) => /SQL Daily/.test(m.text));
-  assert.equal(alert.message_thread_id, undefined, 'General, not a per-job thread');
-  assert.equal(w.api.of('createForumTopic').length, 0);
+  assert.notEqual(alert.message_thread_id, undefined, 'shared Alerts topic, not General');
+  assert.deepEqual(w.api.of('createForumTopic').map((topic) => topic.name), ['🚨 Alerts']);
 });
 
 test('the schedule slot lists only what is still due today', async () => {
