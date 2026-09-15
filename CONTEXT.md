@@ -47,6 +47,28 @@ Which Run wrote a point is decided by *when the point appeared*, not by the
 session id the point carries: Veeam stamps a point with the session that opened
 the Run, and a retried Run keeps writing into the same point.
 
+## Standing
+
+What one job is owed and what it has: whether it is **excused** from producing
+restore points at all, and if not, its recent Runs, its Cadence, its failure
+streak and its retained history.
+
+A job is excused only on positive evidence — switched off in Veeam, or
+configured to start by hand. A job whose configuration could not be read is
+judged: an unknown schedule is treated as a real one, because the failure mode
+of the other choice is silently dropping a job from every check.
+
+Standings are worked out once per cycle and read by both 🛡 Protection and
+🗂 Restore points, so the two messages cannot disagree about which jobs are in
+scope or how many were left out.
+
+A Standing deliberately says nothing about whether a job is *late*. The two
+slots ask different questions of the same Standing — "how many Runs has it
+skipped" and "is this past the deadline worth reporting" — and those are
+decisions about what to alarm on.
+
+Owned by `backend/src/telegram/job-standing.ts`.
+
 ## Cadence
 
 How often a job actually runs, in days: the median gap between its recent Runs.
