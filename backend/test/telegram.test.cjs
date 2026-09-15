@@ -1124,9 +1124,9 @@ test('depth counts runs, not one restore point per protected machine', async () 
              oldest: Date.UTC(2026, 7, 16), newest: Date.UTC(2026, 8, 15) }],
   });
 
-  // Compact columns; the legend in the header carries the words.
-  assert.match(text, /^🟢 30 · 240 · OPS_SMAX_SAM · 30д$/m);
-  assert.match(text, /\(прогонов · точек · задание · период\)/);
+  // Every number carries its unit, so a row is readable on its own.
+  assert.match(text, /^🟢 30п 240т 30д · OPS_SMAX_SAM$/m);
+  assert.match(text, /т — точек Veeam/);
 });
 
 test('a job keeping a single state is flagged even though it never failed', async () => {
@@ -1144,8 +1144,8 @@ test('a job keeping a single state is flagged even though it never failed', asyn
   const second = lines.findIndex((l) => /CUST_deep/.test(l));
   assert.ok(first < second, 'the thinnest history is what somebody has to act on');
   // One run on one machine: no point count to repeat, no span to show.
-  assert.equal(lines[first], '🔴 1 · CUST_CHEMPLANT');
-  assert.equal(lines[second], '🟢 40 · CUST_deep · 40д');
+  assert.equal(lines[first], '🔴 1п · CUST_CHEMPLANT');
+  assert.equal(lines[second], '🟢 40п 40д · CUST_deep');
   assert.match(text, /Только одно состояние:<\/b> 1 задание/);
 });
 
