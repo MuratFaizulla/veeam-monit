@@ -36,6 +36,7 @@ import { ProtectionSnapshot, assessProtection, renderProtection } from './telegr
 import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram-restore-points';
 import { OrphansSnapshot, renderOrphans } from './telegram-orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
+import { Standings, standingsOf } from './job-standing';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -331,6 +332,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     // cycle's numbers and nothing failed.
     await this.evidence.refresh(accessToken, jobs);
     const evidence = this.evidence.evidence;
+    // Worked out once and read by both slots below, so they cannot disagree
+    // about which jobs are in scope or how many were left out.
+    const standings =
+      jobs && evidence.status === 'ready' ? standingsOf(jobs, evidence) : undefined;
 
     await this.live.publish(
       'health',
@@ -362,11 +367,14 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     await this.live.publish('repositories', renderRepositories(repositories, clock));
 
-    await this.live.publish('protection', renderProtection(this.protectionState(jobs, evidence), clock));
+    await this.live.publish(
+      'protection',
+      renderProtection(this.protectionState(jobs, standings, evidence), clock),
+    );
 
     await this.live.publish(
       'restorePoints',
-      renderRestorePoints(this.depthState(jobs, evidence), clock),
+      renderRestorePoints(this.depthState(standings, evidence), clock),
     );
 
     // Off by request until the chains have been gone through by hand; the slot
@@ -453,6 +461,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    */
   private protectionState(
     jobs: VeeamJobState[] | undefined,
+    standings: Standings | undefined,
     evidence: Evidence,
   ): ProtectionSnapshot {
     const thresholds = {
@@ -461,7 +470,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       minStreak: this.config.protectionFailureStreak,
     };
 
-    if (!jobs || evidence.status === 'pending') {
+    if (!standings) {
       return {
         risks: [],
         totalJobs: jobs?.length ?? 0,
@@ -473,23 +482,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    return assessProtection({
-      jobs: jobs
-        .filter((job): job is VeeamJobState & { id: string } => Boolean(job.id))
-        .map((job) => ({
-          id: job.id,
-          name: job.name ?? job.id,
-          type: job.type,
-          lastRun: job.lastRun,
-          disabled: (job.status ?? '').toLowerCase() === 'disabled',
-          unscheduled: evidence.unscheduled.has(job.id),
-        })),
-      pointsByJob: evidence.runsByJob,
-      cadenceByJob: evidence.cadenceByJob,
-      streakByJob: evidence.streakByJob,
-      now: Date.now(),
-      ...thresholds,
-    });
+    return assessProtection({ standings, now: Date.now(), ...thresholds });
   }
 
   /**
@@ -500,10 +493,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    * nothing to date, and Protection already names them.
    */
   private depthState(
-    jobs: VeeamJobState[] | undefined,
+    standings: Standings | undefined,
     evidence: Evidence,
   ): RestorePointsSnapshot {
-    if (!jobs || evidence.status === 'pending') {
+    if (!standings || evidence.status === 'pending') {
       return {
         jobs: [],
         without: 0,
@@ -518,31 +511,15 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     const listed: JobDepth[] = [];
     let without = 0;
-    let excludedDisabled = 0;
-    let excludedUnscheduled = 0;
-    for (const job of jobs) {
-      if (!job.id) continue;
-      // The same exclusions 🛡 Protection makes: a job that is switched off, or
-      // that only runs when somebody starts it, has no schedule to fall behind
-      // and would sit at the top of a list ordered by missed runs forever.
-      if ((job.status ?? '').toLowerCase() === 'disabled') {
-        excludedDisabled += 1;
-        continue;
-      }
-      if (evidence.unscheduled.has(job.id)) {
-        excludedUnscheduled += 1;
-        continue;
-      }
-      const depth = evidence.depthByJob.get(job.id);
-      if (!depth) {
+    // Which jobs are in scope, and how many were left out, is decided once and
+    // shared with 🛡 Protection; the two messages state the same numbers because
+    // they are the same numbers.
+    for (const job of standings.judged) {
+      if (!job.depth) {
         without += 1;
         continue;
       }
-      listed.push({
-        name: job.name ?? job.id,
-        ...depth,
-        intervalDays: evidence.cadenceByJob.get(job.id) ?? null,
-      });
+      listed.push({ name: job.name, ...job.depth, intervalDays: job.cadenceDays });
     }
 
     const newest = listed.reduce<{ name: string; at: number } | undefined>(
@@ -556,8 +533,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return {
       jobs: listed,
       without,
-      excludedDisabled,
-      excludedUnscheduled,
+      excludedDisabled: standings.excludedDisabled,
+      excludedUnscheduled: standings.excludedUnscheduled,
       failedPoints: evidence.failedPoints,
       // Only mentioned while there is a 🧹 topic to send the reader to. A
       // pointer to a topic that does not exist is worse than no pointer.

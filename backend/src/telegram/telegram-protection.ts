@@ -1,4 +1,5 @@
 import { escapeHtml } from './telegram.format';
+import { Standings } from './job-standing';
 import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegram-live.format';
 
 /**
@@ -15,21 +16,6 @@ import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegra
  */
 
 const DAY = 86_400_000;
-
-export interface ProtectionJob {
-  id: string;
-  name: string;
-  type?: string;
-  lastRun?: string;
-  /** Switched off in Veeam. It is not supposed to be producing anything. */
-  disabled?: boolean;
-  /**
-   * Set to run by hand rather than on a schedule. Undefined means the schedule
-   * could not be read, and an unknown schedule is treated as a real one: a job
-   * is only excused from this list on positive evidence, never on a gap.
-   */
-  unscheduled?: boolean;
-}
 
 export interface ProtectionThresholds {
   /** Floor, in days. Nothing fresher than this is ever reported. */
@@ -48,18 +34,12 @@ export interface ProtectionThresholds {
 }
 
 export interface ProtectionInput extends ProtectionThresholds {
-  jobs: ProtectionJob[];
-  /** Restore point timestamps (epoch ms) per job id, in any order. */
-  pointsByJob: Map<string, number[]>;
   /**
-   * How often each job runs, in days; absent or null where it cannot be told.
-   * Handed in rather than derived here: the same number decides how the 🗂 slot
-   * orders its list, and two modules computing it from the same timestamps is
-   * two chances to disagree.
+   * Which jobs are owed a restore point, and what each of them has. Decided
+   * elsewhere and shared with the 🗂 slot, so the two cannot disagree about
+   * which jobs are in scope or how many were left out.
    */
-  cadenceByJob: Map<string, number | null>;
-  /** Consecutive failures counted back from the newest session, per job id. */
-  streakByJob: Map<string, number>;
+  standings: Standings;
   now: number;
 }
 
@@ -93,30 +73,11 @@ export interface ProtectionSnapshot extends ProtectionThresholds {
  * without a Veeam, a Telegram or a clock.
  */
 export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => {
-  const { jobs, pointsByJob, cadenceByJob, streakByJob, now, staleDays, overdueFactor, minStreak } =
-    input;
+  const { standings, now, staleDays, overdueFactor, minStreak } = input;
   const risks: ProtectionRisk[] = [];
-  let excludedDisabled = 0;
-  let excludedUnscheduled = 0;
-  let judged = 0;
 
-  for (const job of jobs) {
-    // A job that is switched off, or that only runs when somebody starts it,
-    // has no restore point by design. Reporting those buried the four jobs
-    // that are genuinely failing under nineteen that are working as intended.
-    if (job.disabled) {
-      excludedDisabled += 1;
-      continue;
-    }
-    if (job.unscheduled) {
-      excludedUnscheduled += 1;
-      continue;
-    }
-    judged += 1;
-
-    const points = [...(pointsByJob.get(job.id) ?? [])].sort((a, b) => b - a);
-    const failures = streakByJob.get(job.id) ?? 0;
-    const intervalDays = cadenceByJob.get(job.id) ?? null;
+  for (const job of standings.judged) {
+    const { runs: points, failures, cadenceDays: intervalDays } = job;
     const ageDays = points.length ? (now - points[0]) / DAY : null;
 
     // The deadline is the job's own schedule where it is known, but never
@@ -146,10 +107,10 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
 
   return {
     risks,
-    totalJobs: judged,
-    protectedJobs: judged - risks.length,
-    excludedDisabled,
-    excludedUnscheduled,
+    totalJobs: standings.judged.length,
+    protectedJobs: standings.judged.length - risks.length,
+    excludedDisabled: standings.excludedDisabled,
+    excludedUnscheduled: standings.excludedUnscheduled,
     staleDays,
     overdueFactor,
     minStreak,

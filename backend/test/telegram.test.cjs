@@ -990,25 +990,52 @@ const DAY_MS = 86_400_000;
 const points = (now, ageDays, everyDays, count = 8) =>
   Array.from({ length: count }, (_, i) => now - (ageDays + i * everyDays) * DAY_MS);
 
+/**
+ * Builds an evidence of the shape a scan produces, from the shorthand these
+ * tests use. Jobs carry `disabled` / `unscheduled` flags; the real predicate
+ * reads a Veeam status and the evidence's unscheduled set, so they are put
+ * back into that shape and the real module decides.
+ */
+const standings = (jobs, pointsByJob, streakByJob, now) => {
+  const { standingsOf } = require('../dist/telegram/job-standing');
+  const { cadenceOf } = require('../dist/telegram/backup-evidence.service');
+  const newestFirst = new Map(
+    [...pointsByJob].map(([id, stamps]) => [id, [...stamps].sort((a, b) => b - a)]),
+  );
+  return standingsOf(
+    jobs.map((j) => ({
+      id: j.id,
+      name: j.name,
+      type: j.type,
+      lastRun: j.lastRun,
+      status: j.disabled ? 'Disabled' : 'Stopped',
+    })),
+    {
+      status: 'ready',
+      scannedAt: now,
+      runsByJob: newestFirst,
+      cadenceByJob: new Map([...newestFirst].map(([id, runs]) => [id, cadenceOf(runs)])),
+      unscheduled: new Set(jobs.filter((j) => j.unscheduled).map((j) => j.id)),
+      streakByJob,
+      depthByJob: new Map(),
+      orphanChains: [],
+      totalPoints: 0,
+      failedPoints: 0,
+    },
+  );
+};
+
 const assess = (overrides) => {
   const { assessProtection } = require('../dist/telegram/telegram-protection');
-  const { cadenceOf } = require('../dist/telegram/backup-evidence.service');
   const now = Date.UTC(2026, 8, 14, 12, 0, 0);
-  const pointsByJob = overrides.pointsByJob ?? new Map();
+  const { jobs = [], pointsByJob = new Map(), streakByJob = new Map(), ...thresholds } = overrides;
   return assessProtection({
-    jobs: [],
-    streakByJob: new Map(),
-    // The evidence works this out once and hands it to both readers; here it is
-    // derived from the same timestamps so the tests stay about the judgement.
-    cadenceByJob: new Map(
-      [...pointsByJob].map(([id, stamps]) => [id, cadenceOf([...stamps].sort((a, b) => b - a))]),
-    ),
+    standings: standings(jobs, pointsByJob, streakByJob, now),
     now,
     staleDays: 3,
     overdueFactor: 2.5,
     minStreak: 3,
-    ...overrides,
-    pointsByJob,
+    ...thresholds,
   });
 };
 
@@ -1437,6 +1464,60 @@ test('an unread scan says so rather than showing an empty estate', async () => {
   const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
   assert.match(text, /не прочитаны/);
   assert.ok(!/Сначала те/.test(text));
+});
+
+/* ------------------------------------------------------------------ *
+ * What a job is owed
+ * ------------------------------------------------------------------ */
+
+test('both slots are told the same thing about which jobs are in scope', async () => {
+  // The invariant that used to be two copies of a predicate and a comment
+  // asking the next reader to keep the counts in the same order.
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [
+    { id: '1', name: 'CLT_running', type: 'Backup', status: 'Stopped' },
+    { id: '2', name: 'TTC_OLD', type: 'Backup', status: 'Disabled' },
+    { id: '3', name: 'CLT_by_hand', type: 'Backup', status: 'Stopped' },
+  ], {
+    '/api/v1/jobs': {
+      data: [
+        { id: '1', schedule: { runAutomatically: true } },
+        { id: '2', schedule: { runAutomatically: true } },
+        { id: '3', schedule: { runAutomatically: false } },
+      ],
+    },
+  });
+
+  await w.monitor.check();
+  const sent = w.api.sent();
+  const protection = sent.find((m) => /Защищ|Под угрозой|защищены/.test(m.text));
+  const depth = sent.find((m) => /Точки восстановления|Точек восстановления/.test(m.text));
+
+  for (const message of [protection, depth]) {
+    assert.match(message.text, /Не учитываются:<\/b> 1 без расписания, 1 выключено/);
+  }
+});
+
+test('a job is only excused on positive evidence, never on a gap', async () => {
+  const { standingsOf } = require('../dist/telegram/job-standing');
+  const blank = {
+    status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
+    unscheduled: new Set(['known-manual']), streakByJob: new Map(), depthByJob: new Map(),
+    orphanChains: [], totalPoints: 0, failedPoints: 0,
+  };
+
+  const result = standingsOf(
+    [
+      { id: 'known-manual', name: 'by hand', status: 'Stopped' },
+      { id: 'off', name: 'switched off', status: 'Disabled' },
+      // Its configuration was never read, so nothing says it is excused.
+      { id: 'unknown', name: 'schedule unreadable', status: 'Stopped' },
+    ],
+    blank,
+  );
+
+  assert.deepEqual(result.judged.map((j) => j.id), ['unknown']);
+  assert.equal(result.excludedUnscheduled, 1);
+  assert.equal(result.excludedDisabled, 1);
 });
 
 /* ------------------------------------------------------------------ *
