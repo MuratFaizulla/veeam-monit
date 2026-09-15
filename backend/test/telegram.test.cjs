@@ -13,6 +13,7 @@ const { TelegramRoutingService } = require('../dist/telegram/telegram-routing.se
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
 const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
+const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
 
 const CHAT = '-1001234567890';
 
@@ -116,9 +117,17 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     '/api/v1/restorePoints': { data: [] },
     ...extraRoutes,
   });
-  const auth = { configured: true, username: 'svc@example.com', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
-  return { ...w, monitor, auth, setJobs: (next) => (states = next) };
+  const auth = {
+    configured: true,
+    username: 'svc@example.com',
+    getAccessToken: async () => 'tok',
+    invalidateAccessToken: () => {},
+  };
+  const evidence = new BackupEvidenceService(w.config, veeam, auth);
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live, evidence,
+  );
+  return { ...w, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });
@@ -403,8 +412,11 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
     '/api/v1/sessions': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
   await monitor.check();
 
   // Nothing at all: the persisted result stops a duplicate alert, and the
@@ -429,7 +441,10 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
       return 'tok';
     },
   };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /не авторизуется/.test(payload.text));
@@ -458,8 +473,11 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     },
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
   w.api.reset();
@@ -485,8 +503,11 @@ test('a repository below the free-space threshold is reported once per cooldown'
       ],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /Repo0/.test(payload.text));
@@ -587,8 +608,11 @@ test('a failing job step does not abort the repository check', async () => {
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
 
@@ -608,8 +632,11 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
   assert.equal(w.store.snapshot().cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
@@ -777,8 +804,11 @@ test('the live message survives a restart instead of starting a second one', asy
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
   await monitor.check();
 
   assert.deepEqual(w.api.sent(), [], 'the persisted message id is reused');
@@ -793,8 +823,11 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
 
@@ -827,8 +860,11 @@ test('a moving server clock alone does not rewrite the health message', async ()
     }),
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
   assert.equal(w.api.sent().length, 7);
@@ -897,8 +933,11 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok' };
-  const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
 
   await monitor.check();
 
@@ -953,16 +992,23 @@ const points = (now, ageDays, everyDays, count = 8) =>
 
 const assess = (overrides) => {
   const { assessProtection } = require('../dist/telegram/telegram-protection');
+  const { cadenceOf } = require('../dist/telegram/backup-evidence.service');
   const now = Date.UTC(2026, 8, 14, 12, 0, 0);
+  const pointsByJob = overrides.pointsByJob ?? new Map();
   return assessProtection({
     jobs: [],
-    pointsByJob: new Map(),
     streakByJob: new Map(),
+    // The evidence works this out once and hands it to both readers; here it is
+    // derived from the same timestamps so the tests stay about the judgement.
+    cadenceByJob: new Map(
+      [...pointsByJob].map(([id, stamps]) => [id, cadenceOf([...stamps].sort((a, b) => b - a))]),
+    ),
     now,
     staleDays: 3,
     overdueFactor: 2.5,
     minStreak: 3,
     ...overrides,
+    pointsByJob,
   });
 };
 
@@ -1262,8 +1308,8 @@ test('the pages fill up, keeping the ones that are behind', async () => {
  * the *first* attempt's session id. The run on 14 September errored out after
  * 6.8 GB of 22.4 and left a point behind anyway.
  */
-const exchange = () =>
-  monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'TTC_Exchange', 'Failed')], {
+const exchange = (env = {}) =>
+  monitorWorld({ TELEGRAM_LIVE: 'true', ...env }, [job('1', 'TTC_Exchange', 'Failed')], {
     '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
     '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'TTC_Exchange' }] },
     '/api/v1/restorePoints': {
@@ -1304,6 +1350,63 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   assert.match(topic.text, /TTC_Exchange — 1 точка · 23 августа 2026 г\. в 01:31:12/u);
 });
 
+/* ------------------------------------------------------------------ *
+ * The evidence itself
+ *
+ * Session attribution used to be assertable only by driving a whole cycle and
+ * grepping a rendered Russian message for a date format owned by a third
+ * module. These ask the evidence directly.
+ * ------------------------------------------------------------------ */
+
+test('the evidence attributes each point to the run that was on the clock', async () => {
+  const w = exchange();
+  await w.evidence.refresh('tok', [job('1', 'TTC_Exchange', 'Failed')]);
+  const evidence = w.evidence.evidence;
+
+  assert.equal(evidence.status, 'ready');
+  assert.equal(evidence.failedPoints, 1, 'the run that errored out left one point');
+  assert.equal(evidence.totalPoints, 2);
+  const depth = evidence.depthByJob.get('1');
+  assert.equal(depth.runs, 1, 'only the point a successful run wrote is retained');
+  assert.equal(depth.newest, Date.parse('2026-08-23T01:31:12+05:00'));
+});
+
+test('evidence nothing has read yet says why, instead of an empty estate', async () => {
+  const w = exchange();
+
+  assert.deepEqual(w.evidence.evidence, {
+    status: 'pending',
+    reason: 'Точки восстановления ещё не прочитаны.',
+  });
+
+  // A cycle Veeam did not answer must not be reported as "no restore points".
+  await w.evidence.refresh(null, undefined);
+  assert.equal(w.evidence.evidence.status, 'pending');
+  assert.match(w.evidence.evidence.reason, /не ответил/);
+});
+
+test('a scan that throws leaves the previous evidence standing', async () => {
+  // Cadence zero, so the second refresh really re-scans rather than being
+  // waved through by the gate — otherwise this would pass without ever
+  // reaching the failure it is about.
+  const w = exchange({ TELEGRAM_PROTECTION_INTERVAL_MIN: '0' });
+  const jobs = [job('1', 'TTC_Exchange', 'Failed')];
+  await w.evidence.refresh('tok', jobs);
+  const first = w.evidence.evidence;
+  assert.equal(first.status, 'ready');
+
+  let attempted = false;
+  w.veeam.request = async () => {
+    attempted = true;
+    throw new Error('Veeam fell over mid-scan');
+  };
+  await w.evidence.refresh('tok', jobs);
+
+  assert.ok(attempted, 'the scan was re-run');
+  assert.equal(w.evidence.evidence.status, 'ready', 'stale evidence beats no evidence');
+  assert.equal(w.evidence.evidence.scannedAt, first.scannedAt);
+});
+
 test('with the 🧹 topic off, nothing points the reader at it', async () => {
   const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'CLT_live', 'Success')], {
     '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
@@ -1334,6 +1437,109 @@ test('an unread scan says so rather than showing an empty estate', async () => {
   const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
   assert.match(text, /не прочитаны/);
   assert.ok(!/Сначала те/.test(text));
+});
+
+/* ------------------------------------------------------------------ *
+ * Reading a whole collection
+ *
+ * This existed only as a private method reachable through a monitor cycle, and
+ * no fake ever returned a pagination envelope — so the offset stepping written
+ * to keep a nine-thousand-session read from stalling the cycle had never once
+ * executed in a test.
+ * ------------------------------------------------------------------ */
+
+/** A Veeam that holds `total` rows and answers honest pages of `size`. */
+const collection = (total, size, quirks = {}) => {
+  const asked = [];
+  const rows = Array.from({ length: total }, (_, i) => ({ id: `row-${i}` }));
+  return {
+    asked,
+    reader: {
+      auth: { invalidateAccessToken: () => {}, getAccessToken: async () => 'fresh' },
+      accessToken: 'tok',
+      veeam: {
+        request: async ({ params }) => {
+          asked.push({ skip: params.skip, limit: params.limit });
+          const limit = quirks.cap ? Math.min(params.limit, quirks.cap) : params.limit;
+          return {
+            data: rows.slice(params.skip, params.skip + limit),
+            pagination: quirks.silent ? undefined : { total, skip: params.skip, limit },
+          };
+        },
+      },
+    },
+  };
+};
+
+test('a collection is read whole, in one page when it fits', async () => {
+  const { allPages } = require('../dist/veeam/veeam-pages');
+  const c = collection(40, 500);
+
+  const rows = await allPages(c.reader, '/api/v1/backups', {}, 500);
+
+  assert.equal(rows.length, 40);
+  assert.equal(c.asked.length, 1, 'a short first page is the whole collection');
+});
+
+test('a collection longer than one page is read by offset, not by walking', async () => {
+  const { allPages } = require('../dist/veeam/veeam-pages');
+  const c = collection(1200, 500);
+
+  const rows = await allPages(c.reader, '/api/v1/restorePoints', {}, 500);
+
+  assert.equal(rows.length, 1200);
+  assert.deepEqual(rows[0], { id: 'row-0' });
+  assert.deepEqual(rows[1199], { id: 'row-1199' });
+  assert.deepEqual(c.asked.map((a) => a.skip), [0, 500, 1000]);
+});
+
+test('the step follows the limit Veeam actually gave, not the one asked for', async () => {
+  const { allPages } = require('../dist/veeam/veeam-pages');
+  // Asked for 500, capped at 200: stepping by 500 would skip two thirds.
+  const c = collection(700, 500, { cap: 200 });
+
+  const rows = await allPages(c.reader, '/api/v1/sessions', {}, 500);
+
+  assert.equal(rows.length, 700, 'no row is missed');
+  assert.deepEqual(new Set(rows.map((r) => r.id)).size, 700, 'and none is read twice');
+});
+
+test('a server that reports no total is walked until a page comes back short', async () => {
+  const { allPages } = require('../dist/veeam/veeam-pages');
+  const c = collection(250, 100, { silent: true });
+
+  const rows = await allPages(c.reader, '/api/v1/jobs', {}, 100);
+
+  assert.equal(rows.length, 250);
+  assert.deepEqual(c.asked.map((a) => a.skip), [0, 100, 200]);
+});
+
+test('a token that expires mid-read is refreshed and the page re-fetched', async () => {
+  const { allPages } = require('../dist/veeam/veeam-pages');
+  const { VeeamApiError } = require('../dist/veeam/veeam-api.error');
+  let invalidated = false;
+  let first = true;
+  const reader = {
+    auth: {
+      invalidateAccessToken: () => (invalidated = true),
+      getAccessToken: async () => 'fresh',
+    },
+    accessToken: 'stale',
+    veeam: {
+      request: async ({ accessToken }) => {
+        if (first) {
+          first = false;
+          throw new VeeamApiError('Veeam rejected the token', 401);
+        }
+        return { data: [{ id: accessToken }], pagination: { total: 1, skip: 0, limit: 500 } };
+      },
+    },
+  };
+
+  const rows = await allPages(reader, '/api/v1/backups', {}, 500);
+
+  assert.ok(invalidated, 'the expired token is dropped');
+  assert.deepEqual(rows, [{ id: 'fresh' }], 'the page is re-fetched with the new one');
 });
 
 /* ------------------------------------------------------------------ *

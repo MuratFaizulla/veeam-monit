@@ -11,6 +11,7 @@ import { TelegramStateStore } from './telegram-state.store';
 import { TelegramTopicsService } from './telegram-topics.service';
 import { TelegramTransportService } from './telegram-transport.service';
 import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
+import { BackupEvidenceService } from './backup-evidence.service';
 
 @Module({
   imports: [VeeamHttpModule],
@@ -35,6 +36,7 @@ import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
     TelegramService,
     TelegramMonitorService,
     VeeamMonitorAuthService,
+    BackupEvidenceService,
   ],
 })
 export class TelegramModule {}
