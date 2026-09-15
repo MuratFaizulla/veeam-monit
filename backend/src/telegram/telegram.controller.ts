@@ -1,31 +1,24 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  ForbiddenException,
-  Get,
-  Headers,
-  Post,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramService } from './telegram.service';
 import { TelegramUpdatesService } from './telegram-updates.service';
-import { NotificationEvent, NotificationKind, NotificationSeverity, TelegramUpdate } from './telegram.types';
+import {
+  TelegramAdminGuard,
+  TelegramEnabledGuard,
+  TelegramWebhookGuard,
+} from './telegram-access.guard';
+import { announcement, ManualEvent, probe } from './telegram-manual-event';
+import { DeliveryReport } from './telegram.service';
+import { TelegramUpdate } from './telegram.types';
 
-const KINDS: NotificationKind[] = [
-  'job',
-  'infrastructure',
-  'repository',
-  'security',
-  'digest',
-  'manual',
-];
-const SEVERITIES: NotificationSeverity[] = ['critical', 'warning', 'success', 'info'];
-
+/**
+ * HTTP in, JSON out. Every endpoint here is a shape and an access rule; the
+ * decisions behind them belong to the modules above, so that nothing this file
+ * knows can only be tested by standing up a web server.
+ */
 @Controller('telegram')
 export class TelegramController {
   private readonly config: AppConfig['telegram'];
@@ -56,25 +49,22 @@ export class TelegramController {
   }
 
   @Post('webhook')
-  async webhook(
-    @Headers('x-telegram-bot-api-secret-token') secret: string | undefined,
-    @Body() update: TelegramUpdate,
-  ): Promise<{ ok: true }> {
-    if (!this.telegram.acceptsWebhookSecret(secret)) throw new ForbiddenException();
+  @UseGuards(TelegramWebhookGuard)
+  async webhook(@Body() update: TelegramUpdate): Promise<{ ok: true }> {
     await this.updates.handleUpdate(update);
     return { ok: true };
   }
 
   @Get('chats')
-  chats(@Headers('x-telegram-admin-key') key: string | undefined) {
-    this.assertAdmin(key);
+  @UseGuards(TelegramAdminGuard)
+  chats() {
     return { chats: this.telegram.listChats() };
   }
 
   /** The effective routing table, so an operator can see where an alert will land. */
   @Get('routes')
-  routes(@Headers('x-telegram-admin-key') key: string | undefined) {
-    this.assertAdmin(key);
+  @UseGuards(TelegramAdminGuard)
+  routes() {
     return {
       mode: this.config.routingMode,
       jobTopicPrefix: this.config.jobTopicPrefix,
@@ -89,21 +79,15 @@ export class TelegramController {
 
   /** Picks up edits to TELEGRAM_ROUTES_FILE without a restart. */
   @Post('routes/reload')
-  reload(@Headers('x-telegram-admin-key') key: string | undefined) {
-    this.assertAdmin(key);
+  @UseGuards(TelegramAdminGuard)
+  reload() {
     return { rules: this.routing.reload() };
   }
 
   @Post('notify')
-  async notify(
-    @Headers('x-telegram-admin-key') key: string | undefined,
-    @Body() body: { text?: string },
-  ) {
-    this.assertAdmin(key);
-    this.assertEnabled();
-    const text = body.text?.trim();
-    if (!text) throw new BadRequestException('text is required');
-    return this.telegram.broadcast(text);
+  @UseGuards(TelegramAdminGuard, TelegramEnabledGuard)
+  async notify(@Body() body: { text?: string }): Promise<DeliveryReport> {
+    return this.telegram.notify(this.accepted(announcement(body.text)));
   }
 
   /**
@@ -112,48 +96,31 @@ export class TelegramController {
    * waiting for a job to actually fail.
    */
   @Post('test')
+  @UseGuards(TelegramAdminGuard, TelegramEnabledGuard)
   async test(
-    @Headers('x-telegram-admin-key') key: string | undefined,
     @Body()
     body: { kind?: string; severity?: string; subject?: string; title?: string; body?: string },
-  ) {
-    this.assertAdmin(key);
-    this.assertEnabled();
-    const kind = (body.kind ?? 'job') as NotificationKind;
-    const severity = (body.severity ?? 'info') as NotificationSeverity;
-    if (!KINDS.includes(kind)) throw new BadRequestException(`kind must be one of ${KINDS.join(', ')}`);
-    if (!SEVERITIES.includes(severity)) {
-      throw new BadRequestException(`severity must be one of ${SEVERITIES.join(', ')}`);
-    }
-
-    const event: NotificationEvent = {
-      kind,
-      severity,
-      subject: body.subject,
-      title: body.title ?? 'Проверка маршрутизации Veeam Monitor',
-      fields: [
-        ['Категория', kind],
-        ['Важность', severity],
-        ['Объект', body.subject ?? '—'],
-      ],
-      body: body.body,
-    };
-    return this.telegram.notify(event);
+  ): Promise<DeliveryReport> {
+    return this.telegram.notify(this.accepted(probe(body)));
   }
 
-  /** Runs one monitor pass immediately instead of waiting for the timer. */
+  /**
+   * Runs one monitor pass immediately instead of waiting for the timer.
+   *
+   * `ran` says whether this request actually caused a pass. A cycle already in
+   * flight is declined rather than queued, and the status below it then belongs
+   * to that other cycle — which used to be indistinguishable from a pass this
+   * request had just completed.
+   */
   @Post('check')
-  async check(@Headers('x-telegram-admin-key') key: string | undefined) {
-    this.assertAdmin(key);
-    await this.monitor.check();
-    return this.monitor.status;
+  @UseGuards(TelegramAdminGuard)
+  async check() {
+    const ran = (await this.monitor.check()) === 'ran';
+    return { ran, ...this.monitor.status };
   }
 
-  private assertAdmin(key: string | undefined): void {
-    if (!this.telegram.acceptsAdminKey(key)) throw new ForbiddenException();
-  }
-
-  private assertEnabled(): void {
-    if (!this.telegram.enabled) throw new ServiceUnavailableException('Telegram is not configured');
+  private accepted(built: ManualEvent) {
+    if (!built.ok) throw new BadRequestException(built.message);
+    return built.event;
   }
 }

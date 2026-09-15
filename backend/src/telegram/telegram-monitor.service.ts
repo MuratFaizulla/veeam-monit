@@ -140,13 +140,20 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return { ...this.health, trackedJobs: this.store.trackedJobs() };
   }
 
-  /** One monitoring pass. Never throws: a bad cycle must not kill the timer. */
-  async check(): Promise<void> {
+  /**
+   * One monitoring pass. Never throws: a bad cycle must not kill the timer.
+   *
+   * Returns whether this call was the pass. A cycle already in flight is
+   * declined, and a caller that asked for a pass on purpose — the timer does
+   * not care, but POST /check does — has no other way to tell that the health
+   * it is about to read belongs to somebody else's cycle.
+   */
+  async check(): Promise<'ran' | 'busy'> {
     if (this.running) {
       // A slow Veeam answer must not let two passes interleave and report the
       // same transition twice.
       this.logger.debug('Previous Veeam check is still running, skipping this tick');
-      return;
+      return 'busy';
     }
     this.running = true;
     try {
@@ -165,6 +172,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       // Last, so it reports what this cycle actually found — including the
       // cycles where Veeam answered nothing at all.
       await this.step('live', () => this.publishLive(jobs, repositories, token));
+      return 'ran';
     } finally {
       this.running = false;
     }

@@ -44,20 +44,34 @@ export interface TelegramDestination {
   topic?: string;
 }
 
-export type NotificationSeverity = 'critical' | 'warning' | 'success' | 'info';
+/**
+ * The lists are the definition and the types are derived from them, so that
+ * anything needing to *check* a value — configuration parsing, the admin
+ * endpoint that accepts one over HTTP — reads the same six words the type does.
+ * They used to be written out three times, and the copies had already started
+ * to be maintained separately.
+ *
+ * Order matters: it is the order an operator sees them listed in.
+ */
+export const NOTIFICATION_SEVERITIES = ['critical', 'warning', 'success', 'info'] as const;
+
+export type NotificationSeverity = (typeof NOTIFICATION_SEVERITIES)[number];
 
 /**
  * Routing category. Job events carry the job name in `subject` and are the only
  * kind that can fan out to per-job topics; everything else is infrastructure
  * chatter that belongs in a fixed topic.
  */
-export type NotificationKind =
-  | 'job'
-  | 'infrastructure'
-  | 'repository'
-  | 'security'
-  | 'digest'
-  | 'manual';
+export const NOTIFICATION_KINDS = [
+  'job',
+  'infrastructure',
+  'repository',
+  'security',
+  'digest',
+  'manual',
+] as const;
+
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export interface NotificationEvent {
   kind: NotificationKind;

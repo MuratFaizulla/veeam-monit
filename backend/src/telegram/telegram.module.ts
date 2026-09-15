@@ -8,6 +8,11 @@ import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramService } from './telegram.service';
 import { TelegramUpdatesService } from './telegram-updates.service';
+import {
+  TelegramAdminGuard,
+  TelegramEnabledGuard,
+  TelegramWebhookGuard,
+} from './telegram-access.guard';
 import { TelegramStateStore } from './telegram-state.store';
 import { TelegramTopicsService } from './telegram-topics.service';
 import { TelegramTransportService } from './telegram-transport.service';
@@ -39,6 +44,9 @@ import { BackupEvidenceService } from './backup-evidence.service';
     TelegramRoutingService,
     TelegramService,
     TelegramUpdatesService,
+    TelegramAdminGuard,
+    TelegramWebhookGuard,
+    TelegramEnabledGuard,
     TelegramMonitorService,
     VeeamMonitorAuthService,
     BackupEvidenceService,
