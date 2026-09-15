@@ -31,6 +31,8 @@ export interface AppConfig {
     /** Optional JSON file with explicit routing rules. */
     routesFile: string;
     routingMode: TelegramRoutingMode;
+    /** Shared destination for critical and warning events in single mode. */
+    alertsTopic: string;
     /** Prefixed to the job name when a per-job topic is created. */
     jobTopicPrefix: string;
     severityTopics: Record<NotificationSeverity, string>;
@@ -106,7 +108,7 @@ const list = (value: string | undefined): string[] =>
 const ROUTING_MODES: TelegramRoutingMode[] = ['job', 'severity', 'kind', 'single'];
 
 /**
- * Defaults to `single`: a fixed set of topics, with alerts in General.
+ * Defaults to `single`: a fixed set of topics, with failures in Alerts.
  *
  * `job` was the default until a per-job topic had been created for every job
  * that ever changed result, and the topic list stopped being readable. The
@@ -145,6 +147,7 @@ export const configuration = (): AppConfig => ({
     stateFile: text(process.env.TELEGRAM_STATE_FILE, join(process.cwd(), 'data', 'telegram-state.json')),
     routesFile: text(process.env.TELEGRAM_ROUTES_FILE, ''),
     routingMode: routingMode(process.env.TELEGRAM_ROUTING_MODE),
+    alertsTopic: text(process.env.TELEGRAM_TOPIC_ALERTS, '🚨 Alerts'),
     jobTopicPrefix: process.env.TELEGRAM_JOB_TOPIC_PREFIX ?? '',
     severityTopics: {
       critical: text(process.env.TELEGRAM_TOPIC_CRITICAL, '🔴 Errors'),
