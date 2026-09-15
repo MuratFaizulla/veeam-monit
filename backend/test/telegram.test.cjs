@@ -1107,77 +1107,114 @@ test('a job whose schedule could not be read is still judged', async () => {
  * Restore point depth
  * ------------------------------------------------------------------ */
 
+const DAY = 86400000;
+const NOW = Date.UTC(2026, 8, 15, 12);
+
 const depth = (over) => {
   const { renderRestorePoints } = require('../dist/telegram/telegram-restore-points');
-  const now = new Date(Date.UTC(2026, 8, 15, 12));
   return renderRestorePoints(
-    { jobs: [], without: 0, thinRuns: 0, orphanBackups: 0, orphanPoints: 0, ...over },
-    { now, timezone: 'UTC' },
+    {
+      jobs: [],
+      without: 0,
+      excludedDisabled: 0,
+      excludedUnscheduled: 0,
+      orphanBackups: 0,
+      orphanPoints: 0,
+      ...over,
+    },
+    { now: new Date(NOW), timezone: 'UTC' },
   );
 };
 
-test('depth counts runs, not one restore point per protected machine', async () => {
-  // Eight VMs backed up nightly for a month is 240 points but 30 moments to
-  // restore to, and 30 is the number that answers "how far back can I go".
-  const text = depth({
-    jobs: [{ name: 'OPS_SMAX_SAM', runs: 30, points: 240, machines: 8,
-             oldest: Date.UTC(2026, 7, 16), newest: Date.UTC(2026, 8, 15) }],
-  });
-
-  // Every number carries its unit, so a row is readable on its own.
-  assert.match(text, /^🟢 30п 240т 30д · OPS_SMAX_SAM$/m);
-  assert.match(text, /т — точек Veeam/);
-});
-
-test('a job keeping a single state is flagged even though it never failed', async () => {
+test('a row says the name, the point count and exactly when the newest was taken', async () => {
   const text = depth({
     jobs: [
-      { name: 'CUST_CHEMPLANT', runs: 1, points: 1, machines: 1 },
-      { name: 'CUST_deep', runs: 40, points: 40, machines: 1,
-        oldest: Date.UTC(2026, 7, 6), newest: Date.UTC(2026, 8, 15) },
+      {
+        name: 'OPS_Call_Center',
+        runs: 7,
+        points: 7,
+        machines: 1,
+        intervalDays: 1,
+        oldest: NOW - 7 * DAY,
+        newest: Date.UTC(2026, 5, 17, 21, 32, 9),
+      },
     ],
-    thinRuns: 1,
+  });
+
+  // Spelled out, because this is the line somebody reads before opening Veeam.
+  assert.match(text, /^🔴 OPS_Call_Center — 7 точек · пропущено \d+ запусков · 17 июня 2026 г\. в 21:32:09$/mu);
+});
+
+test('the same staleness means opposite things at different cadences', async () => {
+  // Both went three days without a point. The nightly job has missed two
+  // backups; the weekly one is not due yet.
+  const text = depth({
+    jobs: [
+      { name: 'CUST_weekly', runs: 9, points: 9, machines: 1, intervalDays: 7,
+        oldest: NOW - 63 * DAY, newest: NOW - 3 * DAY },
+      { name: 'CUST_nightly', runs: 30, points: 30, machines: 1, intervalDays: 1,
+        oldest: NOW - 33 * DAY, newest: NOW - 3 * DAY },
+    ],
   });
 
   const lines = text.split('\n');
-  const first = lines.findIndex((l) => /CUST_CHEMPLANT/.test(l));
-  const second = lines.findIndex((l) => /CUST_deep/.test(l));
-  assert.ok(first < second, 'the thinnest history is what somebody has to act on');
-  // One run on one machine: no point count to repeat, no span to show.
-  assert.equal(lines[first], '🔴 1п · CUST_CHEMPLANT');
-  assert.equal(lines[second], '🟢 40п 40д · CUST_deep');
-  assert.match(text, /Только одно состояние:<\/b> 1 задание/);
+  const nightly = lines.findIndex((l) => l.includes('CUST_nightly'));
+  const weekly = lines.findIndex((l) => l.includes('CUST_weekly'));
+  assert.ok(nightly < weekly, 'the one behind its own schedule comes first');
+  assert.match(lines[nightly], /^🔴 CUST_nightly — 30 точек · пропущено 2 запуска/u);
+  assert.match(lines[weekly], /^🟢 CUST_weekly — 9 точек · /u);
+  assert.ok(!/CUST_weekly.*пропущен/u.test(lines[weekly]), 'nothing is claimed about a job that is on time');
+  assert.match(text, /Отстают от расписания:<\/b> 1/);
 });
 
-test('jobs with no points at all are counted, not listed', async () => {
+test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
   const text = depth({
-    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1 }],
-    without: 7,
+    jobs: [
+      { name: 'CUST_CHEMPLANT', runs: 1, points: 1, machines: 1, intervalDays: null,
+        newest: NOW - 40 * DAY },
+    ],
   });
-  assert.match(text, /Заданий:<\/b> 1 \(\+7 без точек\)/);
-  assert.ok(!/without/.test(text));
+
+  assert.match(text, /^⚪ CUST_CHEMPLANT — 1 точка · /mu);
+  assert.ok(!/пропущен/u.test(text), 'two points are not enough to know a rhythm');
+  assert.match(text, /Только одна точка:<\/b> 1 задание/);
 });
 
-test('the depth list fills the message and counts what it could not show', async () => {
+test('jobs that are not supposed to run are left out, and said to be left out', async () => {
+  const text = depth({
+    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW }],
+    without: 7,
+    excludedUnscheduled: 31,
+    excludedDisabled: 4,
+  });
+
+  assert.match(text, /Заданий:<\/b> 1 \(\+7 без точек\)/);
+  assert.match(text, /Не учитываются:<\/b> 31 без расписания, 4 выключено/);
+});
+
+test('the list fills the message, keeping the ones that are behind', async () => {
   const many = Array.from({ length: 400 }, (_, i) => ({
     name: `OPS_JOB_${String(i).padStart(3, '0')}`,
-    runs: i + 1,
-    points: i + 1,
+    runs: 10,
+    points: 10,
     machines: 1,
+    intervalDays: 1,
+    // Job 000 is three days behind, job 399 is current.
+    newest: NOW - (400 - i) * 0.01 * DAY - (i === 0 ? 3 * DAY : 0),
   }));
   const text = depth({ jobs: many });
 
   assert.ok(text.length <= 4096, `message is ${text.length} characters`);
-  const hidden = /…и ещё (\d+) задани\S* поглубже/.exec(text);
-  assert.ok(hidden, 'the deepest jobs are the ones worth dropping');
+  const hidden = /…и ещё (\d+) задани\S* по графику/.exec(text);
+  assert.ok(hidden, 'the ones on schedule are the ones worth dropping');
   assert.equal((text.match(/OPS_JOB_/g) ?? []).length + Number(hidden[1]), 400);
-  assert.match(text, /OPS_JOB_000/, 'the thinnest is always shown');
+  assert.match(text, /OPS_JOB_000/, 'the one that is behind is always shown');
 });
 
 test('an unread scan says so rather than showing an empty estate', async () => {
   const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
   assert.match(text, /не прочитаны/);
-  assert.ok(!/Глубина истории/.test(text));
+  assert.ok(!/Сначала те/.test(text));
 });
 
 /* ------------------------------------------------------------------ *

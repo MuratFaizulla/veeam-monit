@@ -161,7 +161,7 @@ const compareRisk = (a: ProtectionRisk, b: ProtectionRisk): number => {
  * points. The median rather than the mean because one long outage between two
  * points would otherwise redefine the job as a monthly one.
  */
-const rhythm = (newestFirst: number[]): number | null => {
+export const rhythm = (newestFirst: number[]): number | null => {
   if (newestFirst.length < 3) return null;
   const gaps: number[] = [];
   for (let i = 0; i < Math.min(newestFirst.length - 1, RHYTHM_SAMPLES); i += 1) {
