@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { SEVERITY_TOPIC_COLOR, topicName } from './telegram.format';
 import { TelegramStateStore } from './telegram-state.store';
-import { TelegramTransportService } from './telegram-transport.service';
+import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
 import { NotificationSeverity, TelegramChat, TelegramDestination } from './telegram.types';
 
 interface ForumTopic {
@@ -96,6 +96,43 @@ export class TelegramTopicsService {
    * Drops a mapping whose topic Telegram no longer knows, so the next event
    * re-creates it instead of failing forever against a deleted thread.
    */
+  /**
+   * Sends into a topic, surviving somebody deleting it.
+   *
+   * The recovery was written twice — once for alerts and once for the live
+   * slots — because resolving a destination and repairing a dead one are the
+   * same knowledge, and only the first half lived here. A topic that has been
+   * deleted is forgotten and re-created rather than losing what was being sent
+   * to it; if re-resolving hands back the same dead thread, the message goes to
+   * General, because a delivered alert in the wrong place beats none.
+   *
+   * `fixedThread` addresses a topic somebody created by hand, which the bot
+   * cannot re-create and so never forgets.
+   */
+  async send(
+    chat: TelegramChat,
+    topic: string | null,
+    text: string,
+    fixedThread = 0,
+  ): Promise<number> {
+    const destination =
+      fixedThread > 0 && chat.is_forum
+        ? { chatId: String(chat.id), threadId: fixedThread, topic: topic ?? undefined }
+        : await this.destination(chat, topic);
+
+    try {
+      return await this.transport.sendMessage(destination, text);
+    } catch (error) {
+      if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
+      this.forget(destination.chatId, destination.topic);
+      const retry = await this.destination(chat, topic);
+      return this.transport.sendMessage(
+        retry.threadId === destination.threadId ? { chatId: destination.chatId } : retry,
+        text,
+      );
+    }
+  }
+
   forget(chatId: string, name: string | undefined): void {
     if (!name) return;
     // A topic that had to be re-created is evidence the chat is usable again.
