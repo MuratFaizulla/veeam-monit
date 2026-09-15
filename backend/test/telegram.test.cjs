@@ -20,6 +20,7 @@ const {
 const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
 const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
 const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
+const { VeeamHttpService } = require('../dist/veeam/veeam-http.service');
 
 const CHAT = '-1001234567890';
 
@@ -109,6 +110,11 @@ function veeamFake(routes) {
       assert.ok(handler, `unexpected Veeam path ${req.path}`);
       return typeof handler === 'function' ? handler(req) : handler;
     },
+    // Borrowed rather than re-written: the reachability probe is exactly the
+    // knowledge that used to exist in two copies, and a third one living in the
+    // test fake would be no better than the two we removed. It only needs
+    // `request`, which this fake provides.
+    reachability: VeeamHttpService.prototype.reachability,
   };
 }
 
@@ -445,6 +451,27 @@ test('/start answers inside the topic it was asked in', async () => {
 /* ------------------------------------------------------------------ *
  * Monitor
  * ------------------------------------------------------------------ */
+
+test('an unreachable server is an answer, not an exception', async () => {
+  const veeam = {
+    request: async () => {
+      throw new Error('connect ETIMEDOUT 192.0.2.1:9419');
+    },
+    reachability: VeeamHttpService.prototype.reachability,
+  };
+
+  // The health probe and the monitor ask the same question and must not be able
+  // to answer it differently.
+  assert.deepEqual(await veeam.reachability(), {
+    reachable: false,
+    error: 'connect ETIMEDOUT 192.0.2.1:9419',
+  });
+  veeam.request = async () => ({ serverTime: '2026-09-14T11:00:00+05:00' });
+  assert.deepEqual(await veeam.reachability(), {
+    reachable: true,
+    serverTime: '2026-09-14T11:00:00+05:00',
+  });
+});
 
 test('a pass asked for while one is already running is declined, and says so', async () => {
   let release;

@@ -8,6 +8,15 @@ import { VeeamTokenResponse } from './veeam.types';
 
 type VeeamConfig = AppConfig['veeam'];
 
+/** One answer to "is the backup server there": reachable, and the proof either way. */
+export interface VeeamReachability {
+  reachable: boolean;
+  /** Veeam's own clock, when it answered. */
+  serverTime?: string;
+  /** Why it did not, when it did not. */
+  error?: string;
+}
+
 interface RawRequest {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
@@ -54,6 +63,29 @@ export class VeeamHttpService {
 
   get baseUrl(): string {
     return this.config.baseUrl;
+  }
+
+  /**
+   * Whether the backup server answers at all, and what its clock says.
+   *
+   * `/api/v1/serverTime` needs no token, which makes it the cheapest question
+   * that distinguishes "the server is down" from "our credentials are wrong" —
+   * a distinction the monitor reports separately and must not fold together.
+   *
+   * Never throws: being unreachable is the answer, not a failure to produce
+   * one. Both callers wanted exactly this and each had written its own copy of
+   * the path, the try/catch and the shape of the result.
+   */
+  async reachability(): Promise<VeeamReachability> {
+    try {
+      const result = await this.request<{ serverTime?: string }>({
+        method: 'GET',
+        path: '/api/v1/serverTime',
+      });
+      return { reachable: true, serverTime: result?.serverTime };
+    } catch (error) {
+      return { reachable: false, error: (error as Error).message };
+    }
   }
 
   /** Exchanges user credentials for an access/refresh token pair. */
