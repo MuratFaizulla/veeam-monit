@@ -1,5 +1,5 @@
 import { escapeHtml } from './telegram.format';
-import { dayOf, fitted, LiveClock, plural, stampOf } from './telegram-live.format';
+import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegram-live.format';
 
 /**
  * "What is not actually protected right now."
@@ -62,6 +62,8 @@ export interface ProtectionInput extends ProtectionThresholds {
 export interface ProtectionRisk {
   name: string;
   type?: string;
+  /** Epoch ms of the newest restore point, when there is one. */
+  lastPoint?: number;
   /** Days since the newest restore point; null when the job has none at all. */
   ageDays: number | null;
   /** The job's own typical interval in days, when it has enough history. */
@@ -123,6 +125,7 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
     risks.push({
       name: job.name,
       type: job.type,
+      lastPoint: points.length ? points[0] : undefined,
       ageDays,
       intervalDays,
       failures,
@@ -194,11 +197,12 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
     ` или ${trim(snapshot.overdueFactor)}× своего интервала;` +
     ` ${snapshot.minStreak} ${plural(snapshot.minStreak, 'неудачный запуск', 'неудачных запуска', 'неудачных запусков')} подряд`;
 
+  // Same order as 🗂 states them, so the two topics can be read side by side.
   const skipped: string[] = [];
-  if (snapshot.excludedDisabled) skipped.push(`${snapshot.excludedDisabled} выключено`);
   if (snapshot.excludedUnscheduled) {
     skipped.push(`${snapshot.excludedUnscheduled} без расписания`);
   }
+  if (snapshot.excludedDisabled) skipped.push(`${snapshot.excludedDisabled} выключено`);
   // Said out loud, because a count that silently shrank would be worse than a
   // count that is too big: the operator must know what is outside the check.
   const tail = [
@@ -241,14 +245,19 @@ const riskLine = (risk: ProtectionRisk, clock: LiveClock): string => {
     reasons.push('точек восстановления нет');
     if (risk.lastRun) reasons.push(`последний запуск ${dayOf(risk.lastRun, clock)}`);
   } else {
-    reasons.push(`${age(risk.ageDays)} без точки`);
-    if (risk.intervalDays !== null) reasons.push(`обычно раз в ${age(risk.intervalDays)}`);
+    // The moment itself, not only how long ago: this is the state a restore
+    // would actually return the machine to, and somebody deciding whether that
+    // is survivable needs the date in front of them, not an arithmetic problem.
+    const when =
+      risk.lastPoint === undefined ? '' : ` — ${longMoment(risk.lastPoint, clock)}`;
+    reasons.push(`${age(risk.ageDays)} без точки${when}`);
+    if (risk.intervalDays !== null) reasons.push(`обычно ${cadence(risk.intervalDays)}`);
   }
 
   if (risk.failures > 0) {
-    reasons.push(
-      `${risk.failures} ${plural(risk.failures, 'неудачный запуск', 'неудачных запуска', 'неудачных запусков')} подряд`,
-    );
+    const streak = `${risk.failures} ${plural(risk.failures, 'неудачный запуск', 'неудачных запуска', 'неудачных запусков')}`;
+    // "1 неудачный запуск подряд" is not a streak, it is one failure.
+    reasons.push(risk.failures > 1 ? `${streak} подряд` : streak);
   }
 
   return `${icon} <b>${escapeHtml(risk.name)}</b> — ${reasons.join(' · ')}`;
@@ -265,6 +274,20 @@ const age = (days: number): string => {
   }
   const whole = Math.floor(days);
   return `${whole} ${plural(whole, 'день', 'дня', 'дней')}`;
+};
+
+/** How often a job runs. "обычно раз в 1 день" is a sentence nobody says. */
+const cadence = (days: number): string => {
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24));
+    if (hours === 1) return 'раз в час';
+    if (hours < 24) return `раз в ${hours} ${plural(hours, 'час', 'часа', 'часов')}`;
+    return 'раз в сутки';
+  }
+  const whole = Math.round(days);
+  if (whole === 1) return 'раз в сутки';
+  if (whole === 7) return 'раз в неделю';
+  return `раз в ${whole} ${plural(whole, 'день', 'дня', 'дней')}`;
 };
 
 const trim = (value: number): string => String(Number(value.toFixed(1)));

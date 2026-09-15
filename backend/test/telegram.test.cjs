@@ -668,7 +668,7 @@ test('the live status is one message per topic, edited in place on later cycles'
 
   await w.monitor.check();
   const opening = w.api.sent();
-  assert.equal(opening.length, 8, 'one message per live slot');
+  assert.equal(opening.length, 7, 'one message per live slot');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
@@ -681,7 +681,6 @@ test('the live status is one message per topic, edited in place on later cycles'
       '💾 Repositories',
       '🛡 Protection',
       '🗂 Restore points',
-      '🧹 Orphaned backups',
     ],
   );
 
@@ -771,7 +770,7 @@ test('the live message survives a restart instead of starting a second one', asy
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
   first.store.flush();
-  assert.equal(first.api.sent().length, 8);
+  assert.equal(first.api.sent().length, 7);
 
   const w = world(LIVE, {}, first.file);
   const veeam = veeamFake({
@@ -832,7 +831,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
   const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
-  assert.equal(w.api.sent().length, 8);
+  assert.equal(w.api.sent().length, 7);
 
   w.api.reset();
   await monitor.check();
