@@ -1304,6 +1304,32 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   assert.match(topic.text, /TTC_Exchange — 1 точка · 23 августа 2026 г\. в 01:31:12/u);
 });
 
+test('with the 🧹 topic off, nothing points the reader at it', async () => {
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'CLT_live', 'Success')], {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': {
+      data: [
+        { id: 'b1', jobId: '1', name: 'CLT_live' },
+        // A chain whose job is gone: real, counted, but with nowhere to send
+        // anyone while the topic that lists them does not exist.
+        { id: 'b2', jobId: 'deleted-job', name: 'TTC_OFD_vms' },
+      ],
+    },
+    '/api/v1/restorePoints': {
+      data: [
+        { id: 'p1', backupId: 'b1', sessionId: 's1', name: 'vm', creationTime: '2026-09-14T01:00:00+05:00' },
+        { id: 'p2', backupId: 'b2', sessionId: 's0', name: 'vm', creationTime: '2026-04-04T01:00:00+05:00' },
+      ],
+    },
+  });
+
+  await w.monitor.check();
+  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  assert.ok(!/🧹/u.test(topic.text), 'a pointer to a deleted topic is worse than no pointer');
+  assert.ok(!/без заданий/u.test(topic.text));
+  assert.ok(!w.api.sent().some((m) => /Бэкапы без заданий/.test(m.text)), 'and the slot is not published');
+});
+
 test('an unread scan says so rather than showing an empty estate', async () => {
   const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
   assert.match(text, /не прочитаны/);

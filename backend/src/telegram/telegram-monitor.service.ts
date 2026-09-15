@@ -600,8 +600,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       excludedDisabled,
       excludedUnscheduled,
       failedPoints: this.failedPoints,
-      orphanBackups: this.orphanChains.length,
-      orphanPoints: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
+      // Only mentioned while there is a 🧹 topic to send the reader to. A
+      // pointer to a topic that does not exist is worse than no pointer.
+      orphanBackups: this.config.liveOrphans ? this.orphanChains.length : 0,
+      orphanPoints: this.config.liveOrphans
+        ? this.orphanChains.reduce((sum, chain) => sum + chain.points, 0)
+        : 0,
       newest,
     };
   }
