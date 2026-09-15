@@ -93,6 +93,30 @@ that declaration, including the type and the config record.
 Pinned and heartbeat are opposites today and should stay that way: rewriting a
 pinned message to move its timestamp is churn the whole room sees.
 
+## Delivery
+
+Turning one notification event into one message per chat it belongs in, and
+saying what became of it. Routing, the severity filter, the cooldown, the retry
+in General and the eviction of a chat that removed the bot are all inside it.
+
+A **DeliveryReport** names the outcome rather than reducing it to "sent or not":
+`cooldown`, `severity-filtered` and `dropped-by-rule` are three different
+reasons an alert never arrived, and an operator asking "why did nothing come"
+needs to be able to tell them apart without reading the log.
+
+Owned by `backend/src/telegram/telegram.service.ts`.
+
+## Update
+
+One thing Telegram tells the bot: a message, a command, or a change to the bot's
+own membership. How it arrives — a webhook callback or long polling — is chosen
+by whether `TELEGRAM_WEBHOOK_URL` is set, and nothing downstream knows which.
+
+Hearing and sending are separate modules. They share the transport and the chat
+registry and nothing else, and no caller of one ever wants the other.
+
+Owned by `backend/src/telegram/telegram-updates.service.ts`.
+
 ## Orphaned chain
 
 A backup chain no live job owns — the job was deleted, what it produced stayed.
