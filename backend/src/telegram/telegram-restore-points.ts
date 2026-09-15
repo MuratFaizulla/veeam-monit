@@ -43,6 +43,8 @@ export interface RestorePointsSnapshot {
   /** Left out on purpose — they are not supposed to be producing points. */
   excludedDisabled: number;
   excludedUnscheduled: number;
+  /** Points left by runs that ended in an error; counted, then not counted. */
+  failedPoints: number;
   /** Chains no live job owns — detailed in the 🧹 slot, summarised here. */
   orphanBackups: number;
   orphanPoints: number;
@@ -137,14 +139,19 @@ export const renderRestorePoints = (
     // Points belonging to backups no live job owns are not counted here;
     // saying "всего" would disagree with what Veeam reports.
     `<b>Точек у этих заданий:</b> ${totalPoints}`,
+    // Named rather than quietly dropped: a point that exists in Veeam but not
+    // here is exactly the kind of difference that makes a report distrusted.
+    snapshot.failedPoints
+      ? `<b>Не в счёт:</b> ${snapshot.failedPoints} ${plural(snapshot.failedPoints, 'точка', 'точки', 'точек')} от прогонов с ошибкой`
+      : null,
     snapshot.orphanBackups
       ? `<b>Сверх того, без заданий:</b> ${snapshot.orphanPoints} ${plural(snapshot.orphanPoints, 'точка', 'точки', 'точек')} в ${snapshot.orphanBackups} ${plural(snapshot.orphanBackups, 'цепочке', 'цепочках', 'цепочках')} — см. 🧹`
       : null,
     snapshot.newest
       ? `<b>Последняя точка:</b> ${escapeHtml(snapshot.newest.name)}, ${dayOf(new Date(snapshot.newest.at).toISOString(), clock)}`
       : null,
-    '<i>Пропуски считаются по собственному ритму задания: сколько его обычных' +
-      ' интервалов прошло с последней точки.</i>',
+    '<i>Считаются только точки успешных прогонов. Пропуски — по собственному' +
+      ' ритму задания: сколько его обычных интервалов прошло с последней точки.</i>',
     footer,
   ].filter((line): line is string => line !== null);
 

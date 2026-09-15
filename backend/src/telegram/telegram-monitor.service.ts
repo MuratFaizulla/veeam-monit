@@ -70,6 +70,16 @@ const DEFAULT_RETRY_WINDOW_MS = 30 * 60_000;
 /** Restore point timestamps kept per job — enough to learn its rhythm. */
 const POINTS_PER_JOB = 11;
 
+/** Pages of a scan read at once. Enough to be quick, few enough to be polite. */
+const SCAN_CONCURRENCY = 5;
+
+/** When one run of a job was on the clock, and how it ended. */
+interface RunWindow {
+  from: number;
+  to: number;
+  failed: boolean;
+}
+
 /** Veeam results that mean "this run went wrong", lower-cased. */
 const BAD_RESULTS = new Set(['failed', 'warning']);
 
@@ -134,6 +144,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private orphanChains: OrphanBackup[] = [];
   /** Restore points in the estate, orphans included. */
   private totalPoints = 0;
+  /** Points left behind by runs that ended in an error, and so not counted. */
+  private failedPoints = 0;
   private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
@@ -536,6 +548,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         without: 0,
         excludedDisabled: 0,
         excludedUnscheduled: 0,
+        failedPoints: 0,
         orphanBackups: 0,
         orphanPoints: 0,
         unavailable: 'Точки восстановления ещё не прочитаны.',
@@ -582,6 +595,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       without,
       excludedDisabled,
       excludedUnscheduled,
+      failedPoints: this.failedPoints,
       orphanBackups: this.orphanChains.length,
       orphanPoints: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
       newest,
@@ -650,6 +664,25 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         SCAN_PAGE,
       );
 
+      // A restore point object says nothing about whether the run that made it
+      // worked: it carries a creation time and a session id, and that is all.
+      // A failed run still leaves one behind — TTC_Exchange errored out on 14
+      // September having transferred 6.8 GB of 22.4, and the point it left made
+      // the job look backed up that night when its last good copy was from 23
+      // August. The verdict lives only in the sessions.
+      const sessions = await this.allPages<VeeamSession>(
+        SESSIONS,
+        accessToken,
+        { orderColumn: 'CreationTime', orderAsc: false },
+        SCAN_PAGE,
+      );
+      const runsOfJob = this.runWindows(sessions);
+      const resultOfSession = new Map(
+        sessions
+          .filter((session): session is VeeamSession & { id: string } => Boolean(session.id))
+          .map((session) => [session.id, (session.result?.result ?? '').toLowerCase()]),
+      );
+
       // One restore point is created per protected machine, so a job covering
       // eleven VMs produces eleven points minutes apart. Taken raw, that made
       // a quarterly job look like it ran hourly. Points are therefore folded
@@ -660,6 +693,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
       >();
       const orphans = new Map<string, { points: number; oldest: number; newest: number }>();
+      let failedPoints = 0;
 
       for (const point of points) {
         if (!point.creationTime) continue;
@@ -667,6 +701,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         if (!Number.isFinite(at)) continue;
 
         const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
+        // Counted for the job it belongs to, then dropped: it is a file on a
+        // repository, not a state anybody should plan to restore to.
+        if (jobId && this.wroteByFailedRun(runsOfJob.get(jobId), at, point.sessionId, resultOfSession)) {
+          failedPoints += 1;
+          continue;
+        }
         if (!jobId) {
           const orphanId = point.backupId;
           if (!orphanId || !orphanNames.has(orphanId)) continue;
@@ -727,16 +767,76 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       this.pointsByJob = new Map(
         [...runsByJob].map(([jobId, runs]) => [jobId, [...runs.values()]]),
       );
-      this.streakByJob = await this.failureStreaks(accessToken);
+      this.failedPoints = failedPoints;
+      this.streakByJob = this.failureStreaks(sessions);
       this.protectionScannedAt = Date.now();
       this.logger.log(
-        `Protection scan: ${points.length} restore points, ${runsByJob.size} jobs, ${Date.now() - startedAt}ms`,
+        `Protection scan: ${points.length} restore points (${failedPoints} from failed runs),` +
+          ` ${sessions.length} sessions, ${runsByJob.size} jobs, ${Date.now() - startedAt}ms`,
       );
       return true;
     } catch (error) {
       this.logger.error(`Protection scan failed: ${(error as Error).message}`);
       return false;
     }
+  }
+
+  /**
+   * When each job's runs were on the clock, oldest first.
+   *
+   * A session's window is what the point lookup needs: a point written at 01:31
+   * belongs to whatever was running at 01:31, whatever id the point carries.
+   */
+  private runWindows(sessions: VeeamSession[]): Map<string, RunWindow[]> {
+    const windows = new Map<string, RunWindow[]>();
+    for (const session of sessions) {
+      if (!session.jobId || !/Job$/.test(session.sessionType ?? '')) continue;
+      const from = Date.parse(session.creationTime ?? '');
+      if (!Number.isFinite(from)) continue;
+      const list = windows.get(session.jobId) ?? [];
+      list.push({
+        from,
+        // A session still running has no end; it owns everything since it began.
+        to: session.endTime ? Date.parse(session.endTime) : Number.POSITIVE_INFINITY,
+        failed: (session.result?.result ?? '').toLowerCase() === 'failed',
+      });
+      windows.set(session.jobId, list);
+    }
+    for (const list of windows.values()) list.sort((a, b) => a.from - b.from);
+    return windows;
+  }
+
+  /**
+   * Did the run that wrote this point end in an error?
+   *
+   * Not the same question as "did the session whose id the point carries fail".
+   * Veeam stamps a point with the session that *opened* the run, and a run that
+   * is retried keeps writing into the same point: TTC_Exchange's 23 August
+   * point carries the id of the attempt that started on 21 August and failed,
+   * yet it was written at 01:31 on the 23rd, nine minutes into the retry that
+   * succeeded and ran until the 26th. Across this estate the id says "failed"
+   * for 344 points that a successful run actually wrote — discarding them would
+   * have moved TTC_Exchange's newest point back to 31 July for no reason.
+   *
+   * So the point is matched to whatever was on the clock when it appeared, and
+   * the carried id is only the fallback for a point written outside every known
+   * session window. A point nothing can be proven against is kept: the evidence
+   * that a run failed may simply have aged out of Veeam's session history, and
+   * inventing a verdict is worse than trusting a point that survived that long.
+   */
+  private wroteByFailedRun(
+    windows: RunWindow[] | undefined,
+    at: number,
+    sessionId: string | undefined,
+    results: Map<string, string>,
+  ): boolean {
+    let covering: RunWindow | undefined;
+    for (const window of windows ?? []) {
+      if (window.from > at) break;
+      if (at <= window.to && (!covering || window.from > covering.from)) covering = window;
+    }
+    if (covering) return covering.failed;
+    return sessionId !== undefined && results.get(sessionId) === 'failed';
   }
 
   /**
@@ -753,18 +853,16 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    * row" mean a job that is still broken rather than one that failed thrice
    * at some point.
    */
-  private async failureStreaks(accessToken: string): Promise<Map<string, number>> {
-    const since = new Date(Date.now() - STREAK_WINDOW_DAYS * 86_400_000).toISOString();
-    const sessions = await this.allPages<VeeamSession>(
-      SESSIONS,
-      accessToken,
-      { createdAfterFilter: since, orderColumn: 'CreationTime', orderAsc: false },
-      SCAN_PAGE,
-    );
+  private failureStreaks(sessions: VeeamSession[]): Map<string, number> {
+    const since = Date.now() - STREAK_WINDOW_DAYS * 86_400_000;
 
     const newestFirst = new Map<string, VeeamSession[]>();
     for (const session of sessions) {
       if (!session.jobId || !session.endTime) continue;
+      // A streak is about a job that is broken now. Counting back through a
+      // year of history would report "forty failed runs in a row" for a job
+      // nobody has touched since spring.
+      if (Date.parse(session.creationTime ?? '') < since) continue;
       // Only actual job runs. Malware scans, compliance analysis, retention
       // and configuration backups also appear here and are not the job failing.
       if (!/Job$/.test(session.sessionType ?? '')) continue;
@@ -801,35 +899,66 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     params: Record<string, unknown> = {},
     limit = 100,
   ): Promise<T[]> {
-    const items: T[] = [];
-    let token = accessToken;
-    let skip = 0;
-    for (;;) {
-      let page: VeeamCollection<T>;
-      try {
-        page = await this.veeam.request<VeeamCollection<T>>({
-          method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
-        });
-      } catch (error) {
-        if (!(error instanceof VeeamApiError) || !error.isUnauthorized) throw error;
-        this.monitorAuth.invalidateAccessToken();
-        token = await this.monitorAuth.getAccessToken();
-        page = await this.veeam.request<VeeamCollection<T>>({
-          method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
-        });
+    const first = await this.page<T>(path, accessToken, params, 0, limit);
+    const items: T[] = [...(first.data ?? [])];
+    const total = first.pagination?.total;
+    // Veeam may cap the requested limit, and the cap is what the next skip has
+    // to step by.
+    const size = first.pagination?.limit ?? limit;
+
+    // A first page that came back short is the whole collection. Asking for
+    // the next one would fetch the same rows again on a server that ignores
+    // `skip`, and count everything twice.
+    if (items.length < size) return items;
+
+    // The total turns paging from "walk until a short page" into a known list
+    // of offsets, and a known list can be fetched at once. Read one at a time,
+    // nine thousand sessions took 84 seconds — long enough to stall the cycle
+    // that alerting runs in.
+    if (typeof total === 'number' && size > 0) {
+      const skips: number[] = [];
+      for (let skip = items.length; skip < total; skip += size) skips.push(skip);
+      for (let i = 0; i < skips.length; i += SCAN_CONCURRENCY) {
+        const batch = skips.slice(i, i + SCAN_CONCURRENCY);
+        const pages = await Promise.all(
+          batch.map((skip) => this.page<T>(path, accessToken, params, skip, size)),
+        );
+        for (const page of pages) items.push(...(page.data ?? []));
       }
+      return items;
+    }
+
+    // No total reported: fall back to walking until a page comes back short.
+    for (let skip = items.length; ; ) {
+      const page = await this.page<T>(path, accessToken, params, skip, size);
       const data = page.data ?? [];
       items.push(...data);
-      const total = page.pagination?.total;
-      if (
-        typeof total === 'number'
-          ? items.length >= total
-          : data.length < (page.pagination?.limit ?? limit)
-      ) break;
-      if (!data.length) break;
+      if (!data.length || data.length < size) break;
       skip += data.length;
     }
     return items;
+  }
+
+  /** One page, retried once against a token that expired mid-scan. */
+  private async page<T>(
+    path: string,
+    accessToken: string,
+    params: Record<string, unknown>,
+    skip: number,
+    limit: number,
+  ): Promise<VeeamCollection<T>> {
+    try {
+      return await this.veeam.request<VeeamCollection<T>>({
+        method: 'GET', path, accessToken, params: { ...params, skip, limit },
+      });
+    } catch (error) {
+      if (!(error instanceof VeeamApiError) || !error.isUnauthorized) throw error;
+      this.monitorAuth.invalidateAccessToken();
+      const token = await this.monitorAuth.getAccessToken();
+      return this.veeam.request<VeeamCollection<T>>({
+        method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
+      });
+    }
   }
 
   private scheduleState(jobs: VeeamJobState[] | undefined): LiveSchedule {
