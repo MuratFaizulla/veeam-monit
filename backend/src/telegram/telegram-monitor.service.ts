@@ -2,14 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/veeam-http.service';
-import { VeeamApiError } from '../veeam/veeam-api.error';
+import { allPages } from '../veeam/veeam-pages';
 import {
   VeeamCollection,
   VeeamJobState,
   VeeamRepositoryState,
-  VeeamBackup,
-  VeeamJob,
-  VeeamRestorePoint,
   VeeamSession,
   VeeamTaskSession,
 } from '../veeam/veeam.types';
@@ -35,50 +32,23 @@ import {
   renderPerformance,
 } from './telegram-performance';
 import { renderRepositories } from './telegram-repositories.format';
-import {
-  ProtectionSnapshot,
-  assessProtection,
-  renderProtection,
-  rhythm,
-} from './telegram-protection';
+import { ProtectionSnapshot, assessProtection, renderProtection } from './telegram-protection';
 import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram-restore-points';
-import { OrphanBackup, OrphansSnapshot, renderOrphans } from './telegram-orphans';
+import { OrphansSnapshot, renderOrphans } from './telegram-orphans';
+import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const SESSIONS = '/api/v1/sessions';
-const BACKUPS = '/api/v1/backups';
-const JOB_CONFIGS = '/api/v1/jobs';
-const RESTORE_POINTS = '/api/v1/restorePoints';
 
 /**
- * Restore points are read a page of this size at a time. The default of 100
- * would turn a nine-thousand-point estate into ninety requests.
+ * What a slot says when Veeam answered nothing this cycle. The evidence module
+ * owns the other reasons; this one is about the job list, which it never sees.
  */
-const SCAN_PAGE = 500;
+const NOT_ANSWERED = 'Veeam не ответил на этот цикл.';
 
-/** How far back sessions are read when counting consecutive failures. */
-const STREAK_WINDOW_DAYS = 7;
-
-/**
- * Retry window used when the job configuration does not state one. Veeam
- * defaults to waiting ten minutes between retries; the extra allowance covers
- * how long the failing run itself took.
- */
-const DEFAULT_RETRY_WINDOW_MS = 30 * 60_000;
-
-/** Restore point timestamps kept per job — enough to learn its rhythm. */
-const POINTS_PER_JOB = 11;
-
-/** Pages of a scan read at once. Enough to be quick, few enough to be polite. */
-const SCAN_CONCURRENCY = 5;
-
-/** When one run of a job was on the clock, and how it ended. */
-interface RunWindow {
-  from: number;
-  to: number;
-  failed: boolean;
-}
+const orphanPoints = (chains: { points: number }[]): number =>
+  chains.reduce((sum, chain) => sum + chain.points, 0);
 
 /** Veeam results that mean "this run went wrong", lower-cased. */
 const BAD_RESULTS = new Set(['failed', 'warning']);
@@ -131,22 +101,6 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private lastAuthenticated?: boolean;
   /** Veeam's own clock from the last successful reachability probe. */
   private lastServerTime?: string;
-  /** Newest restore point timestamps per job id, from the last protection scan. */
-  private pointsByJob = new Map<string, number[]>();
-  private streakByJob = new Map<string, number>();
-  /** Jobs Veeam is set to run only by hand; they owe nobody a restore point. */
-  private unscheduledJobs = new Set<string>();
-  /** Per job: how close two failed sessions must be to count as one run. */
-  private retryWindows = new Map<string, number>();
-  /** Retained depth per job id, from the last protection scan. */
-  private depthByJob = new Map<string, Omit<JobDepth, 'name'>>();
-  /** Backup chains whose job no longer exists, from the last scan. */
-  private orphanChains: OrphanBackup[] = [];
-  /** Restore points in the estate, orphans included. */
-  private totalPoints = 0;
-  /** Points left behind by runs that ended in an error, and so not counted. */
-  private failedPoints = 0;
-  private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
     reachable: null,
@@ -165,6 +119,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     private readonly monitorAuth: VeeamMonitorAuthService,
     private readonly store: TelegramStateStore,
     private readonly live: TelegramLiveService,
+    private readonly evidence: BackupEvidenceService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -370,6 +325,13 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const clock: LiveClock = { now: new Date(), timezone: this.config.timezone };
 
+    // Once, before anything reads. Three slots answer from this and they used
+    // to take turns paying for it, which made the order they were published in
+    // load-bearing: rendering depth before protection showed the previous
+    // cycle's numbers and nothing failed.
+    await this.evidence.refresh(accessToken, jobs);
+    const evidence = this.evidence.evidence;
+
     await this.live.publish(
       'health',
       renderHealth(
@@ -400,18 +362,17 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     await this.live.publish('repositories', renderRepositories(repositories, clock));
 
-    await this.live.publish(
-      'protection',
-      renderProtection(await this.protectionState(jobs, accessToken), clock),
-    );
+    await this.live.publish('protection', renderProtection(this.protectionState(jobs, evidence), clock));
 
-    // After protection: it is the same scan, so by now the depth is current.
-    await this.live.publish('restorePoints', renderRestorePoints(this.depthState(jobs), clock));
+    await this.live.publish(
+      'restorePoints',
+      renderRestorePoints(this.depthState(jobs, evidence), clock),
+    );
 
     // Off by request until the chains have been gone through by hand; the slot
     // and its renderer stay, so turning it back on is one setting.
     if (this.config.liveOrphans) {
-      await this.live.publish('orphans', renderOrphans(this.orphansState(jobs), clock));
+      await this.live.publish('orphans', renderOrphans(this.orphansState(jobs, evidence), clock));
     }
   }
 
@@ -428,7 +389,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     let sessions: VeeamSession[];
     try {
-      sessions = (await this.allPages<VeeamSession>(SESSIONS, accessToken, {
+      sessions = (await allPages<VeeamSession>(this.reader(accessToken), SESSIONS, {
         stateFilter: 'Working',
         orderColumn: 'CreationTime',
         orderAsc: false,
@@ -452,9 +413,9 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         const session = sessions[next++];
         if (!session.id) continue;
         try {
-          const tasks = await this.allPages<VeeamTaskSession>(
+          const tasks = await allPages<VeeamTaskSession>(
+            this.reader(accessToken),
             `/api/v1/sessions/${encodeURIComponent(session.id)}/taskSessions`,
-            accessToken,
           );
           jobs.push(aggregatePerformance(session, tasks));
         } catch (error) {
@@ -490,34 +451,26 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    * verdict is recomputed each cycle against the current clock, so the ages
    * shown stay right between scans.
    */
-  private async protectionState(
+  private protectionState(
     jobs: VeeamJobState[] | undefined,
-    accessToken: string | null,
-  ): Promise<ProtectionSnapshot> {
+    evidence: Evidence,
+  ): ProtectionSnapshot {
     const thresholds = {
       staleDays: this.config.protectionStaleDays,
       overdueFactor: this.config.protectionOverdueFactor,
       minStreak: this.config.protectionFailureStreak,
     };
-    const blank = (unavailable: string): ProtectionSnapshot => ({
-      risks: [],
-      totalJobs: jobs?.length ?? 0,
-      protectedJobs: 0,
-      excludedDisabled: 0,
-      excludedUnscheduled: 0,
-      ...thresholds,
-      unavailable,
-    });
 
-    if (!jobs || !accessToken) {
-      return blank('Veeam не ответил на этот цикл, поэтому защищённость не пересчитывалась.');
-    }
-
-    if (Date.now() - this.protectionScannedAt >= this.config.protectionIntervalMs) {
-      const scanned = await this.scanProtection(accessToken, jobs);
-      if (!scanned && !this.protectionScannedAt) {
-        return blank('Точки восстановления ещё не прочитаны.');
-      }
+    if (!jobs || evidence.status === 'pending') {
+      return {
+        risks: [],
+        totalJobs: jobs?.length ?? 0,
+        protectedJobs: 0,
+        excludedDisabled: 0,
+        excludedUnscheduled: 0,
+        ...thresholds,
+        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
+      };
     }
 
     return assessProtection({
@@ -529,10 +482,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
           type: job.type,
           lastRun: job.lastRun,
           disabled: (job.status ?? '').toLowerCase() === 'disabled',
-          unscheduled: this.unscheduledJobs.has(job.id),
+          unscheduled: evidence.unscheduled.has(job.id),
         })),
-      pointsByJob: this.pointsByJob,
-      streakByJob: this.streakByJob,
+      pointsByJob: evidence.runsByJob,
+      cadenceByJob: evidence.cadenceByJob,
+      streakByJob: evidence.streakByJob,
       now: Date.now(),
       ...thresholds,
     });
@@ -545,8 +499,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    * Jobs with no restore point at all are counted but not listed: they have
    * nothing to date, and Protection already names them.
    */
-  private depthState(jobs: VeeamJobState[] | undefined): RestorePointsSnapshot {
-    if (!jobs || !this.protectionScannedAt) {
+  private depthState(
+    jobs: VeeamJobState[] | undefined,
+    evidence: Evidence,
+  ): RestorePointsSnapshot {
+    if (!jobs || evidence.status === 'pending') {
       return {
         jobs: [],
         without: 0,
@@ -555,7 +512,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         failedPoints: 0,
         orphanBackups: 0,
         orphanPoints: 0,
-        unavailable: 'Точки восстановления ещё не прочитаны.',
+        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
       };
     }
 
@@ -572,18 +529,20 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         excludedDisabled += 1;
         continue;
       }
-      if (this.unscheduledJobs.has(job.id)) {
+      if (evidence.unscheduled.has(job.id)) {
         excludedUnscheduled += 1;
         continue;
       }
-      const depth = this.depthByJob.get(job.id);
+      const depth = evidence.depthByJob.get(job.id);
       if (!depth) {
         without += 1;
         continue;
       }
-      // Newest first, which is the order `rhythm` reads its gaps in.
-      const runs = [...(this.pointsByJob.get(job.id) ?? [])].sort((a, b) => b - a);
-      listed.push({ name: job.name ?? job.id, ...depth, intervalDays: rhythm(runs) });
+      listed.push({
+        name: job.name ?? job.id,
+        ...depth,
+        intervalDays: evidence.cadenceByJob.get(job.id) ?? null,
+      });
     }
 
     const newest = listed.reduce<{ name: string; at: number } | undefined>(
@@ -599,374 +558,35 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       without,
       excludedDisabled,
       excludedUnscheduled,
-      failedPoints: this.failedPoints,
+      failedPoints: evidence.failedPoints,
       // Only mentioned while there is a 🧹 topic to send the reader to. A
       // pointer to a topic that does not exist is worse than no pointer.
-      orphanBackups: this.config.liveOrphans ? this.orphanChains.length : 0,
-      orphanPoints: this.config.liveOrphans
-        ? this.orphanChains.reduce((sum, chain) => sum + chain.points, 0)
-        : 0,
+      orphanBackups: this.config.liveOrphans ? evidence.orphanChains.length : 0,
+      orphanPoints: this.config.liveOrphans ? orphanPoints(evidence.orphanChains) : 0,
       newest,
     };
   }
 
   /** Backup chains left behind by jobs that no longer exist. */
-  private orphansState(jobs: VeeamJobState[] | undefined): OrphansSnapshot {
-    if (!jobs || !this.protectionScannedAt) {
+  private orphansState(jobs: VeeamJobState[] | undefined, evidence: Evidence): OrphansSnapshot {
+    if (!jobs || evidence.status === 'pending') {
       return {
         backups: [],
         points: 0,
         totalPoints: 0,
-        unavailable: 'Точки восстановления ещё не прочитаны.',
+        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
       };
     }
     return {
-      backups: this.orphanChains,
-      points: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
-      totalPoints: this.totalPoints,
+      backups: evidence.orphanChains,
+      points: orphanPoints(evidence.orphanChains),
+      totalPoints: evidence.totalPoints,
     };
   }
 
-  /** Refreshes the cached evidence. Returns false when the scan did not finish. */
-  private async scanProtection(accessToken: string, jobs: VeeamJobState[]): Promise<boolean> {
-    const startedAt = Date.now();
-    const liveJobIds = new Set(jobs.map((job) => job.id).filter(Boolean) as string[]);
-    try {
-      // Backups whose job no longer exists. Every other check starts from the
-      // job list, so nothing else in this service can see them at all.
-      const orphanNames = new Map<string, string>();
-
-      // The runtime state says whether a job is disabled; only the job
-      // configuration says whether it has a schedule at all.
-      const configured = await this.allPages<VeeamJob>(JOB_CONFIGS, accessToken, {}, SCAN_PAGE);
-      this.unscheduledJobs = new Set(
-        configured
-          .filter((job) => job.id && job.schedule?.runAutomatically === false)
-          .map((job) => job.id as string),
-      );
-      this.retryWindows = new Map(
-        configured
-          .filter((job): job is VeeamJob & { id: string } => Boolean(job.id))
-          .map((job) => {
-            const retry = job.schedule?.retry;
-            const await_ = retry?.isEnabled === false ? 0 : retry?.awaitMinutes;
-            return [job.id, ((await_ ?? 10) + 20) * 60_000];
-          }),
-      );
-
-      const backups = await this.allPages<VeeamBackup>(BACKUPS, accessToken, {}, SCAN_PAGE);
-      const jobOfBackup = new Map<string, string>();
-      for (const backup of backups) {
-        if (!backup.id) continue;
-        if (backup.jobId && liveJobIds.has(backup.jobId)) {
-          jobOfBackup.set(backup.id, backup.jobId);
-        } else {
-          orphanNames.set(backup.id, backup.name ?? backup.id);
-        }
-      }
-
-      const points = await this.allPages<VeeamRestorePoint>(
-        RESTORE_POINTS,
-        accessToken,
-        { orderColumn: 'CreationTime', orderAsc: false },
-        SCAN_PAGE,
-      );
-
-      // A restore point object says nothing about whether the run that made it
-      // worked: it carries a creation time and a session id, and that is all.
-      // A failed run still leaves one behind — OPS_Exchange errored out on 14
-      // September having transferred 6.8 GB of 22.4, and the point it left made
-      // the job look backed up that night when its last good copy was from 23
-      // August. The verdict lives only in the sessions.
-      const sessions = await this.allPages<VeeamSession>(
-        SESSIONS,
-        accessToken,
-        { orderColumn: 'CreationTime', orderAsc: false },
-        SCAN_PAGE,
-      );
-      const runsOfJob = this.runWindows(sessions);
-      const resultOfSession = new Map(
-        sessions
-          .filter((session): session is VeeamSession & { id: string } => Boolean(session.id))
-          .map((session) => [session.id, (session.result?.result ?? '').toLowerCase()]),
-      );
-
-      // One restore point is created per protected machine, so a job covering
-      // eleven VMs produces eleven points minutes apart. Taken raw, that made
-      // a quarterly job look like it ran hourly. Points are therefore folded
-      // down to one timestamp per run, which is what `sessionId` identifies.
-      const runsByJob = new Map<string, Map<string, number>>();
-      const depth = new Map<
-        string,
-        { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
-      >();
-      const orphans = new Map<string, { points: number; oldest: number; newest: number }>();
-      let failedPoints = 0;
-
-      for (const point of points) {
-        if (!point.creationTime) continue;
-        const at = Date.parse(point.creationTime);
-        if (!Number.isFinite(at)) continue;
-
-        const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
-        // Counted for the job it belongs to, then dropped: it is a file on a
-        // repository, not a state anybody should plan to restore to.
-        if (jobId && this.wroteByFailedRun(runsOfJob.get(jobId), at, point.sessionId, resultOfSession)) {
-          failedPoints += 1;
-          continue;
-        }
-        if (!jobId) {
-          const orphanId = point.backupId;
-          if (!orphanId || !orphanNames.has(orphanId)) continue;
-          const chain = orphans.get(orphanId) ?? { points: 0, oldest: at, newest: at };
-          chain.points += 1;
-          chain.oldest = Math.min(chain.oldest, at);
-          chain.newest = Math.max(chain.newest, at);
-          orphans.set(orphanId, chain);
-          continue;
-        }
-        const run = point.sessionId ?? point.creationTime;
-
-        // Depth is counted over every point, uncapped: how far back a job can
-        // be restored is exactly the question the cap would answer wrongly.
-        const seen = depth.get(jobId) ?? {
-          runs: new Set<string>(),
-          points: 0,
-          machines: new Set<string>(),
-          oldest: at,
-          newest: at,
-        };
-        seen.runs.add(run);
-        seen.points += 1;
-        if (point.name) seen.machines.add(point.name);
-        seen.oldest = Math.min(seen.oldest, at);
-        seen.newest = Math.max(seen.newest, at);
-        depth.set(jobId, seen);
-
-        const runs = runsByJob.get(jobId) ?? new Map<string, number>();
-        // Only the newest few runs matter here: one for the age, the rest for
-        // the rhythm.
-        if (!runs.has(run) && runs.size >= POINTS_PER_JOB) continue;
-        runs.set(run, Math.max(runs.get(run) ?? 0, at));
-        runsByJob.set(jobId, runs);
-      }
-
-      this.orphanChains = [...orphans].map(([id, chain]) => ({
-        name: orphanNames.get(id) ?? id,
-        points: chain.points,
-        oldest: chain.oldest,
-        newest: chain.newest,
-      }));
-      this.totalPoints = points.length;
-
-      this.depthByJob = new Map(
-        [...depth].map(([jobId, seen]) => [
-          jobId,
-          {
-            runs: seen.runs.size,
-            points: seen.points,
-            machines: seen.machines.size,
-            oldest: seen.oldest,
-            newest: seen.newest,
-          },
-        ]),
-      );
-
-      this.pointsByJob = new Map(
-        [...runsByJob].map(([jobId, runs]) => [jobId, [...runs.values()]]),
-      );
-      this.failedPoints = failedPoints;
-      this.streakByJob = this.failureStreaks(sessions);
-      this.protectionScannedAt = Date.now();
-      this.logger.log(
-        `Protection scan: ${points.length} restore points (${failedPoints} from failed runs),` +
-          ` ${sessions.length} sessions, ${runsByJob.size} jobs, ${Date.now() - startedAt}ms`,
-      );
-      return true;
-    } catch (error) {
-      this.logger.error(`Protection scan failed: ${(error as Error).message}`);
-      return false;
-    }
-  }
-
-  /**
-   * When each job's runs were on the clock, oldest first.
-   *
-   * A session's window is what the point lookup needs: a point written at 01:31
-   * belongs to whatever was running at 01:31, whatever id the point carries.
-   */
-  private runWindows(sessions: VeeamSession[]): Map<string, RunWindow[]> {
-    const windows = new Map<string, RunWindow[]>();
-    for (const session of sessions) {
-      if (!session.jobId || !/Job$/.test(session.sessionType ?? '')) continue;
-      const from = Date.parse(session.creationTime ?? '');
-      if (!Number.isFinite(from)) continue;
-      const list = windows.get(session.jobId) ?? [];
-      list.push({
-        from,
-        // A session still running has no end; it owns everything since it began.
-        to: session.endTime ? Date.parse(session.endTime) : Number.POSITIVE_INFINITY,
-        failed: (session.result?.result ?? '').toLowerCase() === 'failed',
-      });
-      windows.set(session.jobId, list);
-    }
-    for (const list of windows.values()) list.sort((a, b) => a.from - b.from);
-    return windows;
-  }
-
-  /**
-   * Did the run that wrote this point end in an error?
-   *
-   * Not the same question as "did the session whose id the point carries fail".
-   * Veeam stamps a point with the session that *opened* the run, and a run that
-   * is retried keeps writing into the same point: OPS_Exchange's 23 August
-   * point carries the id of the attempt that started on 21 August and failed,
-   * yet it was written at 01:31 on the 23rd, nine minutes into the retry that
-   * succeeded and ran until the 26th. Across this estate the id says "failed"
-   * for 344 points that a successful run actually wrote — discarding them would
-   * have moved OPS_Exchange's newest point back to 31 July for no reason.
-   *
-   * So the point is matched to whatever was on the clock when it appeared, and
-   * the carried id is only the fallback for a point written outside every known
-   * session window. A point nothing can be proven against is kept: the evidence
-   * that a run failed may simply have aged out of Veeam's session history, and
-   * inventing a verdict is worse than trusting a point that survived that long.
-   */
-  private wroteByFailedRun(
-    windows: RunWindow[] | undefined,
-    at: number,
-    sessionId: string | undefined,
-    results: Map<string, string>,
-  ): boolean {
-    let covering: RunWindow | undefined;
-    for (const window of windows ?? []) {
-      if (window.from > at) break;
-      if (at <= window.to && (!covering || window.from > covering.from)) covering = window;
-    }
-    if (covering) return covering.failed;
-    return sessionId !== undefined && results.get(sessionId) === 'failed';
-  }
-
-  /**
-   * Consecutive failed *runs* per job, counted back from its newest session.
-   *
-   * A run is not a session. Veeam retries a failed job automatically, and each
-   * retry is its own session, so a job with the default three retries reports
-   * four failed sessions for one failed run — which made "4 неуспеха подряд"
-   * appear against nearly every currently-failing job and mean nothing.
-   * Sessions closer together than the job's own retry window are therefore
-   * folded into the run that spawned them.
-   *
-   * The streak breaks at the first success, which is what makes "three in a
-   * row" mean a job that is still broken rather than one that failed thrice
-   * at some point.
-   */
-  private failureStreaks(sessions: VeeamSession[]): Map<string, number> {
-    const since = Date.now() - STREAK_WINDOW_DAYS * 86_400_000;
-
-    const newestFirst = new Map<string, VeeamSession[]>();
-    for (const session of sessions) {
-      if (!session.jobId || !session.endTime) continue;
-      // A streak is about a job that is broken now. Counting back through a
-      // year of history would report "forty failed runs in a row" for a job
-      // nobody has touched since spring.
-      if (Date.parse(session.creationTime ?? '') < since) continue;
-      // Only actual job runs. Malware scans, compliance analysis, retention
-      // and configuration backups also appear here and are not the job failing.
-      if (!/Job$/.test(session.sessionType ?? '')) continue;
-      const list = newestFirst.get(session.jobId) ?? [];
-      list.push(session);
-      newestFirst.set(session.jobId, list);
-    }
-
-    const streaks = new Map<string, number>();
-    for (const [jobId, list] of newestFirst) {
-      list.sort((a, b) => Date.parse(b.creationTime ?? '') - Date.parse(a.creationTime ?? ''));
-      const window = this.retryWindows.get(jobId) ?? DEFAULT_RETRY_WINDOW_MS;
-
-      let runs = 0;
-      let previousStart = Number.POSITIVE_INFINITY;
-      for (const session of list) {
-        if ((session.result?.result ?? '').toLowerCase() === 'success') break;
-        const startedAt = Date.parse(session.creationTime ?? '');
-        if (!Number.isFinite(startedAt)) continue;
-        // Only a session far enough from the one after it starts a new run;
-        // the rest are that run's retries.
-        if (previousStart - startedAt > window) runs += 1;
-        previousStart = startedAt;
-      }
-      if (runs > 0) streaks.set(jobId, runs);
-    }
-    return streaks;
-  }
-
-  /** Reads every page; Veeam may cap the requested limit below our value. */
-  private async allPages<T>(
-    path: string,
-    accessToken: string,
-    params: Record<string, unknown> = {},
-    limit = 100,
-  ): Promise<T[]> {
-    const first = await this.page<T>(path, accessToken, params, 0, limit);
-    const items: T[] = [...(first.data ?? [])];
-    const total = first.pagination?.total;
-    // Veeam may cap the requested limit, and the cap is what the next skip has
-    // to step by.
-    const size = first.pagination?.limit ?? limit;
-
-    // A first page that came back short is the whole collection. Asking for
-    // the next one would fetch the same rows again on a server that ignores
-    // `skip`, and count everything twice.
-    if (items.length < size) return items;
-
-    // The total turns paging from "walk until a short page" into a known list
-    // of offsets, and a known list can be fetched at once. Read one at a time,
-    // nine thousand sessions took 84 seconds — long enough to stall the cycle
-    // that alerting runs in.
-    if (typeof total === 'number' && size > 0) {
-      const skips: number[] = [];
-      for (let skip = items.length; skip < total; skip += size) skips.push(skip);
-      for (let i = 0; i < skips.length; i += SCAN_CONCURRENCY) {
-        const batch = skips.slice(i, i + SCAN_CONCURRENCY);
-        const pages = await Promise.all(
-          batch.map((skip) => this.page<T>(path, accessToken, params, skip, size)),
-        );
-        for (const page of pages) items.push(...(page.data ?? []));
-      }
-      return items;
-    }
-
-    // No total reported: fall back to walking until a page comes back short.
-    for (let skip = items.length; ; ) {
-      const page = await this.page<T>(path, accessToken, params, skip, size);
-      const data = page.data ?? [];
-      items.push(...data);
-      if (!data.length || data.length < size) break;
-      skip += data.length;
-    }
-    return items;
-  }
-
-  /** One page, retried once against a token that expired mid-scan. */
-  private async page<T>(
-    path: string,
-    accessToken: string,
-    params: Record<string, unknown>,
-    skip: number,
-    limit: number,
-  ): Promise<VeeamCollection<T>> {
-    try {
-      return await this.veeam.request<VeeamCollection<T>>({
-        method: 'GET', path, accessToken, params: { ...params, skip, limit },
-      });
-    } catch (error) {
-      if (!(error instanceof VeeamApiError) || !error.isUnauthorized) throw error;
-      this.monitorAuth.invalidateAccessToken();
-      const token = await this.monitorAuth.getAccessToken();
-      return this.veeam.request<VeeamCollection<T>>({
-        method: 'GET', path, accessToken: token, params: { ...params, skip, limit },
-      });
-    }
+  /** What `allPages` needs from this module to read a Veeam collection. */
+  private reader(accessToken: string) {
+    return { veeam: this.veeam, auth: this.monitorAuth, accessToken };
   }
 
   private scheduleState(jobs: VeeamJobState[] | undefined): LiveSchedule {
@@ -1140,7 +760,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private async checkRepositories(accessToken: string): Promise<VeeamRepositoryState[]> {
     let repositories: VeeamRepositoryState[];
     try {
-      repositories = await this.allPages<VeeamRepositoryState>(REPOSITORIES, accessToken);
+      repositories = await allPages<VeeamRepositoryState>(this.reader(accessToken), REPOSITORIES);
     } catch (error) {
       this.logger.warn(`Repository capacity check skipped: ${(error as Error).message}`);
       throw error;

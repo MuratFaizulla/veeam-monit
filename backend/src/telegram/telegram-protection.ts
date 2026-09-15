@@ -14,9 +14,6 @@ import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegra
  * themselves rather than of the job status.
  */
 
-/** How many recent intervals are used to learn a job's own rhythm. */
-const RHYTHM_SAMPLES = 10;
-
 const DAY = 86_400_000;
 
 export interface ProtectionJob {
@@ -54,6 +51,13 @@ export interface ProtectionInput extends ProtectionThresholds {
   jobs: ProtectionJob[];
   /** Restore point timestamps (epoch ms) per job id, in any order. */
   pointsByJob: Map<string, number[]>;
+  /**
+   * How often each job runs, in days; absent or null where it cannot be told.
+   * Handed in rather than derived here: the same number decides how the 🗂 slot
+   * orders its list, and two modules computing it from the same timestamps is
+   * two chances to disagree.
+   */
+  cadenceByJob: Map<string, number | null>;
   /** Consecutive failures counted back from the newest session, per job id. */
   streakByJob: Map<string, number>;
   now: number;
@@ -89,7 +93,8 @@ export interface ProtectionSnapshot extends ProtectionThresholds {
  * without a Veeam, a Telegram or a clock.
  */
 export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => {
-  const { jobs, pointsByJob, streakByJob, now, staleDays, overdueFactor, minStreak } = input;
+  const { jobs, pointsByJob, cadenceByJob, streakByJob, now, staleDays, overdueFactor, minStreak } =
+    input;
   const risks: ProtectionRisk[] = [];
   let excludedDisabled = 0;
   let excludedUnscheduled = 0;
@@ -111,7 +116,7 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
 
     const points = [...(pointsByJob.get(job.id) ?? [])].sort((a, b) => b - a);
     const failures = streakByJob.get(job.id) ?? 0;
-    const intervalDays = rhythm(points);
+    const intervalDays = cadenceByJob.get(job.id) ?? null;
     const ageDays = points.length ? (now - points[0]) / DAY : null;
 
     // The deadline is the job's own schedule where it is known, but never
@@ -157,22 +162,6 @@ const compareRisk = (a: ProtectionRisk, b: ProtectionRisk): number => {
   const age = (risk: ProtectionRisk): number =>
     risk.ageDays === null ? Number.POSITIVE_INFINITY : risk.ageDays;
   return age(b) - age(a);
-};
-
-/**
- * The job's usual interval, as the median gap between its recent restore
- * points. The median rather than the mean because one long outage between two
- * points would otherwise redefine the job as a monthly one.
- */
-export const rhythm = (newestFirst: number[]): number | null => {
-  if (newestFirst.length < 3) return null;
-  const gaps: number[] = [];
-  for (let i = 0; i < Math.min(newestFirst.length - 1, RHYTHM_SAMPLES); i += 1) {
-    gaps.push(newestFirst[i] - newestFirst[i + 1]);
-  }
-  gaps.sort((a, b) => a - b);
-  const middle = gaps[Math.floor(gaps.length / 2)] / DAY;
-  return Number.isFinite(middle) && middle > 0 ? middle : null;
 };
 
 /* ------------------------------------------------------------------ *

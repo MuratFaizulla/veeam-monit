@@ -1,0 +1,70 @@
+# Domain language
+
+Terms this codebase uses in a specific way. When a term is here, use it — in
+code, in comments, and in the Russian text the bot sends.
+
+## Evidence
+
+What one reading of the Veeam estate established: every restore point the server
+holds, every session that wrote one, and every job configuration saying whether
+a job was supposed to run at all.
+
+Three live slots — 🛡 Protection, 🗂 Restore points, 🧹 Orphaned backups — are
+three questions about one Evidence. Reading it costs around twenty requests and
+about forty seconds, so it happens on its own cadence
+(`TELEGRAM_PROTECTION_INTERVAL_MIN`) and the answer is kept until the next one.
+
+Evidence is either **ready** or **pending**, and pending carries the reason a
+slot can show. There is no third state and no sentinel: "never scanned" and
+"Veeam did not answer this cycle" are both pending, with different reasons.
+
+Owned by `backend/src/telegram/backup-evidence.service.ts`. Readers take it as
+an argument; nothing reads it out of a field.
+
+## Run
+
+One execution of a Veeam job, *including its automatic retries*. Not a session.
+
+Veeam retries a failed job on its own and each attempt is a separate session, so
+a job with the default three retries reports four failed sessions for one failed
+Run. Everything the bot counts — failure streaks, missed backups, retained
+history — counts Runs.
+
+A Run **succeeded** if the attempt that finished it succeeded, whatever the
+earlier attempts did.
+
+## Restore point
+
+One recoverable state of one machine. Veeam creates one per protected machine
+per Run, so a job covering eight VMs produces eight restore points offering the
+same single moment to restore to.
+
+A restore point **counts** only if the Run that wrote it succeeded. A failed Run
+leaves one behind anyway, and the point it leaves is a file on a repository, not
+a state anybody should plan to restore to.
+
+Which Run wrote a point is decided by *when the point appeared*, not by the
+session id the point carries: Veeam stamps a point with the session that opened
+the Run, and a retried Run keeps writing into the same point.
+
+## Cadence
+
+How often a job actually runs, in days: the median gap between its recent Runs.
+Median rather than mean, so one long outage does not redefine a nightly job as a
+monthly one. Null when there is too little history to tell, and then nothing is
+claimed about missed Runs.
+
+Inferred, never read from the schedule. Computed once, in the Evidence, because
+two modules deriving it from the same timestamps is two chances to disagree.
+
+## Live slot
+
+A topic holding exactly one message, edited in place rather than appended to.
+State, not events. 🗂 Restore points is the exception that holds two, because
+the list does not fit in Telegram's limit.
+
+## Orphaned chain
+
+A backup chain no live job owns — the job was deleted, what it produced stayed.
+Not automatically garbage: a chain kept deliberately after a job was retired
+looks exactly like one nobody remembers.
