@@ -1,5 +1,5 @@
 import { escapeHtml } from './telegram.format';
-import { fitted, LiveClock, plural, stampOf } from './telegram-live.format';
+import { dayOf, fitted, LiveClock, plural, stampOf } from './telegram-live.format';
 
 /**
  * How much history each job actually has.
@@ -36,6 +36,11 @@ export interface RestorePointsSnapshot {
   /** Jobs with no restore point at all; 🛡 Protection covers those. */
   without: number;
   thinRuns: number;
+  /** Chains no live job owns — detailed in the 🧹 slot, summarised here. */
+  orphanBackups: number;
+  orphanPoints: number;
+  /** The freshest restore point in the estate, whichever job made it. */
+  newest?: { name: string; at: number };
   unavailable?: string;
 }
 
@@ -69,7 +74,8 @@ export const renderRestorePoints = (
   const sorted = [...snapshot.jobs].sort(byDepth);
   const totalPoints = sorted.reduce((sum, job) => sum + job.points, 0);
 
-  const summary = [
+  const tail = [
+    '',
     `<b>Заданий:</b> ${sorted.length}` +
       (snapshot.without ? ` (+${snapshot.without} без точек)` : ''),
     // Points belonging to backups no live job owns are not counted here;
@@ -78,17 +84,21 @@ export const renderRestorePoints = (
     snapshot.thinRuns
       ? `<b>Только одно состояние:</b> ${snapshot.thinRuns} ${plural(snapshot.thinRuns, 'задание', 'задания', 'заданий')}`
       : null,
+    snapshot.orphanBackups
+      ? `<b>Сверх того, без заданий:</b> ${snapshot.orphanPoints} ${plural(snapshot.orphanPoints, 'точка', 'точки', 'точек')} в ${snapshot.orphanBackups} ${plural(snapshot.orphanBackups, 'цепочке', 'цепочках', 'цепочках')} — см. 🧹`
+      : null,
+    snapshot.newest
+      ? `<b>Последняя точка:</b> ${escapeHtml(snapshot.newest.name)}, ${dayOf(new Date(snapshot.newest.at).toISOString(), clock)}`
+      : null,
+    footer,
   ].filter((line): line is string => line !== null);
 
-  const tail = [
-    '',
-    ...summary,
-    '<i>Число — сколько прогонов можно восстановить; точки на каждую ВМ сложены.</i>',
-    footer,
-  ];
-
   return fitted(sorted.length, (shown) => {
-    const lines = ['🗂 <b>Глубина истории по заданиям</b>', ''];
+    const lines = [
+      '🗂 <b>Глубина истории по заданиям</b>',
+      '<i>(прогонов · точек · задание · период)</i>',
+      '',
+    ];
     for (const job of sorted.slice(0, shown)) lines.push(depthLine(job));
     const rest = sorted.length - shown;
     if (rest > 0) {
@@ -106,16 +116,18 @@ const byDepth = (a: JobDepth, b: JobDepth): number =>
 const spanDays = (job: JobDepth): number =>
   job.oldest !== undefined && job.newest !== undefined ? (job.newest - job.oldest) / DAY : 0;
 
+/**
+ * One line per job, deliberately terse.
+ *
+ * Spelling out "прогонов"/"точек"/"за N дней" cost about 25 characters a row,
+ * which is 2500 across the estate — the difference between listing every job
+ * and listing two thirds of them. The column legend in the header carries the
+ * words instead, once.
+ */
 const depthLine = (job: JobDepth): string => {
   const icon = job.runs <= THIN_RUNS ? '🔴' : job.runs <= SHALLOW_RUNS ? '🟠' : '🟢';
-  const detail: string[] = [];
-
   const span = spanDays(job);
-  if (job.runs > 1 && span >= 1) detail.push(`за ${Math.round(span)} ${plural(Math.round(span), 'день', 'дня', 'дней')}`);
-  if (job.machines > 1) detail.push(`${job.machines} ${plural(job.machines, 'ВМ', 'ВМ', 'ВМ')}`);
-  if (job.points !== job.runs) detail.push(`${job.points} ${plural(job.points, 'точка', 'точки', 'точек')}`);
-
-  const depth = `<b>${job.runs}</b> ${plural(job.runs, 'прогон', 'прогона', 'прогонов')}`;
-  const suffix = detail.length ? ` · ${detail.join(' · ')}` : '';
-  return `${icon} ${depth} · ${escapeHtml(job.name)}${suffix}`;
+  const points = job.points === job.runs ? '' : ` · ${job.points}`;
+  const period = job.runs > 1 && span >= 1 ? ` · ${Math.round(span)}д` : '';
+  return `${icon} ${job.runs}${points} · ${escapeHtml(job.name)}${period}`;
 };
