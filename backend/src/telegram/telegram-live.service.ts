@@ -6,9 +6,9 @@ import { TelegramStateStore } from './telegram-state.store';
 import { TelegramTopicsService } from './telegram-topics.service';
 import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
 import { TelegramChat } from './telegram.types';
+import { LiveSlot, specOf } from './live-slots';
 
-/** A topic that holds exactly one message, kept current. */
-export type LiveSlot = 'health' | 'running' | 'schedule' | 'performance' | 'repositories' | 'protection' | 'restorePoints' | 'orphans';
+export { LiveSlot };
 
 /**
  * The "one message, always current" module.
@@ -100,10 +100,11 @@ export class TelegramLiveService {
     // Unchanged content is not rewritten, or a bot that is merely alive would
     // edit two messages a minute forever. The heartbeat still refreshes it now
     // and then, so a frozen "обновлено" is evidence the monitor stopped.
+    const spec = specOf(slot);
     if (
       previous &&
       previous.hash === hash &&
-      (['performance', 'repositories'].includes(slot) || Date.now() - previous.at < this.config.liveRefreshMs)
+      (!spec.heartbeat || Date.now() - previous.at < this.config.liveRefreshMs)
     ) {
       return;
     }
@@ -124,7 +125,7 @@ export class TelegramLiveService {
 
     const messageId = await this.send(chat, slot, text);
     this.store.rememberLiveMessage(chatId, key, { messageId, hash, at: Date.now() });
-    if (['performance', 'repositories'].includes(slot)) await this.pin(chatId, messageId);
+    if (spec.pinned) await this.pin(chatId, messageId);
   }
 
   /** True when the existing message now carries `text`. */
@@ -147,25 +148,13 @@ export class TelegramLiveService {
   }
 
   private async send(chat: TelegramChat, slot: LiveSlot, text: string): Promise<number> {
-    const topic = this.config.liveTopics[slot];
-    const configuredThread =
-      slot === 'performance'
-        ? this.config.performanceTopicId
-        : slot === 'repositories'
-          ? this.config.repositoriesTopicId
-          : 0;
-    const destination =
-      configuredThread > 0 && chat.is_forum
-        ? { chatId: String(chat.id), threadId: configuredThread, topic }
-        : await this.topics.destination(chat, topic);
-    try {
-      return await this.transport.sendMessage(destination, text);
-    } catch (error) {
-      if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
-      // Somebody deleted the topic; re-create it rather than losing the slot.
-      this.topics.forget(destination.chatId, destination.topic);
-      return this.transport.sendMessage(await this.topics.destination(chat, topic), text);
-    }
+    const fixedThread = specOf(slot).fixedThread;
+    return this.topics.send(
+      chat,
+      this.config.liveTopics[slot],
+      text,
+      fixedThread ? this.config[fixedThread] : 0,
+    );
   }
 
   /** Pinning is optional: missing administrator rights must not break updates. */

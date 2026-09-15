@@ -187,18 +187,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
    * silently stop the alerts that were routed to it.
    */
   private async deliver(chat: TelegramChat, topic: string | null, text: string): Promise<void> {
-    const destination = await this.topics.destination(chat, topic);
-    try {
-      await this.transport.sendMessage(destination, text);
-    } catch (error) {
-      if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
-      this.topics.forget(destination.chatId, destination.topic);
-      const retry = await this.topics.destination(chat, topic);
-      await this.transport.sendMessage(
-        retry.threadId === destination.threadId ? { chatId: destination.chatId } : retry,
-        text,
-      );
-    }
+    await this.topics.send(chat, topic, text);
   }
 
   private onDeliveryFailure(chatId: string, error: unknown): void {

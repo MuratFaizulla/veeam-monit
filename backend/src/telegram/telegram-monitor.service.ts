@@ -505,6 +505,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         failedPoints: 0,
         orphanBackups: 0,
         orphanPoints: 0,
+        crossLink: this.config.liveOrphans,
         unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
       };
     }
@@ -536,10 +537,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       excludedDisabled: standings.excludedDisabled,
       excludedUnscheduled: standings.excludedUnscheduled,
       failedPoints: evidence.failedPoints,
+      orphanBackups: evidence.orphanChains.length,
+      orphanPoints: orphanPoints(evidence.orphanChains),
       // Only mentioned while there is a 🧹 topic to send the reader to. A
       // pointer to a topic that does not exist is worse than no pointer.
-      orphanBackups: this.config.liveOrphans ? evidence.orphanChains.length : 0,
-      orphanPoints: this.config.liveOrphans ? orphanPoints(evidence.orphanChains) : 0,
+      crossLink: this.config.liveOrphans,
       newest,
     };
   }

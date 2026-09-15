@@ -48,6 +48,14 @@ export interface RestorePointsSnapshot {
   /** Chains no live job owns — detailed in the 🧹 slot, summarised here. */
   orphanBackups: number;
   orphanPoints: number;
+  /**
+   * Whether the 🧹 slot is published, and so whether there is anywhere to send
+   * a reader. Said outright rather than inferred from the counts being zero:
+   * the counts used to be zeroed upstream to suppress this line, which meant
+   * the decision lived in the caller and could only be tested by running a
+   * whole cycle and grepping the message for an absent emoji.
+   */
+  crossLink: boolean;
   /** The freshest restore point in the estate, whichever job made it. */
   newest?: { name: string; at: number };
   unavailable?: string;
@@ -144,7 +152,7 @@ export const renderRestorePoints = (
     snapshot.failedPoints
       ? `<b>Не в счёт:</b> ${snapshot.failedPoints} ${plural(snapshot.failedPoints, 'точка', 'точки', 'точек')} от прогонов с ошибкой`
       : null,
-    snapshot.orphanBackups
+    snapshot.crossLink && snapshot.orphanBackups
       ? `<b>Сверх того, без заданий:</b> ${snapshot.orphanPoints} ${plural(snapshot.orphanPoints, 'точка', 'точки', 'точек')} в ${snapshot.orphanBackups} ${plural(snapshot.orphanBackups, 'цепочке', 'цепочках', 'цепочках')} — см. 🧹`
       : null,
     snapshot.newest

@@ -85,6 +85,14 @@ A topic holding exactly one message, edited in place rather than appended to.
 State, not events. 🗂 Restore points is the exception that holds two, because
 the list does not fit in Telegram's limit.
 
+Declared once in `backend/src/telegram/live-slots.ts`: whether it is **pinned**,
+whether it gets a **heartbeat** rewrite when its content has not changed, and
+whether it addresses a thread somebody created by hand. The slot names come from
+that declaration, including the type and the config record.
+
+Pinned and heartbeat are opposites today and should stay that way: rewriting a
+pinned message to move its timestamp is churn the whole room sees.
+
 ## Orphaned chain
 
 A backup chain no live job owns — the job was deleted, what it produced stayed.

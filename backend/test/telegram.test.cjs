@@ -773,6 +773,29 @@ test('a live message Telegram no longer has is deleted and replaced, not duplica
   assert.equal(w.api.of('createForumTopic').length, 0, 'the topic itself is still known');
 });
 
+test('pinning and heartbeat rewrites come from the slot declaration', async () => {
+  const { LIVE_SLOTS } = require('../dist/telegram/live-slots');
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+
+  const pinned = w.api.of('pinChatMessage').map((p) => p.message_id);
+  const sentIds = w.api.calls
+    .filter((c) => c.method === 'sendMessage')
+    .map((c, i) => ({ i, id: 1001 + i }));
+  assert.equal(
+    pinned.length,
+    Object.values(LIVE_SLOTS).filter((s) => s.pinned).length,
+    'exactly the slots declared pinned are pinned',
+  );
+  assert.ok(sentIds.length > pinned.length, 'and the rest are not');
+
+  // A pinned slot is never rewritten just to move its timestamp: that is churn
+  // the whole room sees. The declaration is what says so.
+  for (const [name, spec] of Object.entries(LIVE_SLOTS)) {
+    assert.equal(spec.pinned, !spec.heartbeat, `${name}: pinned and heartbeat are opposites`);
+  }
+});
+
 test('a slot too long for one message owns a second, and drops it when it shrinks', async () => {
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await w.monitor.check();
@@ -1212,6 +1235,7 @@ const depthPages = (over) => {
       excludedUnscheduled: 0,
       orphanBackups: 0,
       orphanPoints: 0,
+      crossLink: false,
       ...over,
     },
     { now: new Date(NOW), timezone: 'UTC' },
@@ -1432,6 +1456,22 @@ test('a scan that throws leaves the previous evidence standing', async () => {
   assert.ok(attempted, 'the scan was re-run');
   assert.equal(w.evidence.evidence.status, 'ready', 'stale evidence beats no evidence');
   assert.equal(w.evidence.evidence.scannedAt, first.scannedAt);
+});
+
+test('the 🧹 pointer is a decision the renderer is given, not a zero it infers', async () => {
+  const estate = {
+    jobs: [{ name: 'CLT_live', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW }],
+    orphanBackups: 245,
+    orphanPoints: 5037,
+  };
+
+  const linked = depth({ ...estate, crossLink: true });
+  assert.match(linked, /Сверх того, без заданий:<\/b> 5037 точек в 245 цепочках — см\. 🧹/);
+
+  // The chains are just as real; there is simply nowhere to send anyone.
+  const unlinked = depth({ ...estate, crossLink: false });
+  assert.ok(!/🧹/u.test(unlinked));
+  assert.ok(!/без заданий/u.test(unlinked));
 });
 
 test('with the 🧹 topic off, nothing points the reader at it', async () => {

@@ -1,4 +1,5 @@
 import { join } from 'path';
+import type { LiveSlot } from '../telegram/live-slots';
 import type { NotificationKind, NotificationSeverity } from '../telegram/telegram.types';
 
 /** How an event is mapped onto a forum topic when no rule in the routes file matches. */
@@ -56,16 +57,7 @@ export interface AppConfig {
      * Topics that hold one always-current message instead of a stream of them.
      * These are state, not events: they are edited in place, never appended to.
      */
-    liveTopics: {
-      health: string;
-      running: string;
-      schedule: string;
-      performance: string;
-      repositories: string;
-      protection: string;
-      restorePoints: string;
-      orphans: string;
-    };
+    liveTopics: Record<LiveSlot, string>;
     /**
      * How often the restore-point scan runs. It reads every restore point, so
      * it is far heavier than a monitor tick — and far less urgent, since the
