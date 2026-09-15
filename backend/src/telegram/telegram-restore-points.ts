@@ -1,19 +1,18 @@
 import { escapeHtml } from './telegram.format';
-import { dayOf, fitted, LiveClock, plural, stampOf } from './telegram-live.format';
+import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegram-live.format';
 
 /**
- * How much history each job actually has.
+ * Where each job's restore points stand against its own rhythm.
  *
- * 🛡 Protection answers "is there a recent restore point at all". This answers
- * the next question: how far back can you go. They fail differently — a job can
- * run perfectly every night and still keep exactly one recoverable state,
- * which is fine until the corruption you need to roll back past is older than
- * that one point.
+ * 🛡 Protection answers "is this job past its deadline" and lists only the ones
+ * that are. This one lists everything that is supposed to be running, with the
+ * question an operator actually asks of a job: how many points are there, when
+ * was the newest taken, and has it quietly skipped runs since.
  *
- * The number that matters is *runs*, not restore points. Veeam creates one
- * point per protected machine per run, so a job covering eight VMs reports
- * eight times the points while offering exactly the same set of moments to
- * restore to.
+ * "Skipped" can only be measured against the job's own cadence, and the cadence
+ * has to be inferred. A weekly job two days stale is fine; a nightly one two
+ * days stale has missed two backups. The same number of days means opposite
+ * things, so the list is ordered by missed runs, never by age.
  */
 
 const DAY = 86_400_000;
@@ -26,16 +25,24 @@ export interface JobDepth {
   points: number;
   /** Machines the job protects. */
   machines: number;
-  /** Epoch ms of the oldest and newest point, for the span. */
+  /** Epoch ms of the oldest and newest point. */
   oldest?: number;
   newest?: number;
+  /**
+   * The job's own interval in days, learned from its recent points. Null when
+   * there is too little history to tell, and then nothing is claimed about
+   * missed runs rather than a cadence being guessed.
+   */
+  intervalDays?: number | null;
 }
 
 export interface RestorePointsSnapshot {
   jobs: JobDepth[];
-  /** Jobs with no restore point at all; 🛡 Protection covers those. */
+  /** Jobs that are supposed to run but have no restore point at all. */
   without: number;
-  thinRuns: number;
+  /** Left out on purpose — they are not supposed to be producing points. */
+  excludedDisabled: number;
+  excludedUnscheduled: number;
   /** Chains no live job owns — detailed in the 🧹 slot, summarised here. */
   orphanBackups: number;
   orphanPoints: number;
@@ -46,8 +53,22 @@ export interface RestorePointsSnapshot {
 
 /** At or below this many retained runs a job has no usable history. */
 export const THIN_RUNS = 1;
-/** At or below this, history is thin enough to be worth a second look. */
-const SHALLOW_RUNS = 3;
+
+/**
+ * Runs a job may be behind before it is called out.
+ *
+ * One is the honest threshold — a nightly job that skipped last night skipped a
+ * backup — but a run still in progress, or one that started late, would read as
+ * a miss. The count therefore only begins at the second interval.
+ */
+const MISSED_ALERT = 1;
+
+/** How far behind its own schedule a job is, in runs. Null when unknowable. */
+const missedRuns = (job: JobDepth, now: number): number | null => {
+  if (!job.intervalDays || job.newest === undefined) return null;
+  const ageDays = (now - job.newest) / DAY;
+  return Math.max(0, Math.floor(ageDays / job.intervalDays) - 1);
+};
 
 export const renderRestorePoints = (
   snapshot: RestorePointsSnapshot,
@@ -65,40 +86,66 @@ export const renderRestorePoints = (
     ].join('\n');
   }
 
+  const now = clock.now.getTime();
+  const missed = new Map(snapshot.jobs.map((job) => [job, missedRuns(job, now)]));
+
+  // Said out loud: a list that silently shrank would be worse than one that is
+  // too long, because the operator would not know what is outside it.
+  const skipped: string[] = [];
+  if (snapshot.excludedUnscheduled) {
+    skipped.push(`${snapshot.excludedUnscheduled} без расписания`);
+  }
+  if (snapshot.excludedDisabled) skipped.push(`${snapshot.excludedDisabled} выключено`);
+  const skippedLine = skipped.length ? `<b>Не учитываются:</b> ${skipped.join(', ')}` : null;
+
   if (snapshot.jobs.length === 0) {
-    return ['🗂 <b>Точек восстановления нет ни у одного задания</b>', '', footer].join('\n');
+    return ['🗂 <b>Точек восстановления нет ни у одного задания</b>', '', skippedLine, footer]
+      .filter((line): line is string => line !== null)
+      .join('\n');
   }
 
-  // Thinnest history first: that is the end of the list somebody needs to act
-  // on, and it is the end that survives when the message has to be trimmed.
-  const sorted = [...snapshot.jobs].sort(byDepth);
+  // Furthest behind its own schedule first. That end of the list is the one
+  // somebody has to act on, and it is the end that survives the trim.
+  const sorted = [...snapshot.jobs].sort(byUrgency(missed));
+  const behind = sorted.filter((job) => (missed.get(job) ?? 0) >= MISSED_ALERT).length;
   const totalPoints = sorted.reduce((sum, job) => sum + job.points, 0);
+  const thin = sorted.filter((job) => job.runs <= THIN_RUNS).length;
 
   const tail = [
     '',
     `<b>Заданий:</b> ${sorted.length}` +
       (snapshot.without ? ` (+${snapshot.without} без точек)` : ''),
+    `<b>Отстают от расписания:</b> ${behind || 'нет'}`,
+    thin
+      ? `<b>Только одна точка:</b> ${thin} ${plural(thin, 'задание', 'задания', 'заданий')}`
+      : null,
+    skippedLine,
     // Points belonging to backups no live job owns are not counted here;
     // saying "всего" would disagree with what Veeam reports.
     `<b>Точек у этих заданий:</b> ${totalPoints}`,
-    snapshot.thinRuns
-      ? `<b>Только одно состояние:</b> ${snapshot.thinRuns} ${plural(snapshot.thinRuns, 'задание', 'задания', 'заданий')}`
-      : null,
     snapshot.orphanBackups
       ? `<b>Сверх того, без заданий:</b> ${snapshot.orphanPoints} ${plural(snapshot.orphanPoints, 'точка', 'точки', 'точек')} в ${snapshot.orphanBackups} ${plural(snapshot.orphanBackups, 'цепочке', 'цепочках', 'цепочках')} — см. 🧹`
       : null,
     snapshot.newest
       ? `<b>Последняя точка:</b> ${escapeHtml(snapshot.newest.name)}, ${dayOf(new Date(snapshot.newest.at).toISOString(), clock)}`
       : null,
+    '<i>Пропуски считаются по собственному ритму задания: сколько его обычных' +
+      ' интервалов прошло с последней точки.</i>',
     footer,
   ].filter((line): line is string => line !== null);
 
   return fitted(sorted.length, (shown) => {
-    const lines = ['🗂 <b>Глубина истории по заданиям</b>', ...LEGEND, ''];
-    for (const job of sorted.slice(0, shown)) lines.push(depthLine(job));
+    const lines = [
+      '🗂 <b>Точки восстановления</b>',
+      '<i>Сначала те, кто отстал от своего расписания.</i>',
+      '',
+    ];
+    for (const job of sorted.slice(0, shown)) {
+      lines.push(depthLine(job, missed.get(job) ?? null, clock));
+    }
     const rest = sorted.length - shown;
     if (rest > 0) {
-      lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} поглубже`);
+      lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} по графику`);
     }
     lines.push(...tail);
     return lines.join('\n');
@@ -106,38 +153,38 @@ export const renderRestorePoints = (
 };
 
 /**
- * The suffix on each number is the whole explanation.
+ * Most runs behind first; within the same standing, the stalest point first.
  *
- * A positional legend — "(прогонов · точек · задание · период)" — only works if
- * every row has every column, and these rows do not: a single-machine job has
- * as many points as runs, so the column is dropped. A reader then counts
- * columns against the legend and lands on the wrong one. Naming the unit on the
- * number itself makes the row readable wherever it is cut.
+ * A job whose cadence could not be learned sorts among the on-time ones, but
+ * its age still floats it upwards there, because "we cannot tell" is not the
+ * same as "fine".
  */
-const LEGEND = [
-  '<i>п — прогонов: столько моментов для отката · д — дней истории',
-  'т — точек Veeam: машин × прогонов; нет «т» — машина одна</i>',
-];
-
-/** Fewest runs first, then the shortest span. */
-const byDepth = (a: JobDepth, b: JobDepth): number =>
-  a.runs - b.runs || spanDays(a) - spanDays(b) || a.name.localeCompare(b.name);
-
-const spanDays = (job: JobDepth): number =>
-  job.oldest !== undefined && job.newest !== undefined ? (job.newest - job.oldest) / DAY : 0;
+const byUrgency =
+  (missed: Map<JobDepth, number | null>) =>
+  (a: JobDepth, b: JobDepth): number =>
+    (missed.get(b) ?? 0) - (missed.get(a) ?? 0) ||
+    (a.newest ?? 0) - (b.newest ?? 0) ||
+    a.name.localeCompare(b.name);
 
 /**
- * One line per job: every number up front with its unit, then the name.
+ * One line, spelled out: name, how many points, how far behind, and exactly
+ * when the newest point was taken.
  *
- * Spelling the units out in words cost about 25 characters a row, which is 2500
- * across the estate — the difference between listing every job and listing two
- * thirds of them. A one-letter suffix costs one character and replaces a
- * separator, so the rows got shorter and readable at the same time.
+ * The date is written in full rather than as "5 дней назад" because this is the
+ * line somebody reads before opening Veeam, and a relative age has to be
+ * translated back into a moment before it can be checked against anything.
  */
-const depthLine = (job: JobDepth): string => {
-  const icon = job.runs <= THIN_RUNS ? '🔴' : job.runs <= SHALLOW_RUNS ? '🟠' : '🟢';
-  const span = spanDays(job);
-  const points = job.points === job.runs ? '' : ` ${job.points}т`;
-  const period = job.runs > 1 && span >= 1 ? ` ${Math.round(span)}д` : '';
-  return `${icon} ${job.runs}п${points}${period} · ${escapeHtml(job.name)}`;
+const depthLine = (job: JobDepth, missed: number | null, clock: LiveClock): string => {
+  const icon =
+    missed === null ? '⚪' : missed >= 2 ? '🔴' : missed >= MISSED_ALERT ? '🟠' : '🟢';
+
+  const facts = [`${job.points} ${plural(job.points, 'точка', 'точки', 'точек')}`];
+  if (missed !== null && missed >= MISSED_ALERT) {
+    facts.push(
+      `${plural(missed, 'пропущен', 'пропущено', 'пропущено')} ${missed} ${plural(missed, 'запуск', 'запуска', 'запусков')}`,
+    );
+  }
+  if (job.newest !== undefined) facts.push(longMoment(job.newest, clock));
+
+  return `${icon} ${escapeHtml(job.name)} — ${facts.join(' · ')}`;
 };

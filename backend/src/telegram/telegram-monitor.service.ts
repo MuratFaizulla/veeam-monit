@@ -39,13 +39,9 @@ import {
   ProtectionSnapshot,
   assessProtection,
   renderProtection,
+  rhythm,
 } from './telegram-protection';
-import {
-  JobDepth,
-  RestorePointsSnapshot,
-  THIN_RUNS,
-  renderRestorePoints,
-} from './telegram-restore-points';
+import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram-restore-points';
 import { OrphanBackup, OrphansSnapshot, renderOrphans } from './telegram-orphans';
 
 const HOUR = 3_600_000;
@@ -527,17 +523,19 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * How much history each job retains, from the same scan 🛡 Protection uses.
+   * Where each job stands against its own schedule, from the same scan
+   * 🛡 Protection uses.
    *
-   * Jobs with no restore point at all are counted but not listed: they have no
-   * depth to compare, and Protection already names them.
+   * Jobs with no restore point at all are counted but not listed: they have
+   * nothing to date, and Protection already names them.
    */
   private depthState(jobs: VeeamJobState[] | undefined): RestorePointsSnapshot {
     if (!jobs || !this.protectionScannedAt) {
       return {
         jobs: [],
         without: 0,
-        thinRuns: 0,
+        excludedDisabled: 0,
+        excludedUnscheduled: 0,
         orphanBackups: 0,
         orphanPoints: 0,
         unavailable: 'Точки восстановления ещё не прочитаны.',
@@ -546,14 +544,29 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     const listed: JobDepth[] = [];
     let without = 0;
+    let excludedDisabled = 0;
+    let excludedUnscheduled = 0;
     for (const job of jobs) {
       if (!job.id) continue;
+      // The same exclusions 🛡 Protection makes: a job that is switched off, or
+      // that only runs when somebody starts it, has no schedule to fall behind
+      // and would sit at the top of a list ordered by missed runs forever.
+      if ((job.status ?? '').toLowerCase() === 'disabled') {
+        excludedDisabled += 1;
+        continue;
+      }
+      if (this.unscheduledJobs.has(job.id)) {
+        excludedUnscheduled += 1;
+        continue;
+      }
       const depth = this.depthByJob.get(job.id);
       if (!depth) {
         without += 1;
         continue;
       }
-      listed.push({ name: job.name ?? job.id, ...depth });
+      // Newest first, which is the order `rhythm` reads its gaps in.
+      const runs = [...(this.pointsByJob.get(job.id) ?? [])].sort((a, b) => b - a);
+      listed.push({ name: job.name ?? job.id, ...depth, intervalDays: rhythm(runs) });
     }
 
     const newest = listed.reduce<{ name: string; at: number } | undefined>(
@@ -567,7 +580,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return {
       jobs: listed,
       without,
-      thinRuns: listed.filter((job) => job.runs <= THIN_RUNS).length,
+      excludedDisabled,
+      excludedUnscheduled,
       orphanBackups: this.orphanChains.length,
       orphanPoints: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
       newest,

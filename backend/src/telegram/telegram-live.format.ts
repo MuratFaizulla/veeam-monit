@@ -321,6 +321,23 @@ const moment = (iso: string, clock: LiveClock): string => {
   });
 };
 
+/**
+ * A moment written out in full: "17 июня 2026 г., 21:32:09".
+ *
+ * Used where the reader is about to go and look the point up in Veeam. A
+ * relative age ("5 дней назад") has to be turned back into a date before it can
+ * be matched against anything on screen, so it is the wrong shape there.
+ */
+export const longMoment = (at: number, clock: LiveClock): string =>
+  parts(new Date(at), clock, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
 export const stampOf = (value: Date, clock: LiveClock): string =>
   parts(value, clock, {
     day: '2-digit',
