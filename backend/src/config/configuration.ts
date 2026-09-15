@@ -1,6 +1,10 @@
 import { join } from 'path';
 import type { LiveSlot } from '../telegram/live-slots';
-import type { NotificationKind, NotificationSeverity } from '../telegram/telegram.types';
+import {
+  NOTIFICATION_SEVERITIES,
+  type NotificationKind,
+  type NotificationSeverity,
+} from '../telegram/telegram.types';
 
 /** How an event is mapped onto a forum topic when no rule in the routes file matches. */
 export type TelegramRoutingMode = 'job' | 'severity' | 'kind' | 'single';
@@ -100,7 +104,6 @@ const list = (value: string | undefined): string[] =>
     .filter(Boolean);
 
 const ROUTING_MODES: TelegramRoutingMode[] = ['job', 'severity', 'kind', 'single'];
-const SEVERITIES: NotificationSeverity[] = ['critical', 'warning', 'success', 'info'];
 
 /**
  * Defaults to `single`: a fixed set of topics, with alerts in General.
@@ -117,8 +120,8 @@ const routingMode = (value: string | undefined): TelegramRoutingMode => {
 
 const severities = (value: string | undefined): NotificationSeverity[] => {
   const requested = list(value?.toLowerCase()) as NotificationSeverity[];
-  const valid = requested.filter((item) => SEVERITIES.includes(item));
-  return valid.length ? valid : SEVERITIES;
+  const valid = requested.filter((item) => NOTIFICATION_SEVERITIES.includes(item));
+  return valid.length ? valid : [...NOTIFICATION_SEVERITIES];
 };
 
 export const configuration = (): AppConfig => ({

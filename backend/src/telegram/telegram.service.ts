@@ -78,14 +78,6 @@ export class TelegramService {
     return this.transport.enabled;
   }
 
-  acceptsWebhookSecret(value: string | undefined): boolean {
-    return Boolean(this.config.webhookSecret) && value === this.config.webhookSecret;
-  }
-
-  acceptsAdminKey(value: string | undefined): boolean {
-    return Boolean(this.config.adminKey) && value === this.config.adminKey;
-  }
-
   listChats(): Array<TelegramChat & { topics: Record<string, number> }> {
     return this.store.chats().map(([id, chat]) => ({
       ...chat,
@@ -161,10 +153,5 @@ export class TelegramService {
       return;
     }
     this.logger.error(`Telegram send failed for chat ${chatId}: ${(error as Error).message}`);
-  }
-
-  /** Free-form announcement, used by POST /api/telegram/notify. */
-  async broadcast(text: string): Promise<DeliveryReport> {
-    return this.notify({ kind: 'manual', severity: 'info', title: text });
   }
 }

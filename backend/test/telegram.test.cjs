@@ -12,6 +12,11 @@ const { TelegramTopicsService } = require('../dist/telegram/telegram-topics.serv
 const { TelegramRoutingService } = require('../dist/telegram/telegram-routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramUpdatesService } = require('../dist/telegram/telegram-updates.service');
+const { announcement, probe } = require('../dist/telegram/telegram-manual-event');
+const {
+  NOTIFICATION_KINDS,
+  NOTIFICATION_SEVERITIES,
+} = require('../dist/telegram/telegram.types');
 const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
 const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
 const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
@@ -133,6 +138,46 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });
+
+/* ------------------------------------------------------------------ *
+ * Events a human asks for
+ * ------------------------------------------------------------------ */
+
+test('an announcement with no text is refused, with the reason', () => {
+  assert.deepEqual(announcement('   '), { ok: false, message: 'text is required' });
+  assert.deepEqual(announcement(undefined), { ok: false, message: 'text is required' });
+  assert.deepEqual(announcement('  Плановые работы  '), {
+    ok: true,
+    event: { kind: 'manual', severity: 'info', title: 'Плановые работы' },
+  });
+});
+
+test('a probe for an unknown kind names the kinds that exist', () => {
+  const refused = probe({ kind: 'backup' });
+  assert.equal(refused.ok, false);
+  // The list has to come from the same place the type does, or the message
+  // starts describing an older set of kinds than the router accepts.
+  assert.equal(refused.message, `kind must be one of ${NOTIFICATION_KINDS.join(', ')}`);
+  assert.equal(probe({ severity: 'fatal' }).message, `severity must be one of ${NOTIFICATION_SEVERITIES.join(', ')}`);
+});
+
+test('a probe with nothing filled in is still a routable job event', () => {
+  const built = probe({});
+  assert.equal(built.ok, true);
+  assert.equal(built.event.kind, 'job');
+  assert.equal(built.event.severity, 'info');
+  assert.ok(built.event.title.length > 0);
+});
+
+test('a probe goes through the real routing path, topic creation included', async () => {
+  const w = world();
+  const built = probe({ kind: 'job', severity: 'critical', subject: 'SQL Daily' });
+
+  const report = await w.service.notify(built.event);
+
+  assert.equal(report.outcome, 'delivered');
+  assert.deepEqual(w.api.of('createForumTopic').map((p) => p.name), ['SQL Daily']);
+});
 
 /* ------------------------------------------------------------------ *
  * Routing
@@ -400,6 +445,25 @@ test('/start answers inside the topic it was asked in', async () => {
 /* ------------------------------------------------------------------ *
  * Monitor
  * ------------------------------------------------------------------ */
+
+test('a pass asked for while one is already running is declined, and says so', async () => {
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {
+    '/api/v1/serverTime': async () => {
+      await held;
+      return { serverTime: '2026-09-14T11:00:00+05:00' };
+    },
+  });
+
+  const first = w.monitor.check();
+  // Whoever asked second must be able to tell that the health they are about to
+  // read belongs to the cycle already in flight, not to their own request.
+  assert.equal(await w.monitor.check(), 'busy');
+  release();
+  assert.equal(await first, 'ran');
+  assert.equal(await w.monitor.check(), 'ran');
+});
 
 test('the first cycle seeds job results silently and the next one reports changes', async () => {
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success'), job('2', 'FS Daily', 'Success')]);
