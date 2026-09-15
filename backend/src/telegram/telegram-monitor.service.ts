@@ -189,20 +189,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async checkReachability(): Promise<boolean> {
-    let reachable = false;
-    let detail = '';
-    try {
-      const result = await this.veeam.request<{ serverTime?: string }>({
-        method: 'GET',
-        path: '/api/v1/serverTime',
-      });
-      reachable = true;
-      detail = result.serverTime ?? '';
-      this.lastServerTime = result.serverTime;
-    } catch (error) {
-      detail = (error as Error).message;
-      this.health.lastError = detail;
-    }
+    const { reachable, serverTime, error } = await this.veeam.reachability();
+    const detail = (reachable ? serverTime : error) ?? '';
+    if (reachable) this.lastServerTime = serverTime;
+    else this.health.lastError = detail;
     this.health.reachable = reachable;
 
     // Starting up is not an event. It used to be announced every time, which

@@ -1,37 +1,25 @@
 import { Controller, Get } from '@nestjs/common';
-import { VeeamHttpService } from './veeam/veeam-http.service';
+import { VeeamHttpService, VeeamReachability } from './veeam/veeam-http.service';
 
 @Controller('health')
 export class HealthController {
   constructor(private readonly veeam: VeeamHttpService) {}
 
   /**
-   * Unauthenticated probe. `/api/v1/serverTime` needs no token, which makes it
-   * the cheapest way to tell whether the backup server is reachable at all.
+   * Unauthenticated probe, asking the transport the same question the monitor
+   * asks every cycle. It used to ask it in its own words — the same path, the
+   * same try/catch, a separately maintained result shape — so "what counts as
+   * reachable" had two definitions that could answer differently.
    */
   @Get()
   async check(): Promise<{
     status: 'ok' | 'degraded';
-    veeam: { baseUrl: string; reachable: boolean; serverTime?: string; error?: string };
+    veeam: { baseUrl: string } & VeeamReachability;
   }> {
-    try {
-      const result = await this.veeam.request<{ serverTime?: string }>({
-        method: 'GET',
-        path: '/api/v1/serverTime',
-      });
-      return {
-        status: 'ok',
-        veeam: {
-          baseUrl: this.veeam.baseUrl,
-          reachable: true,
-          serverTime: result?.serverTime,
-        },
-      };
-    } catch (error) {
-      return {
-        status: 'degraded',
-        veeam: { baseUrl: this.veeam.baseUrl, reachable: false, error: (error as Error).message },
-      };
-    }
+    const reachability = await this.veeam.reachability();
+    return {
+      status: reachability.reachable ? 'ok' : 'degraded',
+      veeam: { baseUrl: this.veeam.baseUrl, ...reachability },
+    };
   }
 }
