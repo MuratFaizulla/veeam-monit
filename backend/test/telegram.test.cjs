@@ -1346,6 +1346,7 @@ test('repeated failures are reported even while the restore point is still fresh
   assert.equal(snapshot.risks.length, 1);
   assert.equal(snapshot.risks[0].severity, 'warning', 'the data is still recoverable');
   assert.equal(snapshot.risks[0].failures, 5);
+  assert.equal(snapshot.protectedJobs, 1, 'a failed attempt does not erase the fresh point');
 
   const { renderProtection } = require('../dist/telegram/telegram-protection');
   const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' });
@@ -1746,7 +1747,7 @@ test('both slots are told the same thing about which jobs are in scope', async (
 
   await w.monitor.check();
   const sent = w.api.sent();
-  const protection = sent.find((m) => /Защищ|Под угрозой|защищены/.test(m.text));
+  const protection = sent.find((m) => /Защищ|Требуют внимания|защищены/.test(m.text));
   const depth = sent.find((m) => /Точки восстановления|Точек восстановления/.test(m.text));
 
   for (const message of [protection, depth]) {
