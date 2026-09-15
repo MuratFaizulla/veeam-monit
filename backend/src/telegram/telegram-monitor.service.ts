@@ -46,6 +46,7 @@ import {
   THIN_RUNS,
   renderRestorePoints,
 } from './telegram-restore-points';
+import { OrphanBackup, OrphansSnapshot, renderOrphans } from './telegram-orphans';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -133,6 +134,10 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private retryWindows = new Map<string, number>();
   /** Retained depth per job id, from the last protection scan. */
   private depthByJob = new Map<string, Omit<JobDepth, 'name'>>();
+  /** Backup chains whose job no longer exists, from the last scan. */
+  private orphanChains: OrphanBackup[] = [];
+  /** Restore points in the estate, orphans included. */
+  private totalPoints = 0;
   private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
@@ -394,6 +399,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     // After protection: it is the same scan, so by now the depth is current.
     await this.live.publish('restorePoints', renderRestorePoints(this.depthState(jobs), clock));
+
+    await this.live.publish('orphans', renderOrphans(this.orphansState(jobs), clock));
   }
 
   /** Builds the Performance live slot from active sessions and their tasks. */
@@ -495,7 +502,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (Date.now() - this.protectionScannedAt >= this.config.protectionIntervalMs) {
-      const scanned = await this.scanProtection(accessToken);
+      const scanned = await this.scanProtection(accessToken, jobs);
       if (!scanned && !this.protectionScannedAt) {
         return blank('Точки восстановления ещё не прочитаны.');
       }
@@ -531,6 +538,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         jobs: [],
         without: 0,
         thinRuns: 0,
+        orphanBackups: 0,
+        orphanPoints: 0,
         unavailable: 'Точки восстановления ещё не прочитаны.',
       };
     }
@@ -547,17 +556,50 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       listed.push({ name: job.name ?? job.id, ...depth });
     }
 
+    const newest = listed.reduce<{ name: string; at: number } | undefined>(
+      (best, job) =>
+        job.newest !== undefined && (!best || job.newest > best.at)
+          ? { name: job.name, at: job.newest }
+          : best,
+      undefined,
+    );
+
     return {
       jobs: listed,
       without,
       thinRuns: listed.filter((job) => job.runs <= THIN_RUNS).length,
+      orphanBackups: this.orphanChains.length,
+      orphanPoints: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
+      newest,
+    };
+  }
+
+  /** Backup chains left behind by jobs that no longer exist. */
+  private orphansState(jobs: VeeamJobState[] | undefined): OrphansSnapshot {
+    if (!jobs || !this.protectionScannedAt) {
+      return {
+        backups: [],
+        points: 0,
+        totalPoints: 0,
+        unavailable: 'Точки восстановления ещё не прочитаны.',
+      };
+    }
+    return {
+      backups: this.orphanChains,
+      points: this.orphanChains.reduce((sum, chain) => sum + chain.points, 0),
+      totalPoints: this.totalPoints,
     };
   }
 
   /** Refreshes the cached evidence. Returns false when the scan did not finish. */
-  private async scanProtection(accessToken: string): Promise<boolean> {
+  private async scanProtection(accessToken: string, jobs: VeeamJobState[]): Promise<boolean> {
     const startedAt = Date.now();
+    const liveJobIds = new Set(jobs.map((job) => job.id).filter(Boolean) as string[]);
     try {
+      // Backups whose job no longer exists. Every other check starts from the
+      // job list, so nothing else in this service can see them at all.
+      const orphanNames = new Map<string, string>();
+
       // The runtime state says whether a job is disabled; only the job
       // configuration says whether it has a schedule at all.
       const configured = await this.allPages<VeeamJob>(JOB_CONFIGS, accessToken, {}, SCAN_PAGE);
@@ -579,7 +621,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       const backups = await this.allPages<VeeamBackup>(BACKUPS, accessToken, {}, SCAN_PAGE);
       const jobOfBackup = new Map<string, string>();
       for (const backup of backups) {
-        if (backup.id && backup.jobId) jobOfBackup.set(backup.id, backup.jobId);
+        if (!backup.id) continue;
+        if (backup.jobId && liveJobIds.has(backup.jobId)) {
+          jobOfBackup.set(backup.id, backup.jobId);
+        } else {
+          orphanNames.set(backup.id, backup.name ?? backup.id);
+        }
       }
 
       const points = await this.allPages<VeeamRestorePoint>(
@@ -598,11 +645,24 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         string,
         { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
       >();
+      const orphans = new Map<string, { points: number; oldest: number; newest: number }>();
+
       for (const point of points) {
-        const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
-        if (!jobId || !point.creationTime) continue;
+        if (!point.creationTime) continue;
         const at = Date.parse(point.creationTime);
         if (!Number.isFinite(at)) continue;
+
+        const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
+        if (!jobId) {
+          const orphanId = point.backupId;
+          if (!orphanId || !orphanNames.has(orphanId)) continue;
+          const chain = orphans.get(orphanId) ?? { points: 0, oldest: at, newest: at };
+          chain.points += 1;
+          chain.oldest = Math.min(chain.oldest, at);
+          chain.newest = Math.max(chain.newest, at);
+          orphans.set(orphanId, chain);
+          continue;
+        }
         const run = point.sessionId ?? point.creationTime;
 
         // Depth is counted over every point, uncapped: how far back a job can
@@ -628,6 +688,14 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
         runs.set(run, Math.max(runs.get(run) ?? 0, at));
         runsByJob.set(jobId, runs);
       }
+
+      this.orphanChains = [...orphans].map(([id, chain]) => ({
+        name: orphanNames.get(id) ?? id,
+        points: chain.points,
+        oldest: chain.oldest,
+        newest: chain.newest,
+      }));
+      this.totalPoints = points.length;
 
       this.depthByJob = new Map(
         [...depth].map(([jobId, seen]) => [
