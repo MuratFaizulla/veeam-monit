@@ -32,6 +32,7 @@ import {
   renderPerformance,
 } from './telegram-performance';
 import { renderRepositories } from './telegram-repositories.format';
+import { capacities, RepositoryCapacity } from './repository-capacity';
 import { ProtectionSnapshot, assessProtection, renderProtection } from './telegram-protection';
 import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram-restore-points';
 import { OrphansSnapshot, renderOrphans } from './telegram-orphans';
@@ -160,7 +161,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       const reachable = await this.checkReachability();
       const token = reachable ? await this.checkAuthentication() : null;
       let jobs: VeeamJobState[] | undefined;
-      let repositories: VeeamRepositoryState[] | undefined;
+      let repositories: RepositoryCapacity[] | undefined;
       if (token) {
         // Each step is isolated: one hiccup on /jobs/states used to abort the
         // rest of the cycle, taking the repository check and the digest with it.
@@ -319,7 +320,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
    */
   private async publishLive(
     jobs: VeeamJobState[] | undefined,
-    repositories: VeeamRepositoryState[] | undefined,
+    repositories: RepositoryCapacity[] | undefined,
     accessToken: string | null,
   ): Promise<void> {
     const clock: LiveClock = { now: new Date(), timezone: this.config.timezone };
@@ -734,10 +735,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async checkRepositories(accessToken: string): Promise<VeeamRepositoryState[]> {
-    let repositories: VeeamRepositoryState[];
+  private async checkRepositories(accessToken: string): Promise<RepositoryCapacity[]> {
+    let repositories: RepositoryCapacity[];
     try {
-      repositories = await allPages<VeeamRepositoryState>(this.reader(accessToken), REPOSITORIES);
+      repositories = capacities(
+        await allPages<VeeamRepositoryState>(this.reader(accessToken), REPOSITORIES),
+      );
     } catch (error) {
       this.logger.warn(`Repository capacity check skipped: ${(error as Error).message}`);
       throw error;
@@ -745,11 +748,12 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
 
     if (this.config.repositoryFreePercent <= 0) return repositories;
     for (const repository of repositories) {
-      const capacity = repository.capacityGB ?? 0;
-      const free = repository.freeGB ?? 0;
-      if (capacity <= 0) continue;
-      const freePercent = (free / capacity) * 100;
-      const key = `repo:${repository.id ?? repository.name}`;
+      // A repository whose free space Veeam did not report is left alone. It
+      // used to be treated as zero free, which raised a critical alert about a
+      // repository nobody could say anything about.
+      const { freePercent, freeGB, capacityGB } = repository;
+      if (freePercent === undefined) continue;
+      const key = `repo:${repository.key}`;
       if (freePercent >= this.config.repositoryFreePercent) {
         this.store.clearCooldown(key);
         continue;
@@ -757,11 +761,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       await this.emit({
         kind: 'repository',
         severity: freePercent < this.config.repositoryFreePercent / 2 ? 'critical' : 'warning',
-        subject: repository.name,
-        title: `Репозиторий ${repository.name ?? repository.id}: мало свободного места`,
+        subject: repository.subject,
+        title: `Репозиторий ${repository.name}: мало свободного места`,
         fields: [
-          ['Свободно', `${free.toFixed(1)} ГБ (${freePercent.toFixed(1)}%)`],
-          ['Ёмкость', `${capacity.toFixed(1)} ГБ`],
+          ['Свободно', `${(freeGB ?? 0).toFixed(1)} ГБ (${freePercent.toFixed(1)}%)`],
+          ['Ёмкость', `${(capacityGB ?? 0).toFixed(1)} ГБ`],
           ['Порог', `${this.config.repositoryFreePercent}%`],
           ['Сервер', repository.hostName],
           ['Путь', repository.path],
