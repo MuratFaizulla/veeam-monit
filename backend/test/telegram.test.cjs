@@ -1255,6 +1255,56 @@ test('the pages fill up, keeping the ones that are behind', async () => {
   assert.match(pages[0], /OPS_JOB_000/, 'the one that is behind is always shown');
 });
 
+/**
+ * OPS_Exchange, exactly as Veeam reports it.
+ *
+ * The run that opened on 21 August failed, was retried, and the retry that
+ * started on 23 August succeeded — writing the point at 01:31 while carrying
+ * the *first* attempt's session id. The run on 14 September errored out after
+ * 6.8 GB of 22.4 and left a point behind anyway.
+ */
+const exchange = () =>
+  monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'OPS_Exchange', 'Failed')], {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'OPS_Exchange' }] },
+    '/api/v1/restorePoints': {
+      data: [
+        { id: 'p2', backupId: 'b1', sessionId: 'sep14', name: 'MTA', creationTime: '2026-09-14T00:19:03+05:00' },
+        { id: 'p1', backupId: 'b1', sessionId: 'aug21', name: 'MTA', creationTime: '2026-08-23T01:31:12+05:00' },
+      ],
+    },
+    '/api/v1/sessions': {
+      data: [
+        { id: 'sep14', jobId: '1', sessionType: 'BackupJob', creationTime: '2026-09-14T00:15:24+05:00',
+          endTime: '2026-09-14T00:47:54+05:00', result: { result: 'Failed' } },
+        { id: 'aug23', jobId: '1', sessionType: 'BackupJob', creationTime: '2026-08-23T01:22:00+05:00',
+          endTime: '2026-08-26T17:26:50+05:00', result: { result: 'Success' } },
+        { id: 'aug21', jobId: '1', sessionType: 'BackupJob', creationTime: '2026-08-21T23:04:03+05:00',
+          endTime: '2026-08-23T01:20:41+05:00', result: { result: 'Failed' } },
+      ],
+    },
+  });
+
+test('a point left behind by a failed run is not counted as a backup', async () => {
+  const w = exchange();
+  await w.monitor.check();
+
+  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  assert.ok(topic, 'the topic was published');
+  assert.ok(!/14 сентября/u.test(topic.text), 'a run that errored out is not a backup');
+  assert.match(topic.text, /Не в счёт:<\/b> 1 точка от прогонов с ошибкой/u);
+});
+
+test('a point finished by a successful retry counts, whatever id it carries', async () => {
+  const w = exchange();
+  await w.monitor.check();
+
+  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  // Written nine minutes into the retry that succeeded, so it is a backup —
+  // even though the session id on it belongs to the attempt that failed.
+  assert.match(topic.text, /OPS_Exchange — 1 точка · 23 августа 2026 г\. в 01:31:12/u);
+});
+
 test('an unread scan says so rather than showing an empty estate', async () => {
   const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
   assert.match(text, /не прочитаны/);
