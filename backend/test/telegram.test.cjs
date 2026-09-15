@@ -891,7 +891,7 @@ test('the live status is one message per topic, edited in place on later cycles'
     [
       '🩺 Monitor health',
       '▶️ Running now',
-      '📅 Today',
+      '📅 Upcoming runs',
       '📈 Performance',
       '💾 Repositories',
       '🛡 Protection',
@@ -936,7 +936,7 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
   assert.match(text, /идёт 22 мин/);
   // While something is running, the next run belongs to the schedule slot only.
   assert.ok(!/Ближайший запуск/.test(text));
-  const schedule = w.api.sent().find((m) => /Today|Сегодня|расписан/.test(m.text)).text;
+  const schedule = w.api.sent().find((m) => /Upcoming runs|Сегодня|расписан/.test(m.text)).text;
   assert.match(schedule, /SQL Daily/);
 });
 
@@ -1106,7 +1106,7 @@ test('by default every alert goes to General instead of growing a topic per job'
   assert.equal(w.api.of('createForumTopic').length, 0);
 });
 
-test('the schedule slot lists what is still due today, and says so when nothing is', async () => {
+test('the schedule slot lists only what is still due today', async () => {
   const { renderSchedule } = require('../dist/telegram/telegram-live.format');
   const now = new Date('2026-09-14T12:00:00Z');
   const clock = { now, timezone: 'UTC' };
@@ -1124,17 +1124,44 @@ test('the schedule slot lists what is still due today, and says so when nothing 
   );
   assert.match(today, /Сегодня осталось 2 запуска/);
   assert.match(today, /13:13.*TTC_vCloud_vcd02/);
-  assert.ok(!/FS Weekly/.test(today), 'tomorrow is not today');
+  assert.ok(!/FS Weekly/.test(today));
 
   const empty = renderSchedule(
-    { upcoming: [{ name: 'FS Weekly', at: at('2026-09-15T03:00:00Z') }] },
+    { upcoming: [], next: { name: 'FS Monthly', at: at('2026-09-23T03:00:00Z') } },
     clock,
   );
   assert.match(empty, /На сегодня запусков больше нет/);
-  assert.match(empty, /Следующий:.*FS Weekly — завтра в 03:00/);
+  assert.match(empty, /Следующий:.*FS Monthly — 23\.09 в 03:00/);
 
   const none = renderSchedule({ upcoming: [] }, clock);
   assert.match(none, /по расписанию ничего не запланировано/);
+});
+
+test('the planner keeps only today and excludes manual or disabled jobs', () => {
+  const { todayRuns } = require('../dist/telegram/schedule-planner');
+  const now = new Date('2026-09-15T10:00:00Z');
+  const jobs = [
+    { id: 'daily', name: 'Daily', nextRun: '2026-09-15T17:00:00Z' },
+    { id: 'weekly', name: 'Tue Thu', nextRun: '2026-09-15T18:00:00Z' },
+    { id: 'monthly', name: 'Monthly', nextRun: '2026-09-19T17:00:00Z' },
+    { id: 'manual', name: 'Manual', nextRun: '2026-09-15T19:00:00Z' },
+    { id: 'disabled', name: 'Disabled', status: 'Disabled', nextRun: '2026-09-15T20:00:00Z' },
+  ];
+  const schedules = new Map([
+    ['daily', { runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] } }],
+    ['weekly', { runAutomatically: true, daily: { isEnabled: true, dailyKind: 'SelectedDays', days: ['tuesday', 'thursday'] } }],
+    ['monthly', { runAutomatically: true, monthly: { isEnabled: true } }],
+    ['manual', { runAutomatically: false, daily: { isEnabled: true, days: ['tuesday'] } }],
+    ['disabled', { runAutomatically: true, daily: { isEnabled: true, days: ['tuesday'] } }],
+  ]);
+
+  const runs = todayRuns(jobs, schedules, now, 'Asia/Qyzylorda');
+  assert.equal(runs.filter((run) => run.name === 'Daily').length, 1);
+  assert.equal(runs.filter((run) => run.name === 'Tue Thu').length, 1);
+  assert.equal(runs.filter((run) => run.name === 'Monthly').length, 0);
+  assert.ok(!runs.some((run) => run.name === 'Manual'));
+  assert.ok(!runs.some((run) => run.name === 'Disabled'));
+  assert.equal(runs.find((run) => run.name === 'Daily').cadence, 'ежедневно');
 });
 
 test('a cycle Veeam did not answer leaves the schedule honest about it', async () => {
@@ -1175,7 +1202,7 @@ test('a long list fills the message to Telegram’s limit instead of an invented
 
   // A day where everything is scheduled does not overflow and says what it hid.
   const long = renderSchedule({ upcoming: runs(400) }, clock);
-  assert.ok(long.length <= 4096, `message is ${long.length} characters`);
+  assert.ok(long.length <= 4096);
   const hidden = /…и ещё (\d+) запуск/.exec(long);
   assert.ok(hidden, 'the remainder is counted, not silently dropped');
   assert.equal((long.match(/TTC_JOB_/g) ?? []).length + Number(hidden[1]), 400);

@@ -38,6 +38,7 @@ import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram
 import { OrphansSnapshot, renderOrphans } from './telegram-orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
+import { todayRuns } from './schedule-planner';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -357,7 +358,7 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       renderRunning(await this.runningState(jobs, accessToken), clock),
     );
 
-    await this.live.publish('schedule', renderSchedule(this.scheduleState(jobs), clock));
+    await this.live.publish('schedule', renderSchedule(this.scheduleState(jobs, evidence, clock), clock));
 
     await this.live.publish(
       'performance',
@@ -567,14 +568,24 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     return { veeam: this.veeam, auth: this.monitorAuth, accessToken };
   }
 
-  private scheduleState(jobs: VeeamJobState[] | undefined): LiveSchedule {
+  private scheduleState(
+    jobs: VeeamJobState[] | undefined,
+    evidence: Evidence,
+    clock: LiveClock,
+  ): LiveSchedule {
     if (!jobs) {
       return {
         upcoming: [],
         unavailable: 'Расписание не удалось прочитать: Veeam не ответил на этот цикл.',
       };
     }
-    return { upcoming: this.upcomingRuns(jobs) };
+    const next = this.upcomingRuns(jobs)[0] ?? null;
+    return {
+      upcoming: evidence.status === 'ready'
+        ? todayRuns(jobs, evidence.schedulesByJob, clock.now, clock.timezone)
+        : this.upcomingRuns(jobs),
+      next,
+    };
   }
 
   private async runningState(

@@ -120,23 +120,42 @@ export interface VeeamRestorePoint {
  * state. Only the schedule is read: a job set to run manually has no business
  * being reported for not having produced a restore point lately.
  */
+export interface VeeamSchedule {
+  runAutomatically?: boolean;
+  daily?: {
+    isEnabled?: boolean;
+    dailyKind?: string;
+    localTime?: string;
+    days?: string[];
+  };
+  monthly?: {
+    isEnabled?: boolean;
+    localTime?: string;
+    dayOfMonth?: number | null;
+    dayOfWeek?: string;
+    dayNumberInMonth?: string;
+    months?: string[];
+  };
+  periodically?: {
+    isEnabled?: boolean;
+    periodicallyKind?: string;
+    frequency?: number;
+  };
+  continuously?: { isEnabled?: boolean };
+  afterThisJob?: { isEnabled?: boolean; jobName?: string | null };
+  retry?: {
+    isEnabled?: boolean;
+    retryCount?: number;
+    awaitMinutes?: number;
+  };
+}
+
 export interface VeeamJob {
   id?: string;
   name?: string;
   isDisabled?: boolean;
-  schedule?: {
-    /** False when the job only ever runs because somebody started it. */
-    runAutomatically?: boolean;
-    /**
-     * Veeam re-runs a failed job automatically. Each retry is a separate
-     * session, so without this a single failed run looks like four failures.
-     */
-    retry?: {
-      isEnabled?: boolean;
-      retryCount?: number;
-      awaitMinutes?: number;
-    };
-  };
+  /** False when the job only ever runs because somebody started it. */
+  schedule?: VeeamSchedule;
 }
 
 /** Item of .../repositories/states — capacity figures live here, not in the config. */
