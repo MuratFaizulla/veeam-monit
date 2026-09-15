@@ -21,6 +21,7 @@ const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.se
 const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
 const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/veeam-http.service');
+const { capacities, capacityOf } = require('../dist/telegram/repository-capacity');
 
 const CHAT = '-1001234567890';
 
@@ -655,6 +656,56 @@ test('a repository below the free-space threshold is reported once per cooldown'
   w.api.reset();
   await monitor.check();
   assert.equal(w.api.sent().filter((payload) => /Repo0/.test(payload.text)).length, 0);
+});
+
+test('a repository that does not report free space raises nothing', async () => {
+  const w = world({ TELEGRAM_REPOSITORY_FREE_PERCENT: '10' });
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: 'now' },
+    '/api/v1/jobs/states': { data: [] },
+    '/api/v1/backupInfrastructure/repositories/states': {
+      // Capacity known, free space absent. Read as "zero free" this used to be
+      // a critical alert about a repository nobody could say anything about.
+      data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, usedSpaceGB: 120 }],
+    },
+  });
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const monitor = new TelegramMonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    new BackupEvidenceService(w.config, veeam, auth),
+  );
+
+  await monitor.check();
+  assert.deepEqual(w.api.sent().filter((payload) => /Repo0/.test(payload.text)), []);
+});
+
+test('what a repository has in use is capacity minus free, not what Veeam calls used', () => {
+  // usedSpaceGB may count logical or deduplicated data and can exceed capacity,
+  // so it is only ever the fallback.
+  const physical = capacityOf({ id: 'r1', name: 'R', capacityGB: 1000, freeGB: 250, usedSpaceGB: 4000 });
+  assert.equal(physical.usedGB, 750);
+  assert.equal(physical.usedPercent, 75);
+  assert.equal(physical.freePercent, 25);
+
+  const fallback = capacityOf({ id: 'r2', name: 'R', capacityGB: 1000, usedSpaceGB: 400 });
+  assert.equal(fallback.usedPercent, 40);
+  // The bar may rest on the fallback; the alarm may not.
+  assert.equal(fallback.freePercent, undefined);
+
+  const unknowable = capacityOf({ id: 'r3', name: 'R' });
+  assert.equal(unknowable.usedPercent, undefined);
+  assert.equal(unknowable.freePercent, undefined);
+});
+
+test('repositories are listed by name with the default ones last', () => {
+  const ordered = capacities([
+    { id: 'a', name: 'Default Backup Repository' },
+    { id: 'b', name: 'Repo10' },
+    { id: 'c', name: 'Repo2' },
+    { id: 'd' },
+  ]).map((repository) => repository.name);
+
+  assert.deepEqual(ordered, ['d', 'Repo2', 'Repo10', 'Default Backup Repository']);
 });
 
 /* ------------------------------------------------------------------ *

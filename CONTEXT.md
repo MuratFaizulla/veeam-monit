@@ -79,6 +79,24 @@ claimed about missed Runs.
 Inferred, never read from the schedule. Computed once, in the Evidence, because
 two modules deriving it from the same timestamps is two chances to disagree.
 
+## Repository capacity
+
+How full one repository is, worked out once from what Veeam reports.
+
+What is occupied is **capacity − free**, not `usedSpaceGB`: on some VBR/storage
+combinations that field counts logical or deduplicated data and can exceed
+capacity outright. `usedSpaceGB` is the fallback, used only when free space was
+not reported.
+
+The two percentages are not interchangeable. **usedPercent** draws the bar and
+may rest on the fallback, so it is an illustration. **freePercent** raises the
+low-space alarm and exists only when Veeam actually reported free space — a
+guess is not grounds for waking somebody up, and an unknown percentage is never
+zero.
+
+Owned by `backend/src/telegram/repository-capacity.ts`. The 💾 slot renders what
+it is given, like every other live slot.
+
 ## Live slot
 
 A topic holding exactly one message, edited in place rather than appended to.
