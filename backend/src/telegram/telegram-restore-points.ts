@@ -94,11 +94,7 @@ export const renderRestorePoints = (
   ].filter((line): line is string => line !== null);
 
   return fitted(sorted.length, (shown) => {
-    const lines = [
-      '🗂 <b>Глубина истории по заданиям</b>',
-      '<i>(прогонов · точек · задание · период)</i>',
-      '',
-    ];
+    const lines = ['🗂 <b>Глубина истории по заданиям</b>', ...LEGEND, ''];
     for (const job of sorted.slice(0, shown)) lines.push(depthLine(job));
     const rest = sorted.length - shown;
     if (rest > 0) {
@@ -109,6 +105,20 @@ export const renderRestorePoints = (
   });
 };
 
+/**
+ * The suffix on each number is the whole explanation.
+ *
+ * A positional legend — "(прогонов · точек · задание · период)" — only works if
+ * every row has every column, and these rows do not: a single-machine job has
+ * as many points as runs, so the column is dropped. A reader then counts
+ * columns against the legend and lands on the wrong one. Naming the unit on the
+ * number itself makes the row readable wherever it is cut.
+ */
+const LEGEND = [
+  '<i>п — прогонов: столько моментов для отката · д — дней истории',
+  'т — точек Veeam: машин × прогонов; нет «т» — машина одна</i>',
+];
+
 /** Fewest runs first, then the shortest span. */
 const byDepth = (a: JobDepth, b: JobDepth): number =>
   a.runs - b.runs || spanDays(a) - spanDays(b) || a.name.localeCompare(b.name);
@@ -117,17 +127,17 @@ const spanDays = (job: JobDepth): number =>
   job.oldest !== undefined && job.newest !== undefined ? (job.newest - job.oldest) / DAY : 0;
 
 /**
- * One line per job, deliberately terse.
+ * One line per job: every number up front with its unit, then the name.
  *
- * Spelling out "прогонов"/"точек"/"за N дней" cost about 25 characters a row,
- * which is 2500 across the estate — the difference between listing every job
- * and listing two thirds of them. The column legend in the header carries the
- * words instead, once.
+ * Spelling the units out in words cost about 25 characters a row, which is 2500
+ * across the estate — the difference between listing every job and listing two
+ * thirds of them. A one-letter suffix costs one character and replaces a
+ * separator, so the rows got shorter and readable at the same time.
  */
 const depthLine = (job: JobDepth): string => {
   const icon = job.runs <= THIN_RUNS ? '🔴' : job.runs <= SHALLOW_RUNS ? '🟠' : '🟢';
   const span = spanDays(job);
-  const points = job.points === job.runs ? '' : ` · ${job.points}`;
-  const period = job.runs > 1 && span >= 1 ? ` · ${Math.round(span)}д` : '';
-  return `${icon} ${job.runs}${points} · ${escapeHtml(job.name)}${period}`;
+  const points = job.points === job.runs ? '' : ` ${job.points}т`;
+  const period = job.runs > 1 && span >= 1 ? ` ${Math.round(span)}д` : '';
+  return `${icon} ${job.runs}п${points}${period} · ${escapeHtml(job.name)}`;
 };
