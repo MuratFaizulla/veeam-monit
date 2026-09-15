@@ -75,6 +75,7 @@ export interface ProtectionSnapshot extends ProtectionThresholds {
 export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => {
   const { standings, now, staleDays, overdueFactor, minStreak } = input;
   const risks: ProtectionRisk[] = [];
+  let protectedJobs = 0;
 
   for (const job of standings.judged) {
     const { runs: points, failures, cadenceDays: intervalDays } = job;
@@ -86,6 +87,10 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
     const deadline = Math.max(staleDays, (intervalDays ?? staleDays) * overdueFactor);
     const overdue = ageDays === null || ageDays > deadline;
     const streaking = failures >= minStreak;
+    // A failed attempt does not erase a usable restore point. Keep the job in
+    // the attention list, but still count it as protected while its point is
+    // fresh enough for this job's own schedule.
+    if (!overdue) protectedJobs += 1;
     if (!overdue && !streaking) continue;
 
     risks.push({
@@ -108,7 +113,7 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
   return {
     risks,
     totalJobs: standings.judged.length,
-    protectedJobs: standings.judged.length - risks.length,
+    protectedJobs,
     excludedDisabled: standings.excludedDisabled,
     excludedUnscheduled: standings.excludedUnscheduled,
     staleDays,
@@ -174,7 +179,8 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
   const count = snapshot.risks.length;
   return fitted(count, (shown) => {
     const lines = [
-      `🛡 <b>Под угрозой: ${count} из ${snapshot.totalJobs} ${plural(snapshot.totalJobs, 'задания', 'заданий', 'заданий')}</b>`,
+      `🛡 <b>Требуют внимания: ${count} из ${snapshot.totalJobs} ${plural(snapshot.totalJobs, 'задания', 'заданий', 'заданий')}</b>`,
+      `<b>С актуальной точкой:</b> ${snapshot.protectedJobs} из ${snapshot.totalJobs}`,
       '',
     ];
     for (const risk of snapshot.risks.slice(0, shown)) lines.push(riskLine(risk, clock));
@@ -202,6 +208,7 @@ const riskLine = (risk: ProtectionRisk, clock: LiveClock): string => {
       risk.lastPoint === undefined ? '' : ` — ${longMoment(risk.lastPoint, clock)}`;
     reasons.push(`${age(risk.ageDays)} без точки${when}`);
     if (risk.intervalDays !== null) reasons.push(`обычно ${cadence(risk.intervalDays)}`);
+    if (risk.lastRun) reasons.push(`последний запуск ${dayOf(risk.lastRun, clock)}`);
   }
 
   if (risk.failures > 0) {
