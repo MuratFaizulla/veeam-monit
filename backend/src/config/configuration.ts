@@ -57,6 +57,7 @@ export interface AppConfig {
       performance: string;
       repositories: string;
       protection: string;
+      restorePoints: string;
     };
     /**
      * How often the restore-point scan runs. It reads every restore point, so
@@ -174,6 +175,7 @@ export const configuration = (): AppConfig => ({
       performance: text(process.env.TELEGRAM_TOPIC_PERFORMANCE, '📈 Performance'),
       repositories: text(process.env.TELEGRAM_TOPIC_REPOSITORIES_LIVE, '💾 Repositories'),
       protection: text(process.env.TELEGRAM_TOPIC_PROTECTION, '🛡 Protection'),
+      restorePoints: text(process.env.TELEGRAM_TOPIC_RESTORE_POINTS, '🗂 Restore points'),
     },
     performanceTopicId: int(process.env.TELEGRAM_PERFORMANCE_TOPIC_ID, 0),
     repositoriesTopicId: int(process.env.TELEGRAM_REPOSITORIES_TOPIC_ID, 0),

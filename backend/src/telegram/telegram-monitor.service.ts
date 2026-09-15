@@ -40,6 +40,12 @@ import {
   assessProtection,
   renderProtection,
 } from './telegram-protection';
+import {
+  JobDepth,
+  RestorePointsSnapshot,
+  THIN_RUNS,
+  renderRestorePoints,
+} from './telegram-restore-points';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -125,6 +131,8 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
   private unscheduledJobs = new Set<string>();
   /** Per job: how close two failed sessions must be to count as one run. */
   private retryWindows = new Map<string, number>();
+  /** Retained depth per job id, from the last protection scan. */
+  private depthByJob = new Map<string, Omit<JobDepth, 'name'>>();
   private protectionScannedAt = 0;
   private health: MonitorHealth = {
     lastCheckAt: null,
@@ -383,6 +391,9 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       'protection',
       renderProtection(await this.protectionState(jobs, accessToken), clock),
     );
+
+    // After protection: it is the same scan, so by now the depth is current.
+    await this.live.publish('restorePoints', renderRestorePoints(this.depthState(jobs), clock));
   }
 
   /** Builds the Performance live slot from active sessions and their tasks. */
@@ -508,6 +519,41 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * How much history each job retains, from the same scan 🛡 Protection uses.
+   *
+   * Jobs with no restore point at all are counted but not listed: they have no
+   * depth to compare, and Protection already names them.
+   */
+  private depthState(jobs: VeeamJobState[] | undefined): RestorePointsSnapshot {
+    if (!jobs || !this.protectionScannedAt) {
+      return {
+        jobs: [],
+        without: 0,
+        thinRuns: 0,
+        unavailable: 'Точки восстановления ещё не прочитаны.',
+      };
+    }
+
+    const listed: JobDepth[] = [];
+    let without = 0;
+    for (const job of jobs) {
+      if (!job.id) continue;
+      const depth = this.depthByJob.get(job.id);
+      if (!depth) {
+        without += 1;
+        continue;
+      }
+      listed.push({ name: job.name ?? job.id, ...depth });
+    }
+
+    return {
+      jobs: listed,
+      without,
+      thinRuns: listed.filter((job) => job.runs <= THIN_RUNS).length,
+    };
+  }
+
   /** Refreshes the cached evidence. Returns false when the scan did not finish. */
   private async scanProtection(accessToken: string): Promise<boolean> {
     const startedAt = Date.now();
@@ -548,19 +594,53 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
       // a quarterly job look like it ran hourly. Points are therefore folded
       // down to one timestamp per run, which is what `sessionId` identifies.
       const runsByJob = new Map<string, Map<string, number>>();
+      const depth = new Map<
+        string,
+        { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
+      >();
       for (const point of points) {
         const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
         if (!jobId || !point.creationTime) continue;
         const at = Date.parse(point.creationTime);
         if (!Number.isFinite(at)) continue;
+        const run = point.sessionId ?? point.creationTime;
+
+        // Depth is counted over every point, uncapped: how far back a job can
+        // be restored is exactly the question the cap would answer wrongly.
+        const seen = depth.get(jobId) ?? {
+          runs: new Set<string>(),
+          points: 0,
+          machines: new Set<string>(),
+          oldest: at,
+          newest: at,
+        };
+        seen.runs.add(run);
+        seen.points += 1;
+        if (point.name) seen.machines.add(point.name);
+        seen.oldest = Math.min(seen.oldest, at);
+        seen.newest = Math.max(seen.newest, at);
+        depth.set(jobId, seen);
 
         const runs = runsByJob.get(jobId) ?? new Map<string, number>();
-        const run = point.sessionId ?? point.creationTime;
-        // Only the newest few runs matter: one for the age, the rest for rhythm.
+        // Only the newest few runs matter here: one for the age, the rest for
+        // the rhythm.
         if (!runs.has(run) && runs.size >= POINTS_PER_JOB) continue;
         runs.set(run, Math.max(runs.get(run) ?? 0, at));
         runsByJob.set(jobId, runs);
       }
+
+      this.depthByJob = new Map(
+        [...depth].map(([jobId, seen]) => [
+          jobId,
+          {
+            runs: seen.runs.size,
+            points: seen.points,
+            machines: seen.machines.size,
+            oldest: seen.oldest,
+            newest: seen.newest,
+          },
+        ]),
+      );
 
       this.pointsByJob = new Map(
         [...runsByJob].map(([jobId, runs]) => [jobId, [...runs.values()]]),

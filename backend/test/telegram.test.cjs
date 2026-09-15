@@ -668,12 +668,20 @@ test('the live status is one message per topic, edited in place on later cycles'
 
   await w.monitor.check();
   const opening = w.api.sent();
-  assert.equal(opening.length, 6, 'health, running, schedule, performance, repositories, protection');
+  assert.equal(opening.length, 7, 'one message per live slot');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
     w.api.of('createForumTopic').map((t) => t.name),
-    ['🩺 Monitor health', '▶️ Running now', '📅 Today', '📈 Performance', '💾 Repositories', '🛡 Protection'],
+    [
+      '🩺 Monitor health',
+      '▶️ Running now',
+      '📅 Today',
+      '📈 Performance',
+      '💾 Repositories',
+      '🛡 Protection',
+      '🗂 Restore points',
+    ],
   );
 
   w.api.reset();
@@ -742,7 +750,7 @@ test('the live message survives a restart instead of starting a second one', asy
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
   first.store.flush();
-  assert.equal(first.api.sent().length, 6);
+  assert.equal(first.api.sent().length, 7);
 
   const w = world(LIVE, {}, first.file);
   const veeam = veeamFake({
@@ -803,7 +811,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
   const monitor = new TelegramMonitorService(w.config, veeam, w.service, auth, w.store, w.live);
 
   await monitor.check();
-  assert.equal(w.api.sent().length, 6);
+  assert.equal(w.api.sent().length, 7);
 
   w.api.reset();
   await monitor.check();
@@ -1092,4 +1100,84 @@ test('a job whose schedule could not be read is still judged', async () => {
 
   assert.equal(snapshot.risks.length, 1);
   assert.equal(snapshot.excludedUnscheduled, 0);
+});
+
+/* ------------------------------------------------------------------ *
+ * Restore point depth
+ * ------------------------------------------------------------------ */
+
+const depth = (over) => {
+  const { renderRestorePoints } = require('../dist/telegram/telegram-restore-points');
+  const now = new Date(Date.UTC(2026, 8, 15, 12));
+  return renderRestorePoints(
+    { jobs: [], without: 0, thinRuns: 0, ...over },
+    { now, timezone: 'UTC' },
+  );
+};
+
+test('depth counts runs, not one restore point per protected machine', async () => {
+  // Eight VMs backed up nightly for a month is 240 points but 30 moments to
+  // restore to, and 30 is the number that answers "how far back can I go".
+  const text = depth({
+    jobs: [{ name: 'OPS_SMAX_SAM', runs: 30, points: 240, machines: 8,
+             oldest: Date.UTC(2026, 7, 16), newest: Date.UTC(2026, 8, 15) }],
+  });
+
+  assert.match(text, /<b>30<\/b> прогонов · OPS_SMAX_SAM/);
+  assert.match(text, /8 ВМ/);
+  assert.match(text, /240 точек/);
+  assert.match(text, /за 30 дней/);
+});
+
+test('a job keeping a single state is flagged even though it never failed', async () => {
+  const text = depth({
+    jobs: [
+      { name: 'CUST_CHEMPLANT', runs: 1, points: 1, machines: 1 },
+      { name: 'CUST_deep', runs: 40, points: 40, machines: 1,
+        oldest: Date.UTC(2026, 7, 6), newest: Date.UTC(2026, 8, 15) },
+    ],
+    thinRuns: 1,
+  });
+
+  const lines = text.split('\n');
+  const first = lines.findIndex((l) => /CUST_CHEMPLANT/.test(l));
+  const second = lines.findIndex((l) => /CUST_deep/.test(l));
+  assert.ok(first < second, 'the thinnest history is what somebody has to act on');
+  assert.match(lines[first], /^🔴 <b>1<\/b> прогон/);
+  assert.match(lines[second], /^🟢/);
+  assert.match(text, /Только одно состояние:<\/b> 1 задание/);
+  // One run means no span and no per-machine multiplier worth printing.
+  assert.ok(!/за \d+ дн/.test(lines[first]));
+  assert.ok(!/1 точка/.test(lines[first]));
+});
+
+test('jobs with no points at all are counted, not listed', async () => {
+  const text = depth({
+    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1 }],
+    without: 7,
+  });
+  assert.match(text, /Заданий:<\/b> 1 \(\+7 без точек\)/);
+  assert.ok(!/without/.test(text));
+});
+
+test('the depth list fills the message and counts what it could not show', async () => {
+  const many = Array.from({ length: 400 }, (_, i) => ({
+    name: `OPS_JOB_${String(i).padStart(3, '0')}`,
+    runs: i + 1,
+    points: i + 1,
+    machines: 1,
+  }));
+  const text = depth({ jobs: many });
+
+  assert.ok(text.length <= 4096, `message is ${text.length} characters`);
+  const hidden = /…и ещё (\d+) задани\S* поглубже/.exec(text);
+  assert.ok(hidden, 'the deepest jobs are the ones worth dropping');
+  assert.equal((text.match(/OPS_JOB_/g) ?? []).length + Number(hidden[1]), 400);
+  assert.match(text, /OPS_JOB_000/, 'the thinnest is always shown');
+});
+
+test('an unread scan says so rather than showing an empty estate', async () => {
+  const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
+  assert.match(text, /не прочитаны/);
+  assert.ok(!/Глубина истории/.test(text));
 });
