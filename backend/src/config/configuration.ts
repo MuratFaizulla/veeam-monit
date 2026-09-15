@@ -47,6 +47,12 @@ export interface AppConfig {
     /** Whether the always-current status messages are maintained at all. */
     live: boolean;
     /**
+     * Whether the 🧹 Orphaned backups slot is published. Off by default: the
+     * estate's chains have to be gone through by hand before the list means
+     * anything, and until then it is 245 rows nobody is acting on.
+     */
+    liveOrphans: boolean;
+    /**
      * Topics that hold one always-current message instead of a stream of them.
      * These are state, not events: they are edited in place, never appended to.
      */
@@ -169,6 +175,7 @@ export const configuration = (): AppConfig => ({
     repositoryFreePercent: int(process.env.TELEGRAM_REPOSITORY_FREE_PERCENT, 10),
     digestHour: int(process.env.TELEGRAM_DIGEST_HOUR, -1),
     live: bool(process.env.TELEGRAM_LIVE, true),
+    liveOrphans: bool(process.env.TELEGRAM_LIVE_ORPHANS, false),
     liveTopics: {
       health: text(process.env.TELEGRAM_TOPIC_HEALTH, '🩺 Monitor health'),
       running: text(process.env.TELEGRAM_TOPIC_RUNNING, '▶️ Running now'),

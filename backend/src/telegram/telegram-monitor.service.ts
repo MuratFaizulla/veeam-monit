@@ -408,7 +408,11 @@ export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
     // After protection: it is the same scan, so by now the depth is current.
     await this.live.publish('restorePoints', renderRestorePoints(this.depthState(jobs), clock));
 
-    await this.live.publish('orphans', renderOrphans(this.orphansState(jobs), clock));
+    // Off by request until the chains have been gone through by hand; the slot
+    // and its renderer stay, so turning it back on is one setting.
+    if (this.config.liveOrphans) {
+      await this.live.publish('orphans', renderOrphans(this.orphansState(jobs), clock));
+    }
   }
 
   /** Builds the Performance live slot from active sessions and their tasks. */
