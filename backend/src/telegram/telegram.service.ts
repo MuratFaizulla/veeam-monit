@@ -1,17 +1,12 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { escapeHtml, renderEvent } from './telegram.format';
+import { renderEvent } from './telegram.format';
 import { TelegramRoutingService } from './telegram-routing.service';
 import { TelegramStateStore } from './telegram-state.store';
 import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
 import { TelegramTopicsService } from './telegram-topics.service';
-import {
-  NotificationEvent,
-  TelegramChat,
-  TelegramDestination,
-  TelegramUpdate,
-} from './telegram.types';
+import { NotificationEvent, TelegramChat } from './telegram.types';
 
 /**
  * Why an event did or did not reach Telegram. Every non-delivery used to
@@ -53,17 +48,21 @@ const NOT_ATTEMPTED: DeliveryOutcome[] = [
 ];
 
 /**
- * Entry point for every notification. It owns the chat registry and the update
- * stream, and turns a NotificationEvent into one message per target chat,
- * addressed to the topic the routing layer picked.
+ * Delivery: an event goes in, and a report of what became of it comes out.
+ *
+ * One method wide on purpose. Routing, severity filtering, the cooldown, the
+ * fan-out across chats, the retry in General and the eviction of a chat that
+ * kicked the bot are all behind `notify`, so a caller that has an event to
+ * report needs to know nothing else — and `DeliveryReport` is how it finds out
+ * what happened without reading the log.
+ *
+ * Hearing from Telegram is a different question with a different answer, and
+ * lives in TelegramUpdatesService.
  */
 @Injectable()
-export class TelegramService implements OnModuleInit, OnModuleDestroy {
+export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
   private readonly config: AppConfig['telegram'];
-  private polling = false;
-  private stopping = false;
-  private updateOffset = 0;
 
   constructor(
     config: ConfigService,
@@ -73,50 +72,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly store: TelegramStateStore,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
-    for (const id of this.config.chatIds) {
-      // A configured chat is usable before any update arrives; onModuleInit
-      // then fills in the title and, crucially, whether it is a forum.
-      this.store.seedChat(id, { id: Number(id), type: 'supergroup' });
-    }
-  }
-
-  async onModuleInit(): Promise<void> {
-    if (!this.transport.enabled) {
-      this.logger.warn('Telegram disabled: TELEGRAM_BOT_TOKEN is empty');
-      return;
-    }
-    await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
-
-    if (this.config.webhookUrl) {
-      await this.configureWebhook();
-    } else {
-      await this.startPolling();
-    }
-  }
-
-  onModuleDestroy(): void {
-    this.stopping = true;
-    this.polling = false;
   }
 
   get enabled(): boolean {
     return this.transport.enabled;
-  }
-
-  get webhookConfigured(): boolean {
-    return Boolean(this.config.webhookUrl);
-  }
-
-  get pollingEnabled(): boolean {
-    return this.polling;
-  }
-
-  get pendingMessages(): number {
-    return this.transport.pending;
-  }
-
-  get droppedMessages(): number {
-    return this.transport.droppedCount;
   }
 
   acceptsWebhookSecret(value: string | undefined): boolean {
@@ -132,6 +91,17 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       ...chat,
       topics: this.topics.list(id),
     }));
+  }
+
+  /** How far this bot can currently deliver: is it armed, and to how many places. */
+  get reach(): { enabled: boolean; chats: number; topics: number; queue: { pending: number; dropped: number } } {
+    const chats = this.listChats();
+    return {
+      enabled: this.transport.enabled,
+      chats: chats.length,
+      topics: chats.reduce((total, chat) => total + Object.keys(chat.topics).length, 0),
+      queue: this.transport.queue,
+    };
   }
 
   /**
@@ -166,7 +136,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     let failed = 0;
     for (const [id, chat] of chats) {
       try {
-        await this.deliver(chat, decision.topic, text);
+        // Sends to the resolved topic, and retries once in General if the topic
+        // turned out to be gone — somebody deleting a topic in the group must
+        // not silently stop the alerts that were routed to it.
+        await this.topics.send(chat, decision.topic, text);
         sent += 1;
       } catch (error) {
         failed += 1;
@@ -181,15 +154,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     return report('delivered', sent, failed);
   }
 
-  /**
-   * Sends to the resolved topic, and retries once in General if the topic
-   * turned out to be gone — somebody deleting a topic in the group must not
-   * silently stop the alerts that were routed to it.
-   */
-  private async deliver(chat: TelegramChat, topic: string | null, text: string): Promise<void> {
-    await this.topics.send(chat, topic, text);
-  }
-
   private onDeliveryFailure(chatId: string, error: unknown): void {
     if (error instanceof TelegramApiError && error.isChatGone) {
       this.store.dropChat(chatId);
@@ -202,130 +166,5 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   /** Free-form announcement, used by POST /api/telegram/notify. */
   async broadcast(text: string): Promise<DeliveryReport> {
     return this.notify({ kind: 'manual', severity: 'info', title: text });
-  }
-
-  async handleUpdate(update: TelegramUpdate): Promise<void> {
-    const message = update.message;
-    const chat = message?.chat ?? update.my_chat_member?.chat;
-    if (!chat) return;
-    this.registerChat(chat);
-
-    // The Bot API cannot enumerate forum topics, so a topic the bot did not
-    // create is only ever learned from a message that mentions it.
-    if (message?.forum_topic_created && message.message_thread_id) {
-      this.topics.remember(
-        String(chat.id),
-        message.forum_topic_created.name,
-        message.message_thread_id,
-      );
-    }
-
-    const command = message?.text?.trim().toLowerCase().split(/[\s@]/)[0];
-    if (!command?.startsWith('/')) return;
-    const reply: TelegramDestination = {
-      chatId: String(chat.id),
-      threadId: message?.is_topic_message ? message.message_thread_id : undefined,
-    };
-    await this.respond(command, chat, reply);
-  }
-
-  private async respond(
-    command: string,
-    chat: TelegramChat,
-    reply: TelegramDestination,
-  ): Promise<void> {
-    const lines: string[] = [];
-    if (command === '/start' || command === '/status' || command === '/chatid') {
-      lines.push(
-        '<b>Veeam Monitor</b>',
-        `<b>Chat ID:</b> <code>${escapeHtml(chat.id)}</code>`,
-        `<b>Форум:</b> ${chat.is_forum ? 'да' : 'нет'}`,
-        `<b>Топик:</b> <code>${escapeHtml(reply.threadId ?? 'General')}</code>`,
-        `<b>Маршрутизация:</b> ${escapeHtml(this.config.routingMode)}`,
-      );
-    } else if (command === '/topics') {
-      const known = this.topics.list(String(chat.id));
-      lines.push('<b>Известные топики</b>');
-      for (const [name, threadId] of Object.entries(known)) {
-        lines.push(`${escapeHtml(name)} — <code>${threadId}</code>`);
-      }
-      if (Object.keys(known).length === 0) lines.push('пока ни одного');
-    } else {
-      return;
-    }
-
-    try {
-      await this.transport.sendMessage(reply, lines.join('\n'));
-    } catch (error) {
-      this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
-    }
-  }
-
-  private registerChat(chat: TelegramChat): void {
-    const { becameForum } = this.store.mergeChat(chat);
-    if (becameForum) this.topics.unblock();
-  }
-
-  /** Learns title and forum flag for chats that were configured, not discovered. */
-  private async refreshChat(chatId: string): Promise<void> {
-    try {
-      const chat = await this.transport.call<TelegramChat>('getChat', { chat_id: chatId });
-      this.registerChat(chat);
-      this.logger.log(
-        `Telegram chat ${chatId} "${chat.title ?? ''}" forum=${chat.is_forum === true}`,
-      );
-    } catch (error) {
-      this.logger.warn(`Telegram chat ${chatId} could not be inspected: ${(error as Error).message}`);
-    }
-  }
-
-  private async configureWebhook(): Promise<void> {
-    try {
-      const webhook = new URL(this.config.webhookUrl);
-      if (webhook.protocol !== 'https:' || !webhook.hostname.includes('.')) {
-        throw new Error('TELEGRAM_WEBHOOK_URL must be a public HTTPS origin');
-      }
-      await this.transport.call('setWebhook', {
-        url: `${this.config.webhookUrl}/api/telegram/webhook`,
-        secret_token: this.config.webhookSecret || undefined,
-        allowed_updates: ['message', 'my_chat_member'],
-      });
-      this.logger.log('Telegram webhook configured');
-    } catch (error) {
-      this.logger.error(`Telegram webhook was not configured: ${(error as Error).message}`);
-    }
-  }
-
-  private async startPolling(): Promise<void> {
-    try {
-      // getUpdates and webhooks are mutually exclusive. Removing a stale
-      // webhook makes local, domain-free operation deterministic.
-      await this.transport.call('deleteWebhook', { drop_pending_updates: false });
-      this.polling = true;
-      this.logger.log('Telegram long polling enabled (no public domain required)');
-      void this.pollUpdates();
-    } catch (error) {
-      this.logger.error(`Telegram polling could not start: ${(error as Error).message}`);
-    }
-  }
-
-  private async pollUpdates(): Promise<void> {
-    while (!this.stopping) {
-      try {
-        const updates = await this.transport.call<TelegramUpdate[]>('getUpdates', {
-          offset: this.updateOffset,
-          timeout: 25,
-          allowed_updates: ['message', 'my_chat_member'],
-        });
-        for (const update of updates ?? []) {
-          this.updateOffset = Math.max(this.updateOffset, update.update_id + 1);
-          await this.handleUpdate(update);
-        }
-      } catch (error) {
-        if (this.stopping) return;
-        this.logger.error(`Telegram polling error: ${(error as Error).message}`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      }
-    }
   }
 }
