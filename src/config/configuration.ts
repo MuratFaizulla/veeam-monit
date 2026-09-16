@@ -11,6 +11,12 @@ export type TelegramRoutingMode = 'job' | 'severity' | 'kind' | 'single';
 
 export interface AppConfig {
   port: number;
+  /**
+   * Whether the OpenAPI page is served at /api/docs. On by default: it carries
+   * no secrets — only the names of the headers the guards expect — and a
+   * monitor nobody can drive by hand is a monitor nobody checks.
+   */
+  docs: boolean;
   veeam: {
     baseUrl: string;
     apiVersion: string;
@@ -128,6 +134,7 @@ const severities = (value: string | undefined): NotificationSeverity[] => {
 
 export const configuration = (): AppConfig => ({
   port: int(process.env.PORT, 3000),
+  docs: bool(process.env.API_DOCS, true),
   veeam: {
     // Trailing slashes would produce "//api/v1/..." paths, so strip them once here.
     baseUrl: (process.env.VEEAM_BASE_URL ?? 'https://localhost:9419').replace(/\/+$/, ''),

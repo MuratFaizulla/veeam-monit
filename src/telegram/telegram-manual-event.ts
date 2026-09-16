@@ -5,6 +5,9 @@ import {
   NotificationKind,
   NotificationSeverity,
 } from './telegram.types';
+// Type-only: the builders accept whatever the HTTP layer may send, and that
+// list is declared once, where it is documented.
+import type { ProbeBody } from './telegram.dto';
 
 /**
  * The two events a human can ask for over HTTP.
@@ -25,14 +28,6 @@ export type ManualEvent =
   | { ok: true; event: NotificationEvent }
   | { ok: false; message: string };
 
-interface ProbeInput {
-  kind?: string;
-  severity?: string;
-  subject?: string;
-  title?: string;
-  body?: string;
-}
-
 /** A free-form announcement, posted as an ordinary manual notification. */
 export const announcement = (text: string | undefined): ManualEvent => {
   const title = text?.trim();
@@ -47,7 +42,7 @@ export const announcement = (text: string | undefined): ManualEvent => {
  * without waiting for a job to actually fail, which is why it carries a real
  * kind and severity rather than always looking like an announcement.
  */
-export const probe = (input: ProbeInput): ManualEvent => {
+export const probe = (input: ProbeBody): ManualEvent => {
   const kind = (input.kind ?? 'job') as NotificationKind;
   const severity = (input.severity ?? 'info') as NotificationSeverity;
   if (!NOTIFICATION_KINDS.includes(kind)) {
