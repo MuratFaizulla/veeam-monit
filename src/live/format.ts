@@ -99,6 +99,12 @@ export interface RunningJob {
   /** Absent while Veeam has not reported progress for the session yet. */
   percent?: number;
   startedAt?: string;
+  /**
+   * Running, but switched off in Veeam — started by hand, or disabled after it
+   * had already begun. Said out loud because the schedule will not start it
+   * again, and this list is the only place anyone would notice.
+   */
+  disabled?: boolean;
 }
 
 export interface ScheduledRun {
@@ -307,6 +313,7 @@ const jobBlock = (job: RunningJob, clock: LiveClock): string[] => {
     if (Number.isFinite(elapsed) && elapsed > 0) details.push(`идёт ${duration(elapsed)}`);
   }
   if (job.type) details.push(escapeHtml(job.type));
+  if (job.disabled) details.push('⚠️ выключено в Veeam');
 
   return details.length ? [head, details.join(' · ')] : [head];
 };
