@@ -410,3 +410,57 @@ test('a job is only excused on positive evidence, never on a gap', async () => {
   assert.equal(result.excludedUnscheduled, 1);
   assert.equal(result.excludedDisabled, 1);
 });
+
+/* ------------------------------------------------------------------ *
+ * Driving the monitor from the group
+ * ------------------------------------------------------------------ */
+
+const said = (w, text) => w.updates.handleUpdate({
+  update_id: Math.floor(Math.random() * 1e6),
+  message: {
+    message_id: 1,
+    message_thread_id: 55,
+    is_topic_message: true,
+    text,
+    chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+  },
+});
+
+test('/check runs a pass now and answers with what the monitor knows', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  w.api.reset();
+
+  await said(w, '/check');
+
+  const reply = w.api.sent().at(-1);
+  assert.equal(reply.message_thread_id, 55, 'answered where it was asked');
+  assert.match(reply.text, /Цикл проверки выполнен/);
+  assert.match(reply.text, /Veeam отвечает:<\/b> 🟢 да/);
+  assert.match(reply.text, /Заданий под наблюдением:<\/b> 1/);
+});
+
+test('/check asked twice in a row does not poll Veeam twice', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+  await said(w, '/check');
+  const after = w.api.sent().length;
+
+  await said(w, '/check');
+
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /уже была только что/);
+  // Still answered — silence would read as a broken bot — but nothing was run.
+  assert.equal(w.api.sent().length, after + 1);
+});
+
+test('/status carries the same health as /check, without running anything', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  w.api.reset();
+
+  await said(w, '/status');
+
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /Учётная запись:<\/b> 🟢 да/);
+  assert.match(reply.text, /Команды:<\/b> \/status, \/topics, \/check/);
+});
