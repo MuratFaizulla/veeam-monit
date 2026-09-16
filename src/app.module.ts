@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { configuration } from './config/configuration';
+import { validateEnvironment } from './config/validate';
 import { HealthController } from './http/health.controller';
 import { TelegramModule } from './telegram/telegram.module';
 import { VeeamHttpModule } from './veeam/http.module';
@@ -12,7 +13,7 @@ import { VeeamHttpModule } from './veeam/http.module';
  */
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+    ConfigModule.forRoot({ isGlobal: true, load: [configuration], validate: validateEnvironment }),
     VeeamHttpModule,
     TelegramModule,
   ],

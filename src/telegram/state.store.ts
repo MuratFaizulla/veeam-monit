@@ -1,5 +1,5 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { TelegramChat } from './types';
 
@@ -316,17 +316,29 @@ export class TelegramStateStore implements OnModuleDestroy {
    * ---------------------------------------------------------------- */
 
   private load(): TelegramState {
-    try {
-      const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<TelegramState>;
-      return { ...empty(), ...parsed, version: 1 };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        // A corrupt file must not stop the service from booting: monitoring
-        // restarts from a clean slate instead, which costs one quiet cycle.
-        this.logger.warn(`Telegram state at ${this.filePath} is unreadable, starting empty`);
+    for (const path of [this.filePath, `${this.filePath}.bak`]) {
+      try {
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<TelegramState>;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('state is not an object');
+        }
+        for (const key of ['chats', 'topics', 'jobResults', 'cooldowns', 'liveMessages'] as const) {
+          const field = parsed[key];
+          if (!field || typeof field !== 'object' || Array.isArray(field)) {
+            throw new Error(`state field ${key} is invalid`);
+          }
+        }
+        if (path !== this.filePath) {
+          this.logger.warn(`Telegram state restored from ${path}`);
+        }
+        return { ...empty(), ...parsed, version: 1 };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          this.logger.warn(`Telegram state at ${path} is unreadable: ${(error as Error).message}`);
+        }
       }
-      return empty();
     }
+    return empty();
   }
 
   /** Coalesces the burst of writes a single monitor tick produces. */
@@ -347,6 +359,13 @@ export class TelegramStateStore implements OnModuleDestroy {
       renameSync(tmp, this.filePath);
     } catch (error) {
       this.logger.error(`Telegram state was not persisted: ${(error as Error).message}`);
+      return;
+    }
+    try {
+      // A second complete copy survives a damaged primary file on the next boot.
+      copyFileSync(this.filePath, `${this.filePath}.bak`);
+    } catch (error) {
+      this.logger.warn(`Telegram state backup was not written: ${(error as Error).message}`);
     }
   }
 }
