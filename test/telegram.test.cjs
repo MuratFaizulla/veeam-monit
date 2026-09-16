@@ -309,13 +309,13 @@ test('a topic created by a human in the group is learned from the update', async
   assert.equal(w.topics.list(CHAT)['Ручной топик'], 77);
 });
 
-test('/start answers inside the topic it was asked in', async () => {
+test('commands answer in General, including messages marked as topic 1', async () => {
   const w = world();
   await w.updates.handleUpdate({
     update_id: 2,
     message: {
       message_id: 6,
-      message_thread_id: 42,
+      message_thread_id: 1,
       is_topic_message: true,
       text: '/start@VeeamMonitorExampleBot',
       chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
@@ -324,8 +324,52 @@ test('/start answers inside the topic it was asked in', async () => {
 
   const sent = w.api.sent();
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].message_thread_id, 42);
+  assert.equal(sent[0].message_thread_id, undefined);
   assert.match(sent[0].text, /Chat ID/);
+});
+
+test('commands and old buttons in other topics are ignored', async () => {
+  const w = world();
+  const chat = { id: Number(CHAT), type: 'supergroup', is_forum: true };
+  for (const [index, command] of ['/start', '/check', '/digest', '/job SQL', '/clear'].entries()) {
+    await w.updates.handleUpdate({
+      update_id: index + 10,
+      message: {
+        message_id: index + 20,
+        message_thread_id: 42,
+        is_topic_message: true,
+        text: command,
+        chat,
+      },
+    });
+  }
+  await w.updates.handleUpdate({
+    update_id: 20,
+    callback_query: {
+      id: 'press-in-other-topic',
+      data: 'a:chk',
+      message: { message_id: 30, message_thread_id: 42, is_topic_message: true, chat },
+    },
+  });
+
+  assert.equal(w.api.sent().length, 0);
+  assert.equal(w.api.of('deleteMessage').length, 0, '/clear must not delete anything');
+  assert.equal(w.api.of('answerCallbackQuery').length, 1, 'old button presses are acknowledged');
+  assert.equal(w.store.isSuppressed('command:check'), false, '/check did not run');
+});
+
+test('General commands work when Telegram omits topic fields', async () => {
+  const w = world();
+  await w.updates.handleUpdate({
+    update_id: 21,
+    message: {
+      message_id: 31,
+      text: '/status',
+      chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+    },
+  });
+  assert.equal(w.api.sent().length, 1);
+  assert.equal(w.api.sent()[0].message_thread_id, undefined);
 });
 
 /* ------------------------------------------------------------------ *
