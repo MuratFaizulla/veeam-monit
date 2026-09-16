@@ -99,6 +99,8 @@ function world(env = {}, handlers = {}, stateFile) {
   // ran and reports nothing; monitorWorld swaps in the real one below.
   const idleMonitor = {
     check: async () => 'ran',
+    summary: async () => 'сводка',
+    describeJob: async (query) => `карточка ${query}`,
     status: { reachable: null, authenticated: null, trackedJobs: 0, lastCheckAt: null, lastError: null },
   };
   const updates = new TelegramUpdatesService(config, transport, topics, store, idleMonitor);

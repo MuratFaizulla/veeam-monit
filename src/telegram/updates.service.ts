@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { escapeHtml } from './format';
+import { escapeHtml, truncate } from './format';
 import { TelegramStateStore } from './state.store';
 import { TelegramTopicsService } from './topics.service';
 import { TelegramTransportService } from './transport.service';
@@ -12,6 +12,44 @@ import { stampOf } from '../live/format';
 /** Shortest gap between two passes asked for by hand, in the group. */
 const CHECK_COOLDOWN_MS = 30_000;
 const CHECK_COOLDOWN_KEY = 'command:check';
+
+/**
+ * The read-only commands are cheap — two requests at most — but they are still
+ * requests against a production Veeam, and a group is a room full of people
+ * with a keyboard each.
+ */
+const READ_COOLDOWN_MS = 5_000;
+const READ_COOLDOWN_KEY = 'command:read';
+
+/**
+ * The command list, spelled out.
+ *
+ * It used to hang off `/start`, which in a group nobody presses — the bot was
+ * added by one person years ago and the rest of the room inherited it. Each
+ * line says what the command *does*, not what it is called: "/check" tells
+ * somebody who already knows nothing.
+ */
+const HELP = [
+  '🤖 <b>Veeam Monitor — команды</b>',
+  '',
+  '<b>/status</b> — отвечает ли Veeam, авторизована ли служебная учётная запись,',
+  'когда была последняя проверка. Ничего не запускает.',
+  '',
+  '<b>/check</b> — прогнать цикл опроса немедленно, не дожидаясь минутного таймера.',
+  'Не чаще раза в полминуты.',
+  '',
+  '<b>/digest</b> — сводка по всем заданиям: сколько успешных, сколько с ошибкой',
+  'и какие именно не в порядке. Это состояние на сейчас, а не за сутки.',
+  '',
+  '<b>/job &lt;имя&gt;</b> — карточка одного задания: последний результат и причина,',
+  'длительность, следующий запуск, точки восстановления, последние запуски.',
+  'Имя можно писать частями и в любом регистре: <code>/job kingston db</code>',
+  '',
+  '<b>/topics</b> — какие темы форума бот уже знает.',
+  '',
+  '<i>Перезапустить службу из чата нельзя: процесс не может перезапустить сам себя,</i>',
+  '<i>а кнопка перезагрузки, доступная всей группе, — это новая проблема вместо старой.</i>',
+];
 
 /**
  * How the bot hears from Telegram.
@@ -107,17 +145,26 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const command = message?.text?.trim().toLowerCase().split(/[\s@]/)[0];
-    if (!command?.startsWith('/')) return;
+    // Split rather than tokenised: everything after the command word is one
+    // argument, kept in the case it was typed in, because a job name has
+    // underscores and capitals and the person asking copied it from somewhere.
+    const text = message?.text?.trim() ?? '';
+    const gap = text.search(/\s/);
+    const head = gap === -1 ? text : text.slice(0, gap);
+    const command = head.toLowerCase().split('@')[0];
+    if (!command.startsWith('/')) return;
+    const argument = gap === -1 ? '' : text.slice(gap + 1).trim();
+
     const reply: TelegramDestination = {
       chatId: String(chat.id),
       threadId: message?.is_topic_message ? message.message_thread_id : undefined,
     };
-    await this.respond(command, chat, reply);
+    await this.respond(command, argument, chat, reply);
   }
 
   private async respond(
     command: string,
+    argument: string,
     chat: TelegramChat,
     reply: TelegramDestination,
   ): Promise<void> {
@@ -132,10 +179,16 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
         '',
         ...this.healthLines(),
         '',
-        '<b>Команды:</b> /status, /topics, /check',
+        'Что умеет бот — <code>/help</code>',
       );
+    } else if (command === '/help') {
+      lines.push(...HELP);
     } else if (command === '/check') {
       lines.push(...(await this.runCheck()));
+    } else if (command === '/digest') {
+      lines.push(...(await this.reading(() => this.monitor.summary())));
+    } else if (command === '/job') {
+      lines.push(...(await this.reading(() => this.monitor.describeJob(argument))));
     } else if (command === '/topics') {
       const known = this.topics.list(String(chat.id));
       lines.push('<b>Известные топики</b>');
@@ -148,7 +201,9 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      await this.transport.sendMessage(reply, lines.join('\n'));
+      // Cut to Telegram's limit rather than rejected by it: a job card is
+      // bounded, but a forum with a hundred topics is not.
+      await this.transport.sendMessage(reply, truncate(lines.join('\n')));
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
     }
@@ -186,6 +241,26 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       '',
       ...this.healthLines(),
     ];
+  }
+
+  /**
+   * A question put to the monitor, answered in place.
+   *
+   * These ask Veeam and say what it said; they publish nothing and change
+   * nothing, so unlike `/check` they need no cycle and cannot collide with one.
+   * A failure is answered too: an unanswered command reads as a dead bot.
+   */
+  private async reading(ask: () => Promise<string>): Promise<string[]> {
+    if (this.store.isSuppressed(READ_COOLDOWN_KEY)) {
+      return ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'];
+    }
+    this.store.armCooldown(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
+    try {
+      return [await ask()];
+    } catch (error) {
+      this.logger.error(`Telegram command failed: ${(error as Error).message}`);
+      return ['⚠️ <b>Не удалось ответить</b>', '', escapeHtml((error as Error).message)];
+    }
   }
 
   /** The monitor's own state, compact enough to sit under any answer. */

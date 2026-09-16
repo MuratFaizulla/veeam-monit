@@ -1,5 +1,6 @@
 import { VeeamJobState, VeeamSchedule } from '../veeam/types';
 import { ScheduledRun } from '../live/format';
+import { isDisabled } from './job-state';
 
 const localDay = (date: Date, timezone: string): string =>
   new Intl.DateTimeFormat('en-CA', {
@@ -31,7 +32,7 @@ export const todayRuns = (
   const today = localDay(now, timezone);
   return jobs
     .flatMap((job): ScheduledRun[] => {
-      if (!job.nextRun || (job.status ?? '').toLowerCase() === 'disabled') return [];
+      if (!job.nextRun || isDisabled(job)) return [];
       const at = Date.parse(job.nextRun);
       if (!Number.isFinite(at) || at <= now.getTime()) return [];
       if (localDay(new Date(at), timezone) !== today) return [];
