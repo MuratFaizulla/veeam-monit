@@ -454,7 +454,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
   await monitor.check();
 
   assert.ok(
-    w.api.sent().some((payload) => /сводка за сутки/.test(payload.text)),
+    w.api.sent().some((payload) => /сводка по заданиям/.test(payload.text)),
     'сводка отправлена на следующем цикле',
   );
   assert.ok(w.store.snapshot().cooldowns['digest'] > Date.now(), 'теперь окно взведено');

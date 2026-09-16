@@ -39,10 +39,15 @@ import { OrphansSnapshot, renderOrphans } from '../live/orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
+import { digestBody, digestFields, renderDigest, summarise } from './digest';
+import { isBadResult, isDisabled, isRunning, resultOf } from './job-state';
+import { JobCard, JobRun, matchJob, renderChoices, renderJobCard } from './job-card';
+import { escapeHtml } from '../telegram/format';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const SESSIONS = '/api/v1/sessions';
+const JOB_STATES = '/api/v1/jobs/states';
 
 /**
  * What a slot says when Veeam answered nothing this cycle. The evidence module
@@ -53,23 +58,8 @@ const NOT_ANSWERED = 'Veeam не ответил на этот цикл.';
 const orphanPoints = (chains: { points: number }[]): number =>
   chains.reduce((sum, chain) => sum + chain.points, 0);
 
-/** Veeam results that mean "this run went wrong", lower-cased. */
-const BAD_RESULTS = new Set(['failed', 'warning']);
-
-/**
- * Job statuses that count as "running right now", lower-cased. `Idle` is
- * deliberately absent: a continuously running job sits in it between transfers,
- * and listing those as active would make the live message permanently wrong.
- */
-const RUNNING_STATUSES = new Set([
-  'working',
-  'running',
-  'starting',
-  'stopping',
-  'pausing',
-  'resuming',
-  'postprocessing',
-]);
+/** Sessions read for a job card: enough to show a pattern, cheap enough to ask. */
+const CARD_SESSIONS = 6;
 
 export interface MonitorHealth {
   lastCheckAt: string | null;
@@ -180,6 +170,137 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Where every job stands, as a message somebody can be handed.
+   *
+   * The same counting as the daily digest, pulled instead of pushed. It is
+   * rendered here rather than emitted as an event on purpose: an event goes
+   * through the router to the topic its severity implies, and a clean summary
+   * asked for in General would land in the recoveries topic, where nobody who
+   * asked for it is looking. An answer belongs where the question was.
+   */
+  async summary(): Promise<string> {
+    const read = await this.jobsNow();
+    if (!read.ok) return read.message;
+    return renderDigest(summarise(read.jobs), this.clock());
+  }
+
+  /**
+   * One job, named approximately.
+   *
+   * Reads the job list and, for the job it settles on, that job's recent
+   * sessions; the restore-point figures come from the estate scan that already
+   * happened, never from a new one, so asking about a job costs two requests
+   * rather than the half-minute the scan takes.
+   */
+  async describeJob(query: string): Promise<string> {
+    if (!query.trim()) {
+      return [
+        '🔎 <b>Укажите задание</b>',
+        '',
+        'Например: <code>/job TTC_Exchange</code>',
+        'Имя можно писать частями и в любом регистре: <code>/job konaev db</code>',
+      ].join('\n');
+    }
+
+    const read = await this.jobsNow();
+    if (!read.ok) return read.message;
+
+    const match = matchJob(read.jobs, query);
+    if (match.found === 'none') {
+      return [
+        `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
+        '',
+        `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
+      ].join('\n');
+    }
+    if (match.found === 'many') return renderChoices(match.names, query);
+    return renderJobCard(await this.cardFor(match.job, read.accessToken), this.clock());
+  }
+
+  /**
+   * The job list, right now, for a question rather than for a cycle.
+   *
+   * Deliberately does not touch `health`: a cycle reports what the monitor
+   * knows, and a command asking a question of its own must not overwrite that
+   * with its own luck.
+   */
+  private async jobsNow(): Promise<
+    { ok: true; jobs: VeeamJobState[]; accessToken: string } | { ok: false; message: string }
+  > {
+    if (!this.monitorAuth.configured) {
+      return { ok: false, message: '⚠️ Служебная учётная запись Veeam не настроена.' };
+    }
+    try {
+      const accessToken = await this.monitorAuth.getAccessToken();
+      const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
+        method: 'GET',
+        path: JOB_STATES,
+      });
+      return { ok: true, jobs: response.data ?? [], accessToken };
+    } catch (error) {
+      return {
+        ok: false,
+        message: `⚠️ <b>Veeam не ответил</b>\n\n${escapeHtml((error as Error).message)}`,
+      };
+    }
+  }
+
+  /** Everything known about one job, from the three places that know it. */
+  private async cardFor(job: VeeamJobState, accessToken: string): Promise<JobCard> {
+    const evidence = this.evidence.evidence;
+    const scanned = evidence.status === 'ready' ? evidence : undefined;
+    const id = job.id;
+    return {
+      name: job.name ?? id ?? 'без имени',
+      type: job.type,
+      status: job.status,
+      disabled: isDisabled(job),
+      lastResult: resultOf(job),
+      lastRun: job.lastRun,
+      nextRun: job.nextRun,
+      objects: job.objectsCount,
+      runs: await this.recentRuns(job, accessToken),
+      failures: scanned && id ? scanned.streakByJob.get(id) : undefined,
+      depth: scanned && id ? scanned.depthByJob.get(id) : undefined,
+      cadenceDays: scanned && id ? scanned.cadenceByJob.get(id) ?? null : undefined,
+      pointsUnavailable: evidence.status === 'ready' ? undefined : evidence.reason,
+    };
+  }
+
+  /** Newest sessions of one job. Best effort: a card without them still helps. */
+  private async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobRun[]> {
+    if (!job.id) return [];
+    try {
+      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
+        method: 'GET',
+        path: SESSIONS,
+        params: {
+          skip: 0,
+          limit: CARD_SESSIONS,
+          orderColumn: 'CreationTime',
+          orderAsc: false,
+          jobIdFilter: job.id,
+        },
+      });
+      return (response.data ?? []).map((session) => ({
+        startedAt: session.creationTime,
+        endedAt: session.endTime,
+        result: session.result?.result,
+        message: session.result?.message?.trim() || undefined,
+        percent: session.progressPercent,
+      }));
+    } catch (error) {
+      this.logger.debug(`No session history for job ${job.id}: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
+  /** Now, in the timezone the operator reads in. */
+  private clock(): LiveClock {
+    return { now: new Date(), timezone: this.config.timezone };
+  }
+
   private async step<T>(name: string, run: () => Promise<T>): Promise<T | undefined> {
     try {
       return await run();
@@ -273,7 +394,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   private async checkJobs(accessToken: string): Promise<VeeamJobState[]> {
     const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
-      path: '/api/v1/jobs/states',
+      path: JOB_STATES,
     });
     const jobs = response.data ?? [];
 
@@ -284,7 +405,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
 
     for (const job of jobs) {
       if (!job.id) continue;
-      const result = job.lastResult?.toLowerCase() || 'none';
+      const result = resultOf(job);
       const previous = this.store.jobResult(job.id);
       const severity = seeding || previous === result ? null : this.severityOf(result, previous);
 
@@ -323,7 +444,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     repositories: RepositoryCapacity[] | undefined,
     accessToken: string | null,
   ): Promise<void> {
-    const clock: LiveClock = { now: new Date(), timezone: this.config.timezone };
+    const clock = this.clock();
 
     // Once, before anything reads. Three slots answer from this and they used
     // to take turns paying for it, which made the order they were published in
@@ -619,7 +740,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     const running = new Map<string, { job: VeeamJobState; session?: VeeamSession }>();
 
     for (const job of jobs) {
-      if (RUNNING_STATUSES.has((job.status ?? '').toLowerCase())) {
+      if (isRunning(job)) {
         running.set(job.id ?? job.name ?? '', { job });
       }
     }
@@ -637,7 +758,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
           type: job.type,
           percent: session?.progressPercent,
           startedAt: session?.creationTime ?? job.lastRun,
-          disabled: (job.status ?? '').toLowerCase() === 'disabled',
+          disabled: isDisabled(job),
         }))
         // The renderer prints them in the order it is given, and an operator
         // rereads this message every few minutes: a stable order is what makes
@@ -699,7 +820,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     if (result === 'warning') return 'warning';
     // Success is only interesting as a recovery: reporting every scheduled
     // success would bury the failures it is supposed to make visible.
-    if (result === 'success' && previous && BAD_RESULTS.has(previous)) return 'success';
+    if (result === 'success' && previous && isBadResult(previous)) return 'success';
     return null;
   }
 
@@ -817,29 +938,19 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
 
     const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
-      path: '/api/v1/jobs/states',
+      path: JOB_STATES,
     });
-    const jobs = response.data ?? [];
-    const by = (result: string): VeeamJobState[] =>
-      jobs.filter((job) => (job.lastResult?.toLowerCase() ?? '') === result);
-    const failed = by('failed');
-    const warning = by('warning');
+    const summary = summarise(response.data ?? []);
 
     const report = await this.emit({
       kind: 'digest',
-      severity: failed.length ? 'critical' : warning.length ? 'warning' : 'success',
-      title: 'Veeam: сводка за сутки',
-      fields: [
-        ['Всего заданий', jobs.length],
-        ['Успешно', by('success').length],
-        ['С предупреждением', warning.length],
-        ['С ошибкой', failed.length],
-        ['Выполняются', jobs.filter((job) => job.status?.toLowerCase() === 'working').length],
-      ],
-      body: [...failed, ...warning]
-        .map((job) => `${job.lastResult?.toUpperCase()} — ${job.name ?? job.id}`)
-        .join('\n')
-        .slice(0, 3000) || undefined,
+      severity: summary.failed ? 'critical' : summary.warning ? 'warning' : 'success',
+      // Not "за сутки": every figure below is the standing of every job right
+      // now, which is a different claim from what happened in the last day and
+      // was the wrong one on any morning a job had not run since Friday.
+      title: 'Veeam: сводка по заданиям',
+      fields: digestFields(summary),
+      body: digestBody(summary),
     });
 
     // Arming before the fetch, as this used to, lost the whole digest for 23

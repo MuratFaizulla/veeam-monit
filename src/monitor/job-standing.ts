@@ -1,5 +1,6 @@
 import { VeeamJobState } from '../veeam/types';
 import { RetainedHistory, ScannedEvidence } from './backup-evidence.service';
+import { isDisabled } from './job-state';
 
 /**
  * What each job is owed, and what it has.
@@ -56,7 +57,7 @@ export interface Standings {
  * failure mode of the other choice is silently dropping a job from every check.
  */
 const excuseFor = (job: VeeamJobState, evidence: ScannedEvidence): Excuse | null => {
-  if ((job.status ?? '').toLowerCase() === 'disabled') return 'disabled';
+  if (isDisabled(job)) return 'disabled';
   if (job.id && evidence.unscheduled.has(job.id)) return 'unscheduled';
   return null;
 };

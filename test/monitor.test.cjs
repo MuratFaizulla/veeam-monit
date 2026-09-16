@@ -462,5 +462,100 @@ test('/status carries the same health as /check, without running anything', asyn
 
   const reply = w.api.sent().at(-1);
   assert.match(reply.text, /Учётная запись:<\/b> 🟢 да/);
-  assert.match(reply.text, /Команды:<\/b> \/status, \/topics, \/check/);
+  assert.match(reply.text, /\/help/, 'и дорога к остальным командам');
+});
+
+test('an approximate name finds the job somebody meant', () => {
+  const { matchJob } = require('../dist/monitor/job-card');
+  const jobs = [
+    { id: '1', name: 'TTC_Veeam_DB_Konaev' },
+    { id: '2', name: 'TTC_Konaev_EM_DB' },
+    { id: '3', name: 'TTC_Exchange' },
+  ];
+
+  assert.deepEqual(matchJob(jobs, 'ttc_exchange'), { found: 'one', job: jobs[2] });
+  // The words in the other order, separated by underscores nobody types.
+  assert.deepEqual(matchJob(jobs, 'konaev em'), { found: 'one', job: jobs[1] });
+  assert.deepEqual(matchJob(jobs, 'нет такого'), { found: 'none' });
+});
+
+test('a name that fits several jobs is listed, never guessed at', () => {
+  const { matchJob } = require('../dist/monitor/job-card');
+  const jobs = [{ id: '1', name: 'TTC_Veeam_DB_Konaev' }, { id: '2', name: 'TTC_Konaev_EM_DB' }];
+
+  // Answering confidently about the wrong job is worse than answering with a
+  // list: the asker would have no way of noticing.
+  const match = matchJob(jobs, 'konaev');
+
+  assert.equal(match.found, 'many');
+  assert.deepEqual(match.names, ['TTC_Konaev_EM_DB', 'TTC_Veeam_DB_Konaev']);
+});
+
+test('/job answers about one job, which no live topic can', async () => {
+  const w = exchange();
+  await w.monitor.check();
+  w.api.reset();
+
+  await said(w, '/job exchange');
+
+  const reply = w.api.sent().at(-1);
+  assert.equal(reply.message_thread_id, 55, 'answered where it was asked');
+  assert.match(reply.text, /TTC_Exchange/);
+  assert.match(reply.text, /Последний результат:<\/b> FAILED/);
+  assert.match(reply.text, /Точки восстановления/);
+  assert.match(reply.text, /Последние запуски/);
+});
+
+test('/job without a name says how to use it instead of failing', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await said(w, '/job');
+
+  assert.match(w.api.sent().at(-1).text, /Укажите задание/);
+});
+
+test('/digest counts every job and names the ones that went wrong', async () => {
+  const w = monitorWorld({}, [
+    job('1', 'SQL Daily', 'Failed'),
+    job('2', 'Files', 'Success'),
+    job('3', 'Exchange', 'Warning'),
+  ]);
+
+  await said(w, '/digest');
+
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /Всего заданий:<\/b> 3/);
+  assert.match(reply.text, /Успешно:<\/b> 1/);
+  assert.match(reply.text, /🔴 SQL Daily/);
+  assert.match(reply.text, /🟡 Exchange/);
+});
+
+test('a summary asked for in General is answered in General', async () => {
+  const w = monitorWorld({ TELEGRAM_ROUTING_MODE: 'single' }, [job('1', 'SQL Daily', 'Success')]);
+
+  await w.updates.handleUpdate({
+    update_id: 7,
+    message: {
+      message_id: 1,
+      text: '/digest',
+      chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+    },
+  });
+
+  // Routed as an event, a clean summary would land in the recoveries topic by
+  // its severity — nowhere near whoever asked for it. An answer is not an event.
+  const reply = w.api.sent().at(-1);
+  assert.equal(reply.message_thread_id, undefined, 'в General, а не в теме по severity');
+  assert.equal(w.api.of('createForumTopic').length, 0, 'и без создания темы');
+});
+
+test('/help names every command the bot answers', async () => {
+  const w = monitorWorld({}, []);
+
+  await said(w, '/help');
+
+  const reply = w.api.sent().at(-1);
+  for (const command of ['/status', '/check', '/digest', '/job', '/topics']) {
+    assert.ok(reply.text.includes(command), `${command} описан`);
+  }
 });

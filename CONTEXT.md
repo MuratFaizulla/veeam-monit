@@ -135,6 +135,45 @@ registry and nothing else, and no caller of one ever wants the other.
 
 Owned by `src/telegram/updates.service.ts`.
 
+## Summary
+
+Where every job stands, counted in one pass over the job list: how many
+succeeded, warned, failed, are running, have never run, and which jobs are
+behind the bad numbers.
+
+It is a **standing**, not a period. "Сводка за сутки" was the old name and the
+wrong claim: nothing is windowed, every figure comes from each job's own
+`lastResult`, and a job that failed on Friday and has not run since is still
+counted as failed on Monday. That is the point of it — 🚨 Alerts reports
+**transitions**, so a permanently broken job appears there once and never again.
+
+Counted in `src/monitor/digest.ts`, seen twice: pushed as an event at
+`TELEGRAM_DIGEST_HOUR`, and pulled by `/digest`.
+
+## Job card
+
+Everything known about one job, gathered for somebody who asked about it by
+name: its last result and the reason, its next scheduled run, its restore-point
+depth and cadence from the last **Evidence** scan, and its recent **Runs**.
+
+Every live slot is an aggregate; this is the only thing in the service that
+answers about a single job. The name is matched approximately — whole name,
+then containment, then every word of the query appearing somewhere — because
+the name arrives half-remembered. Several matches are listed, never resolved by
+guessing.
+
+Owned by `src/monitor/job-card.ts`.
+
+## Answer
+
+What a command produces, as opposed to an **event**. An answer is sent back to
+the chat and thread the question was asked in; an event goes through routing to
+the topic its kind and severity imply.
+
+The distinction is load-bearing for `/digest`: routed as an event, a summary
+with nothing wrong in it would be delivered to the recoveries topic by its
+severity, nowhere near whoever asked.
+
 ## Orphaned chain
 
 A backup chain no live job owns — the job was deleted, what it produced stayed.
