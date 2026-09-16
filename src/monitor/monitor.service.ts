@@ -605,21 +605,45 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    const active = jobs.filter((job) => RUNNING_STATUSES.has((job.status ?? '').toLowerCase()));
-    // The percentage lives on the session, not the job state, so that call is
-    // made only when something is actually running.
-    const sessions = active.length ? await this.runningSessions(accessToken) : new Map();
+    // Two sources, united, because each one misses runs the other sees.
+    //
+    // A job's own status misses a run somebody started by hand on a job that is
+    // switched off: Veeam keeps reporting that job as "disabled" while it
+    // transfers. Two such runs were missing from this list for as long as it
+    // was built from the status alone, and the count said so confidently.
+    //
+    // A Working session misses a run that is queued rather than transferring —
+    // waiting on a repository slot, say — where the job status is the only
+    // evidence. The union never shows fewer than either source alone, which is
+    // also what makes a failure of the session call degrade instead of lie.
+    const sessions = await this.runningSessions(accessToken);
+    const running = new Map<string, { job: VeeamJobState; session?: VeeamSession }>();
+
+    for (const job of jobs) {
+      if (RUNNING_STATUSES.has((job.status ?? '').toLowerCase())) {
+        running.set(job.id ?? job.name ?? '', { job });
+      }
+    }
+    for (const job of jobs) {
+      const session = job.id ? sessions.get(job.id) : undefined;
+      // Sessions with no job of ours behind them — Malware Detection is one —
+      // are not jobs and do not belong in a list of jobs.
+      if (session) running.set(job.id ?? job.name ?? '', { job, session });
+    }
 
     return {
-      jobs: active.map((job) => {
-        const session = job.id ? sessions.get(job.id) : undefined;
-        return {
+      jobs: [...running.values()]
+        .map(({ job, session }) => ({
           name: job.name ?? job.id ?? 'без имени',
           type: job.type,
           percent: session?.progressPercent,
           startedAt: session?.creationTime ?? job.lastRun,
-        };
-      }),
+          disabled: (job.status ?? '').toLowerCase() === 'disabled',
+        }))
+        // The renderer prints them in the order it is given, and an operator
+        // rereads this message every few minutes: a stable order is what makes
+        // "is my job still there" answerable at a glance.
+        .sort((a, b) => a.name.localeCompare(b.name)),
       totalJobs: jobs.length,
       next: this.upcomingRuns(jobs)[0] ?? null,
     };

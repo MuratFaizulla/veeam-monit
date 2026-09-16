@@ -88,6 +88,51 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
   assert.match(schedule, /SQL Daily/);
 });
 
+test('a run somebody started on a switched-off job is still a run', async () => {
+  const startedAt = new Date(Date.now() - 32 * 60_000).toISOString();
+  // Exactly what Veeam reports for it: the job is "Disabled" and transferring
+  // at the same time. Reading the status alone hid two live runs from this
+  // list, and the count above the list agreed with the omission.
+  const w = monitorWorld(LIVE, [
+    { ...job('1', 'OPS_Kingston_EM_DB', 'Success'), status: 'Disabled' },
+    running('OPS_Network_services', { id: '2' }),
+  ], {
+    '/api/v1/sessions': {
+      data: [
+        { jobId: '1', state: 'Working', progressPercent: 97, creationTime: startedAt },
+        { jobId: '2', state: 'Working', progressPercent: 88, creationTime: startedAt },
+      ],
+    },
+  });
+
+  await w.monitor.check();
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
+
+  assert.match(text, /Сейчас выполняются: 2 задания/);
+  assert.match(text, /<b>OPS_Kingston_EM_DB<\/b> — 97%/);
+  // And it says why it is unusual, because the schedule will not start it again.
+  assert.match(text, /выключено в Veeam/);
+  assert.ok(!/OPS_Network_services<\/b> — 88%[\s\S]*выключено/.test(text), 'only the disabled one is marked');
+});
+
+test('a session that belongs to no job of ours is not listed as a job', async () => {
+  const w = monitorWorld(LIVE, [running('SQL Daily')], {
+    '/api/v1/sessions': {
+      data: [
+        { jobId: '1', state: 'Working', progressPercent: 40, creationTime: new Date().toISOString() },
+        // Veeam runs this alongside the jobs; it has no job id we know.
+        { jobId: 'malware-1', name: 'Malware Detection', state: 'Working', progressPercent: 0 },
+      ],
+    },
+  });
+
+  await w.monitor.check();
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
+
+  assert.match(text, /Сейчас выполняется: 1 задание/);
+  assert.ok(!/Malware/.test(text));
+});
+
 test('a live message Telegram no longer has is deleted and replaced, not duplicated', async () => {
   let gone = false;
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')], {}, {
