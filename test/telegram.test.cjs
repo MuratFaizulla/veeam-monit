@@ -6,22 +6,22 @@ const fs = require('node:fs');
 require('reflect-metadata');
 
 const { configuration } = require('../dist/config/configuration');
-const { TelegramStateStore } = require('../dist/telegram/telegram-state.store');
-const { TelegramTransportService } = require('../dist/telegram/telegram-transport.service');
-const { TelegramTopicsService } = require('../dist/telegram/telegram-topics.service');
-const { TelegramRoutingService } = require('../dist/telegram/telegram-routing.service');
+const { TelegramStateStore } = require('../dist/telegram/state.store');
+const { TelegramTransportService } = require('../dist/telegram/transport.service');
+const { TelegramTopicsService } = require('../dist/telegram/topics.service');
+const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
-const { TelegramUpdatesService } = require('../dist/telegram/telegram-updates.service');
-const { announcement, probe } = require('../dist/telegram/telegram-manual-event');
+const { TelegramUpdatesService } = require('../dist/telegram/updates.service');
+const { announcement, probe } = require('../dist/telegram/manual-event');
 const {
   NOTIFICATION_KINDS,
   NOTIFICATION_SEVERITIES,
-} = require('../dist/telegram/telegram.types');
-const { TelegramMonitorService } = require('../dist/telegram/telegram-monitor.service');
-const { TelegramLiveService } = require('../dist/telegram/telegram-live.service');
-const { BackupEvidenceService } = require('../dist/telegram/backup-evidence.service');
-const { VeeamHttpService } = require('../dist/veeam/veeam-http.service');
-const { capacities, capacityOf } = require('../dist/telegram/repository-capacity');
+} = require('../dist/telegram/types');
+const { MonitorService } = require('../dist/monitor/monitor.service');
+const { TelegramLiveService } = require('../dist/live/live.service');
+const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
+const { VeeamHttpService } = require('../dist/veeam/http.service');
+const { capacities, capacityOf } = require('../dist/monitor/repository-capacity');
 
 const CHAT = '-1001234567890';
 
@@ -138,7 +138,7 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     invalidateAccessToken: () => {},
   };
   const evidence = new BackupEvidenceService(w.config, veeam, auth);
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live, evidence,
   );
   return { ...w, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
@@ -553,7 +553,7 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/sessions': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -581,7 +581,7 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
       return 'tok';
     },
   };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -614,7 +614,7 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     '/api/v1/jobs/states': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -644,7 +644,7 @@ test('a repository below the free-space threshold is reported once per cooldown'
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -672,7 +672,7 @@ test('a repository that does not report free space raises nothing', async () => 
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -799,7 +799,7 @@ test('a failing job step does not abort the repository check', async () => {
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -823,7 +823,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -964,7 +964,7 @@ test('a live message Telegram no longer has is deleted and replaced, not duplica
 });
 
 test('pinning and heartbeat rewrites come from the slot declaration', async () => {
-  const { LIVE_SLOTS } = require('../dist/telegram/live-slots');
+  const { LIVE_SLOTS } = require('../dist/live/slots');
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await w.monitor.check();
 
@@ -1018,7 +1018,7 @@ test('the live message survives a restart instead of starting a second one', asy
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -1037,7 +1037,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -1051,7 +1051,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
 });
 
 test('counts are written in Russian, with the right form for 1, 2 and 5', async () => {
-  const { plural, duration } = require('../dist/telegram/telegram-live.format');
+  const { plural, duration } = require('../dist/live/format');
   const jobs = (n) => `${n} ${plural(n, 'задание', 'задания', 'заданий')}`;
   assert.equal(jobs(1), '1 задание');
   assert.equal(jobs(2), '2 задания');
@@ -1074,7 +1074,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
     '/api/v1/jobs/states': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -1109,7 +1109,7 @@ test('by default every failure goes to the shared Alerts topic', async () => {
 });
 
 test('the schedule slot lists only what is still due today', async () => {
-  const { renderSchedule } = require('../dist/telegram/telegram-live.format');
+  const { renderSchedule } = require('../dist/live/format');
   const now = new Date('2026-09-14T12:00:00Z');
   const clock = { now, timezone: 'UTC' };
   const at = (iso) => new Date(iso).toISOString();
@@ -1140,7 +1140,7 @@ test('the schedule slot lists only what is still due today', async () => {
 });
 
 test('the planner keeps only today and excludes manual or disabled jobs', () => {
-  const { todayRuns } = require('../dist/telegram/schedule-planner');
+  const { todayRuns } = require('../dist/monitor/schedule-planner');
   const now = new Date('2026-09-15T10:00:00Z');
   const jobs = [
     { id: 'daily', name: 'Daily', nextRun: '2026-09-15T17:00:00Z' },
@@ -1174,7 +1174,7 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
-  const monitor = new TelegramMonitorService(
+  const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
   );
@@ -1187,7 +1187,7 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
 });
 
 test('a long list fills the message to Telegram’s limit instead of an invented cap', async () => {
-  const { renderSchedule, renderRunning } = require('../dist/telegram/telegram-live.format');
+  const { renderSchedule, renderRunning } = require('../dist/live/format');
   const now = new Date('2026-09-14T00:00:00Z');
   const clock = { now, timezone: 'UTC' };
   const runs = (n) =>
@@ -1237,8 +1237,8 @@ const points = (now, ageDays, everyDays, count = 8) =>
  * back into that shape and the real module decides.
  */
 const standings = (jobs, pointsByJob, streakByJob, now) => {
-  const { standingsOf } = require('../dist/telegram/job-standing');
-  const { cadenceOf } = require('../dist/telegram/backup-evidence.service');
+  const { standingsOf } = require('../dist/monitor/job-standing');
+  const { cadenceOf } = require('../dist/monitor/backup-evidence.service');
   const newestFirst = new Map(
     [...pointsByJob].map(([id, stamps]) => [id, [...stamps].sort((a, b) => b - a)]),
   );
@@ -1266,7 +1266,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
 };
 
 const assess = (overrides) => {
-  const { assessProtection } = require('../dist/telegram/telegram-protection');
+  const { assessProtection } = require('../dist/live/protection');
   const now = Date.UTC(2026, 8, 14, 12, 0, 0);
   const { jobs = [], pointsByJob = new Map(), streakByJob = new Map(), ...thresholds } = overrides;
   return assessProtection({
@@ -1300,7 +1300,7 @@ test('a job with no restore point at all is critical, and says when it last ran'
   assert.equal(snapshot.risks[0].ageDays, null);
   assert.equal(snapshot.risks[0].severity, 'critical');
 
-  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const { renderProtection } = require('../dist/live/protection');
   const text = renderProtection(snapshot, { now: new Date(Date.UTC(2026, 8, 14, 12)), timezone: 'UTC' });
   assert.match(text, /точек восстановления нет/);
   assert.match(text, /последний запуск 12\.08/);
@@ -1348,7 +1348,7 @@ test('repeated failures are reported even while the restore point is still fresh
   assert.equal(snapshot.risks[0].failures, 5);
   assert.equal(snapshot.protectedJobs, 1, 'a failed attempt does not erase the fresh point');
 
-  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const { renderProtection } = require('../dist/live/protection');
   const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' });
   assert.match(text, /5 неудачных запусков подряд/);
 });
@@ -1378,7 +1378,7 @@ test('the worst offenders come first, and an all-clear says so', async () => {
   });
   assert.deepEqual(snapshot.risks.map((r) => r.name), ['none-at-all', 'worst', 'mild']);
 
-  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const { renderProtection } = require('../dist/live/protection');
   const clear = renderProtection(
     assess({ jobs: [{ id: '1', name: 'ok' }], pointsByJob: new Map([['1', points(now, 0.5, 1)]]) }),
     { now: new Date(now), timezone: 'UTC' },
@@ -1387,7 +1387,7 @@ test('the worst offenders come first, and an all-clear says so', async () => {
 });
 
 test('an unread scan admits it instead of claiming everything is protected', async () => {
-  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const { renderProtection } = require('../dist/live/protection');
   const text = renderProtection(
     { risks: [], totalJobs: 112, protectedJobs: 0, staleDays: 3, overdueFactor: 2.5, minStreak: 3,
       unavailable: 'Точки восстановления ещё не прочитаны.' },
@@ -1420,7 +1420,7 @@ test('a job that only runs by hand is not owed one either', async () => {
   assert.equal(snapshot.excludedUnscheduled, 1);
   assert.equal(snapshot.totalJobs, 0);
 
-  const { renderProtection } = require('../dist/telegram/telegram-protection');
+  const { renderProtection } = require('../dist/live/protection');
   const text = renderProtection(snapshot, { now: new Date(), timezone: 'UTC' });
   assert.match(text, /Не учитываются:.*1 без расписания/, 'what is outside the check is stated');
 });
@@ -1444,7 +1444,7 @@ const DAY = 86400000;
 const NOW = Date.UTC(2026, 8, 15, 12);
 
 const depthPages = (over) => {
-  const { renderRestorePoints } = require('../dist/telegram/telegram-restore-points');
+  const { renderRestorePoints } = require('../dist/live/restore-points');
   return renderRestorePoints(
     {
       jobs: [],
@@ -1756,7 +1756,7 @@ test('both slots are told the same thing about which jobs are in scope', async (
 });
 
 test('a job is only excused on positive evidence, never on a gap', async () => {
-  const { standingsOf } = require('../dist/telegram/job-standing');
+  const { standingsOf } = require('../dist/monitor/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
     unscheduled: new Set(['known-manual']), streakByJob: new Map(), depthByJob: new Map(),
@@ -1811,7 +1811,7 @@ const collection = (total, size, quirks = {}) => {
 };
 
 test('a collection is read whole, in one page when it fits', async () => {
-  const { allPages } = require('../dist/veeam/veeam-pages');
+  const { allPages } = require('../dist/veeam/pages');
   const c = collection(40, 500);
 
   const rows = await allPages(c.reader, '/api/v1/backups', {}, 500);
@@ -1821,7 +1821,7 @@ test('a collection is read whole, in one page when it fits', async () => {
 });
 
 test('a collection longer than one page is read by offset, not by walking', async () => {
-  const { allPages } = require('../dist/veeam/veeam-pages');
+  const { allPages } = require('../dist/veeam/pages');
   const c = collection(1200, 500);
 
   const rows = await allPages(c.reader, '/api/v1/restorePoints', {}, 500);
@@ -1833,7 +1833,7 @@ test('a collection longer than one page is read by offset, not by walking', asyn
 });
 
 test('the step follows the limit Veeam actually gave, not the one asked for', async () => {
-  const { allPages } = require('../dist/veeam/veeam-pages');
+  const { allPages } = require('../dist/veeam/pages');
   // Asked for 500, capped at 200: stepping by 500 would skip two thirds.
   const c = collection(700, 500, { cap: 200 });
 
@@ -1844,7 +1844,7 @@ test('the step follows the limit Veeam actually gave, not the one asked for', as
 });
 
 test('a server that reports no total is walked until a page comes back short', async () => {
-  const { allPages } = require('../dist/veeam/veeam-pages');
+  const { allPages } = require('../dist/veeam/pages');
   const c = collection(250, 100, { silent: true });
 
   const rows = await allPages(c.reader, '/api/v1/jobs', {}, 100);
@@ -1854,8 +1854,8 @@ test('a server that reports no total is walked until a page comes back short', a
 });
 
 test('a token that expires mid-read is refreshed and the page re-fetched', async () => {
-  const { allPages } = require('../dist/veeam/veeam-pages');
-  const { VeeamApiError } = require('../dist/veeam/veeam-api.error');
+  const { allPages } = require('../dist/veeam/pages');
+  const { VeeamApiError } = require('../dist/veeam/api.error');
   let invalidated = false;
   let first = true;
   const reader = {
@@ -1886,7 +1886,7 @@ test('a token that expires mid-read is refreshed and the page re-fetched', async
  * ------------------------------------------------------------------ */
 
 const orphans = (over) => {
-  const { renderOrphans } = require('../dist/telegram/telegram-orphans');
+  const { renderOrphans } = require('../dist/live/orphans');
   return renderOrphans(
     { backups: [], points: 0, totalPoints: 0, ...over },
     { now: new Date(Date.UTC(2026, 8, 15, 12)), timezone: 'UTC' },

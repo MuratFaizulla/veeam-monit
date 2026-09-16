@@ -1,5 +1,5 @@
-import { escapeHtml } from './telegram.format';
-import { dayOf, fitted, LiveClock, plural, stampOf } from './telegram-live.format';
+import { escapeHtml } from '../telegram/format';
+import { dayOf, fitted, LiveClock, plural, stampOf } from './format';
 
 /**
  * Backup chains no live job owns any more.

@@ -2,11 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { AppConfig } from '../config/configuration';
-import { TelegramStateStore } from './telegram-state.store';
-import { TelegramTopicsService } from './telegram-topics.service';
-import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
-import { TelegramChat } from './telegram.types';
-import { LiveSlot, specOf } from './live-slots';
+import { TelegramStateStore } from '../telegram/state.store';
+import { TelegramTopicsService } from '../telegram/topics.service';
+import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
+import { TelegramChat } from '../telegram/types';
+import { LiveSlot, specOf } from './slots';
 
 export { LiveSlot };
 

@@ -1,6 +1,6 @@
-import { escapeHtml, MAX_LENGTH } from './telegram.format';
-import { LiveClock } from './telegram-live.format';
-import { VeeamSession, VeeamTaskSession } from '../veeam/veeam.types';
+import { escapeHtml, MAX_LENGTH } from '../telegram/format';
+import { LiveClock } from './format';
+import { VeeamSession, VeeamTaskSession } from '../veeam/types';
 
 export const ACTIVE_SESSION_STATES = new Set([
   'starting', 'working', 'postprocessing', 'waitingrepository', 'waitingslot',

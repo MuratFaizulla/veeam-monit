@@ -1,7 +1,7 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import { TelegramChat } from './telegram.types';
+import { TelegramChat } from './types';
 
 interface TelegramState {
   version: 1;

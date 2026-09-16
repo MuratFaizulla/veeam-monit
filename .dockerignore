@@ -15,10 +15,11 @@ telegram-routes.json
 .gitignore
 .github
 
-# Not needed to run: tests, docs, and the Veeam API reference.
+# Not needed to run: tests and documentation, including the vendor API
+# reference under docs/.
 test
+docs
 *.md
-veeam-swagger.json
 
 Dockerfile
 .dockerignore

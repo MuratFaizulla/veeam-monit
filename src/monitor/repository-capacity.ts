@@ -1,4 +1,4 @@
-import { VeeamRepositoryState } from '../veeam/veeam.types';
+import { VeeamRepositoryState } from '../veeam/types';
 
 /**
  * How full a repository is, worked out once.

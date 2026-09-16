@@ -1,4 +1,4 @@
-import { VeeamJobState } from '../veeam/veeam.types';
+import { VeeamJobState } from '../veeam/types';
 import { RetainedHistory, ScannedEvidence } from './backup-evidence.service';
 
 /**

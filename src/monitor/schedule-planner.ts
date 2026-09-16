@@ -1,5 +1,5 @@
-import { VeeamJobState, VeeamSchedule } from '../veeam/veeam.types';
-import { ScheduledRun } from './telegram-live.format';
+import { VeeamJobState, VeeamSchedule } from '../veeam/types';
+import { ScheduledRun } from '../live/format';
 
 const localDay = (date: Date, timezone: string): string =>
   new Intl.DateTimeFormat('en-CA', {

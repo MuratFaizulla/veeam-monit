@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { AppConfig } from '../config/configuration';
-import { TelegramDestination } from './telegram.types';
+import { TelegramDestination } from './types';
 
 export interface TelegramApiResponse<T> {
   ok: boolean;

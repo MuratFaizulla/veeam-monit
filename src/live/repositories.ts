@@ -1,6 +1,6 @@
-import { escapeHtml, MAX_LENGTH } from './telegram.format';
-import { LiveClock } from './telegram-live.format';
-import { RepositoryCapacity } from './repository-capacity';
+import { escapeHtml, MAX_LENGTH } from '../telegram/format';
+import { LiveClock } from './format';
+import { RepositoryCapacity } from '../monitor/repository-capacity';
 
 /**
  * The 💾 slot: how full every repository is.

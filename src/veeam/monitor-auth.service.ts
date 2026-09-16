@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpService } from '../veeam/veeam-http.service';
-import { VeeamTokenResponse } from '../veeam/veeam.types';
+import { VeeamHttpService } from './http.service';
+import { VeeamTokenResponse } from './types';
 
 const REFRESH_SKEW_MS = 60_000;
 const DEFAULT_TOKEN_LIFETIME_MS = 15 * 60_000;

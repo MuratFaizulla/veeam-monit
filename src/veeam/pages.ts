@@ -1,6 +1,6 @@
-import { VeeamApiError } from './veeam-api.error';
-import { VeeamHttpService } from './veeam-http.service';
-import { VeeamCollection } from './veeam.types';
+import { VeeamApiError } from './api.error';
+import { VeeamHttpService } from './http.service';
+import { VeeamCollection } from './types';
 
 /**
  * Reading a whole Veeam collection.

@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpService } from '../veeam/veeam-http.service';
-import { allPages, VeeamReader } from '../veeam/veeam-pages';
+import { VeeamHttpService } from '../veeam/http.service';
+import { allPages, VeeamReader } from '../veeam/pages';
 import {
   VeeamBackup,
   VeeamJob,
@@ -10,8 +10,8 @@ import {
   VeeamJobState,
   VeeamRestorePoint,
   VeeamSession,
-} from '../veeam/veeam.types';
-import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
+} from '../veeam/types';
+import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 
 /**
  * What one reading of the estate established.

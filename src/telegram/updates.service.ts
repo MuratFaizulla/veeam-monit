@@ -1,11 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { escapeHtml } from './telegram.format';
-import { TelegramStateStore } from './telegram-state.store';
-import { TelegramTopicsService } from './telegram-topics.service';
-import { TelegramTransportService } from './telegram-transport.service';
-import { TelegramChat, TelegramDestination, TelegramUpdate } from './telegram.types';
+import { escapeHtml } from './format';
+import { TelegramStateStore } from './state.store';
+import { TelegramTopicsService } from './topics.service';
+import { TelegramTransportService } from './transport.service';
+import { TelegramChat, TelegramDestination, TelegramUpdate } from './types';
 
 /**
  * How the bot hears from Telegram.

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { VeeamHttpService } from './veeam-http.service';
+import { VeeamHttpService } from './http.service';
 
 @Module({
   providers: [VeeamHttpService],
