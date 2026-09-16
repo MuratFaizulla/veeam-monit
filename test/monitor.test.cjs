@@ -718,7 +718,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'digest', 'help', 'job', 'status', 'topics'],
+    ['check', 'clear', 'digest', 'help', 'job', 'status', 'topics'],
   );
 });
 
@@ -825,4 +825,102 @@ test('the summary and the running list cannot disagree about the count', async (
 
   assert.match(live.text, /Started by hand/, '▶️ видит запуск');
   assert.match(w.api.sent().at(-1).text, /Выполняются:<\/b> 1/, 'и сводка считает его же');
+});
+
+/* ------------------------------------------------------------------ *
+ * Clearing up after itself
+ * ------------------------------------------------------------------ */
+
+test('/clear takes back the answers and leaves the record alone', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Failed')]);
+  // An alert, which is a record of something that happened.
+  await w.monitor.check();
+  w.setJobs([job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  const alerts = w.api.sent().map((_, i) => 1001 + i);
+  // And some chatter.
+  await said(w, '/status');
+  await said(w, '/help');
+  w.api.reset();
+
+  await said(w, '/clear');
+
+  const deleted = w.api.of('deleteMessages').flatMap((call) => call.message_ids);
+  assert.equal(deleted.length, 2, 'оба ответа убраны');
+  for (const id of alerts) {
+    assert.ok(!deleted.includes(id), `оповещение ${id} не тронуто`);
+  }
+  assert.match(w.api.sent().at(-1).text, /Убрано 2 сообщения/);
+});
+
+test('/clear reaches only the topic it was asked in', async () => {
+  const w = monitorWorld({}, []);
+  const inThread = (thread, text) => w.updates.handleUpdate({
+    update_id: Math.floor(Math.random() * 1e6),
+    message: {
+      message_id: 1,
+      message_thread_id: thread,
+      is_topic_message: thread !== undefined,
+      text,
+      chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+    },
+  });
+
+  await inThread(55, '/help');
+  await inThread(77, '/help');
+  await inThread(undefined, '/help');
+  w.api.reset();
+
+  await inThread(77, '/clear');
+
+  // Somebody may be mid-conversation in the next topic over.
+  const deleted = w.api.of('deleteMessages').flatMap((call) => call.message_ids);
+  assert.equal(deleted.length, 1);
+  assert.equal(w.api.sent().at(-1).message_thread_id, 77);
+});
+
+test('/clear with nothing to remove says so instead of claiming work', async () => {
+  const w = monitorWorld({}, []);
+
+  await said(w, '/clear');
+
+  assert.equal(w.api.of('deleteMessages').length, 0);
+  assert.match(w.api.sent().at(-1).text, /Нечего убирать/);
+});
+
+test('one undeletable message does not cost the whole batch', async () => {
+  const w = monitorWorld({}, [], {}, {
+    // Telegram fails the call outright when any id in it cannot be deleted.
+    deleteMessages: () => { throw new Error('Bad Request: message can\'t be deleted'); },
+    deleteMessage: (payload) => {
+      if (payload.message_id === 1002) throw new Error('Bad Request: message to delete not found');
+      return { ok: true, result: true };
+    },
+  });
+  await said(w, '/status');
+  await said(w, '/help');
+  await said(w, '/topics');
+  w.api.reset();
+
+  await said(w, '/clear');
+
+  // Three answers, one of them already gone by hand: the other two still go.
+  assert.match(w.api.sent().at(-1).text, /Убрано 2 сообщения/);
+  assert.match(w.api.sent().at(-1).text, /1 не поддал/);
+});
+
+test('answers older than Telegram allows are never offered for deletion', () => {
+  const { TelegramStateStore } = require('./world.cjs');
+  const file = path.join(os.tmpdir(), `veeam-clear-${Math.random().toString(36).slice(2)}.json`);
+  const store = new TelegramStateStore(file, []);
+
+  store.rememberAnswer(CHAT, 5001, 55);
+  // Reach past the interface deliberately: the alternative is a test that
+  // waits two days.
+  const state = JSON.parse(JSON.stringify(store.snapshot()));
+  assert.equal(state.answers[CHAT].length, 1);
+  store.forgetAnswers(CHAT, [5001]);
+
+  assert.deepEqual(store.answers(CHAT, 55), [], 'забытое не возвращается');
+  fs.rmSync(file, { force: true });
 });

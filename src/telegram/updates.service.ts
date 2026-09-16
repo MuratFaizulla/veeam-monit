@@ -13,7 +13,7 @@ import {
   TelegramUpdate,
 } from './types';
 import { MonitorAnswer, MonitorService } from '../monitor/monitor.service';
-import { stampOf } from '../live/format';
+import { plural, stampOf } from '../live/format';
 import {
   Action,
   BOT_COMMANDS,
@@ -34,6 +34,9 @@ const CHECK_COOLDOWN_KEY = 'command:check';
  */
 const READ_COOLDOWN_MS = 5_000;
 const READ_COOLDOWN_KEY = 'command:read';
+
+/** Telegram takes at most 100 message ids in one deleteMessages call. */
+const DELETE_BATCH = 100;
 
 /**
  * The command list, spelled out.
@@ -60,6 +63,9 @@ const HELP = [
   'Имя можно писать частями и в любом регистре: <code>/job konaev db</code>',
   '',
   '<b>/topics</b> — какие темы форума бот уже знает.',
+  '',
+  '<b>/clear</b> — убрать мои ответы в этой теме, когда их накопилось много.',
+  'Оповещения и живые сообщения не трогает — это записи о событиях.',
   '',
   '<i>Перезапустить службу из чата нельзя: процесс не может перезапустить сам себя,</i>',
   '<i>а кнопка перезагрузки, доступная всей группе, — это новая проблема вместо старой.</i>',
@@ -192,6 +198,13 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       chatId: String(chat.id),
       threadId: message?.is_topic_message ? message.message_thread_id : undefined,
     };
+    // The "/clear" somebody typed is clutter of the same kind, but it is their
+    // message: deleting it needs administrator rights the bot may not have, so
+    // it is attempted and never depended on.
+    if (command === '/clear' && message) {
+      await this.removeOne(String(chat.id), message.message_id);
+    }
+
     const answer = await this.respond(command, argument, chat, reply);
     if (answer) await this.send(reply, answer);
   }
@@ -246,6 +259,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     if (command === '/help') return { lines: HELP, markup: mainKeyboard() };
     if (command === '/check') return { lines: await this.runCheck(), markup: mainKeyboard() };
     if (command === '/digest') return this.summaryReply();
+    if (command === '/clear') return this.clear(reply);
     if (command === '/job') {
       return this.reading(() => this.monitor.describeJob(argument), SUMMARY_BUTTON);
     }
@@ -284,13 +298,87 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     try {
       // Cut to Telegram's limit rather than rejected by it: a job card is
       // bounded, but a forum with a hundred topics is not.
-      await this.transport.sendMessage(
+      const messageId = await this.transport.sendMessage(
         destination,
         truncate(answer.lines.join('\n')),
         answer.markup,
       );
+      // Written down here and nowhere else, which is what makes `/clear` reach
+      // the chatter and nothing else: alerts and live slots are sent by other
+      // modules and never pass through this method.
+      this.store.rememberAnswer(destination.chatId, messageId, destination.threadId);
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * `/clear` — take back the bot's own answers in this topic.
+   *
+   * Not "clear the chat": the Bot API has no such thing. A bot may delete a
+   * message only by id, cannot enumerate a chat's history, and loses the right
+   * after 48 hours. So what can be removed is exactly what this module wrote
+   * down as it sent it — the cards, summaries and status replies that pile up.
+   *
+   * Alerts are left alone deliberately. They are the record of what happened,
+   * and a command that quietly erased the evidence of last night's failures
+   * would be a worse problem than a long chat.
+   */
+  private async clear(reply: TelegramDestination): Promise<Reply> {
+    const ids = this.store.answers(reply.chatId, reply.threadId);
+    if (ids.length === 0) {
+      return {
+        lines: [
+          '🧹 <b>Нечего убирать</b>',
+          '',
+          'В этой теме нет моих ответов за последние двое суток.',
+          'Оповещения и живые сообщения я не удаляю — это записи о событиях.',
+        ],
+        markup: mainKeyboard(),
+      };
+    }
+
+    const removed = await this.removeAll(reply.chatId, ids);
+    this.store.forgetAnswers(reply.chatId, ids);
+    const stuck = ids.length - removed;
+    return {
+      lines: [
+        `🧹 <b>Убрано ${removed} ${plural(removed, 'сообщение', 'сообщения', 'сообщений')}</b>`,
+        ...(stuck > 0
+          ? ['', `${stuck} не поддались — Telegram не даёт удалять сообщения старше двух суток.`]
+          : []),
+      ],
+      markup: mainKeyboard(),
+    };
+  }
+
+  /** Deletes in batches, falling back to one at a time. Returns how many went. */
+  private async removeAll(chatId: string, ids: number[]): Promise<number> {
+    let removed = 0;
+    for (let from = 0; from < ids.length; from += DELETE_BATCH) {
+      const batch = ids.slice(from, from + DELETE_BATCH);
+      try {
+        await this.transport.call('deleteMessages', { chat_id: chatId, message_ids: batch });
+        removed += batch.length;
+      } catch {
+        // One undeletable message — too old, or already gone — fails the whole
+        // batch, so the rest is retried individually rather than abandoned.
+        for (const messageId of batch) {
+          if (await this.removeOne(chatId, messageId)) removed += 1;
+        }
+      }
+    }
+    return removed;
+  }
+
+  /** True when the message is gone. False is an answer, not a failure. */
+  private async removeOne(chatId: string, messageId: number): Promise<boolean> {
+    try {
+      await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+      return true;
+    } catch {
+      /* too old, already gone, or the bot is not an administrator here */
+      return false;
     }
   }
 
