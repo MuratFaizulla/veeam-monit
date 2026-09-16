@@ -1,11 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { renderRepositories } = require('../dist/telegram/telegram-repositories.format.js');
+const { capacities } = require('../dist/telegram/repository-capacity.js');
+
+// The slot is the pair: what Veeam reports is turned into capacities once, and
+// the formatter renders those. Feeding the wire shape straight to the renderer
+// would test a combination that no longer happens.
+const render = (repositories, clock) => renderRepositories(capacities(repositories), clock);
 
 const clock = { now: new Date('2026-09-14T12:00:00Z'), timezone: 'UTC' };
 
 test('repository live view renders usage, capacity, free space and online state', () => {
-  const text = renderRepositories([{
+  const text = render([{
     id: 'r1',
     name: 'Repository <01>',
     capacityGB: 100 * 1024,
@@ -27,14 +33,14 @@ test('repository live view tolerates unknown metrics and stays under Telegram li
     name: `Repository ${index} ${'x'.repeat(100)}`,
     isOnline: index % 2 === 0,
   }));
-  const text = renderRepositories(repositories, clock);
+  const text = render(repositories, clock);
   assert.ok(text.length <= 4096);
   assert.match(text, /нет данных/);
   assert.match(text, /UNKNOWN|ONLINE|OFFLINE/);
 });
 
 test('repository usage prefers capacity minus free when Veeam usedSpaceGB is logical', () => {
-  const text = renderRepositories([{
+  const text = render([{
     id: 'fas',
     name: 'FAS repository',
     capacityGB: 100 * 1024,
@@ -48,7 +54,7 @@ test('repository usage prefers capacity minus free when Veeam usedSpaceGB is log
 });
 
 test('repositories are numbered by natural name order with Default last', () => {
-  const text = renderRepositories([
+  const text = render([
     { id: '5', name: 'AST01_FAS8200_7K_BKP05' },
     { id: 'default', name: 'Default Backup Repository' },
     { id: '2', name: 'AST01_FAS8200_7K_BKP02' },
