@@ -187,3 +187,66 @@ test('one burst of refusals buys one new token, not one per call', async () => {
   assert.equal(auth.rejectToken(), true, 'the first refusal is acted on');
   assert.equal(auth.rejectToken(), false, 'and the rest of the same burst is not');
 });
+
+/* ------------------------------------------------------------------ *
+ * Signing in
+ * ------------------------------------------------------------------ */
+
+/** A Veeam whose refresh grant returns 200 and a token it then refuses. */
+const veeamAuth = () => {
+  const calls = [];
+  return {
+    calls,
+    veeam: {
+      login: async () => {
+        calls.push('login');
+        return { access_token: `password-${calls.length}`, refresh_token: 'r', expires_in: 3600 };
+      },
+      refresh: async () => {
+        calls.push('refresh');
+        return { access_token: `refreshed-${calls.length}`, refresh_token: 'r', expires_in: 3600 };
+      },
+    },
+  };
+};
+
+const authService = (veeam) => {
+  const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
+  return new VeeamMonitorAuthService(
+    { getOrThrow: () => ({ veeamUsername: 'svc', veeamPassword: 'p' }) },
+    veeam,
+  );
+};
+
+test('a token refused after a refresh sends the next sign-in through the password grant', async () => {
+  const v = veeamAuth();
+  const auth = authService(v.veeam);
+
+  assert.equal(await auth.getAccessToken(), 'password-1');
+  // An hour passes and the token is renewed the cheap way.
+  auth.invalidateAccessToken();
+  assert.equal(await auth.getAccessToken(), 'refreshed-2');
+
+  // Veeam answers 403 to it — on this server a refreshed token is refused,
+  // which is the hourly outage that used to be cleared only by a restart.
+  assert.equal(auth.rejectToken(), true);
+  assert.equal(await auth.getAccessToken(), 'password-3', 'a real sign-in, not another refresh');
+
+  // And it does not go back to refreshing, or the outage would return hourly.
+  auth.invalidateAccessToken();
+  assert.equal(await auth.getAccessToken(), 'password-4');
+  assert.deepEqual(v.calls, ['login', 'refresh', 'login', 'login']);
+});
+
+test('where refreshing works it is never switched off', async () => {
+  const v = veeamAuth();
+  const auth = authService(v.veeam);
+
+  await auth.getAccessToken();
+  auth.invalidateAccessToken();
+  await auth.getAccessToken();
+  auth.invalidateAccessToken();
+  await auth.getAccessToken();
+
+  assert.deepEqual(v.calls, ['login', 'refresh', 'refresh'], 'nothing refused anything');
+});

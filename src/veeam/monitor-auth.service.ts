@@ -18,6 +18,10 @@ export class VeeamMonitorAuthService {
   private refreshToken = '';
   private expiresAt = 0;
   private rejectedAt = 0;
+  /** Whether the current access token came from the refresh grant. */
+  private tokenCameFromRefresh = false;
+  /** Cleared for good once this server has refused a refreshed token. */
+  private refreshUsable = true;
   private pending?: Promise<string>;
 
   constructor(config: ConfigService, private readonly veeam: VeeamHttpService) {
@@ -62,26 +66,49 @@ export class VeeamMonitorAuthService {
     const now = Date.now();
     if (now - this.rejectedAt < REJECT_COOLDOWN_MS) return false;
     this.rejectedAt = now;
+
+    // The refusal is the refresh grant's doing on this server, so a second
+    // refresh would hand us another refused token and nothing would change.
+    // Learned rather than configured: where refreshing works it is never
+    // switched off, and where it does not it is switched off once, for the life
+    // of the process, by the only evidence that could establish it.
+    if (this.tokenCameFromRefresh && this.refreshUsable) {
+      this.refreshUsable = false;
+      this.logger.warn(
+        'Veeam refused a refreshed token; signing in with the password grant from now on',
+      );
+    }
+    this.refreshToken = '';
     this.invalidateAccessToken();
     return true;
   }
 
   private async authenticate(): Promise<string> {
+    const byRefresh = this.refreshUsable && Boolean(this.refreshToken);
     let token: VeeamTokenResponse;
     try {
-      token = this.refreshToken
+      token = byRefresh
         ? await this.veeam.refresh(this.refreshToken)
         : await this.veeam.login(this.user, this.password);
     } catch (error) {
-      if (!this.refreshToken) throw error;
+      if (!byRefresh) throw error;
       this.refreshToken = '';
       token = await this.veeam.login(this.user, this.password);
     }
     if (token.mfa_token) throw new Error('Monitor account requires MFA; use a dedicated non-interactive account');
     this.accessToken = token.access_token;
     this.refreshToken = token.refresh_token ?? this.refreshToken;
+    // Remembered because a refused token is only worth one conclusion if we
+    // know how it was obtained: the refresh grant here returns HTTP 200 and an
+    // access token the same server then answers 403 to, on every endpoint, for
+    // as long as the process keeps refreshing. That is the hourly outage this
+    // monitor had, and the reason restarting it helped — a restart is simply
+    // the only thing that used to force the password grant.
+    this.tokenCameFromRefresh = byRefresh;
     this.expiresAt = Date.now() + (token.expires_in ? token.expires_in * 1000 : DEFAULT_TOKEN_LIFETIME_MS);
-    this.logger.log(`Veeam monitor authenticated as ${token.username ?? this.user}`);
+    this.logger.log(
+      `Veeam monitor authenticated as ${token.username ?? this.user}${byRefresh ? ' (refreshed)' : ''}`,
+    );
     return this.accessToken;
   }
 }
