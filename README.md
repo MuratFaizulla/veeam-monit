@@ -58,6 +58,26 @@ Telegram-бот для наблюдения за **Veeam Backup & Replication** 
 
 Compose публикует порт `HOST_PORT` (по умолчанию `3000`) и сохраняет `./data` и `./logs` на хосте. Сохраняйте `./data` между перезапусками: иначе бот потеряет привязку к уже опубликованным живым сообщениям и историю оповещений. Если Veeam работает на том же хосте, что и Docker, используйте в `VEEAM_BASE_URL` имя `host.docker.internal` вместо `localhost`.
 
+### Запуск через PM2
+
+PM2 запускает собранный Node.js-сервис по [ecosystem.config.cjs](ecosystem.config.cjs). Выполняйте команды из корня проекта; `.env` будет загружен приложением из этого каталога. Держите запущенным только один экземпляр бота: параллельный запуск через Docker и PM2 приведёт к двум циклам мониторинга и конфликту long polling.
+
+На Windows перед командами PM2 установите его рабочую папку для текущего терминала PowerShell. Используйте тот же `PM2_HOME` при просмотре состояния, перезапуске и остановке:
+
+```powershell
+$env:PM2_HOME = Join-Path (Get-Location) '.pm2'
+```
+
+```bash
+npm ci
+npm run build
+pm2 start ecosystem.config.cjs
+pm2 status
+pm2 logs veeam-telegram-monitor
+```
+
+После обновления кода выполните `npm run build` и `pm2 restart veeam-telegram-monitor --update-env`. Для остановки используйте `pm2 stop veeam-telegram-monitor`. На Windows автоматический запуск после перезагрузки нужно настроить отдельно средствами системы.
+
 ## Подключение Telegram
 
 По умолчанию бот использует **long polling**: публичный адрес не нужен. Если задан `TELEGRAM_WEBHOOK_URL`, сервис регистрирует webhook по адресу `<TELEGRAM_WEBHOOK_URL>/api/telegram/webhook`. Укажите публичный HTTPS-адрес, доступный Telegram, и задайте `TELEGRAM_WEBHOOK_SECRET`: входящий запрос проверяется по заголовку `X-Telegram-Bot-Api-Secret-Token`. При использовании webhook настройте также HTTPS и переадресацию на HTTP-порт сервиса.
