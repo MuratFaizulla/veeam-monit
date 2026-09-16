@@ -18,6 +18,8 @@ import { iconOf, isRunning, resultOf } from './job-state';
  */
 
 export interface FailingJob {
+  /** Absent only where Veeam reported a job with no id at all. */
+  id?: string;
   name: string;
   /** Lower-cased Veeam result: `failed` or `warning`. */
   result: string;
@@ -58,7 +60,7 @@ export const summarise = (jobs: VeeamJobState[]): DigestSummary => {
     if (isRunning(job)) summary.running += 1;
 
     if (result === 'failed' || result === 'warning') {
-      summary.failing.push({ name: job.name ?? job.id ?? 'без имени', result });
+      summary.failing.push({ id: job.id, name: job.name ?? job.id ?? 'без имени', result });
     }
   }
 

@@ -191,13 +191,34 @@ Owned by `src/veeam/inventory.service.ts`.
 
 ## Answer
 
-What a command produces, as opposed to an **event**. An answer is sent back to
-the chat and thread the question was asked in; an event goes through routing to
-the topic its kind and severity imply.
+What a command or a **Button** produces, as opposed to an **event**. An answer
+is sent back to the chat and thread the question was asked in; an event goes
+through routing to the topic its kind and severity imply.
 
 The distinction is load-bearing for `/digest`: routed as an event, a summary
 with nothing wrong in it would be delivered to the recoveries topic by its
 severity, nowhere near whoever asked.
+
+An answer carries the ids of whatever it lets the reader ask about next, not
+only its text. That is what a **Button** is built from: a rendered job name is
+not an address.
+
+## Button
+
+One offered next step under an answer. What it means travels in Telegram's
+`callback_data`, capped at 64 bytes — so a job is addressed by its GUID and
+never by its name, and a button opens the job it was labelled with even if the
+estate changed between the message and the press.
+
+The encoding and its reader are one module, `src/telegram/keyboard.ts`, because
+they are one decision seen twice. Written apart they drift, and nothing fails
+until somebody presses one in production. An action the running version does
+not recognise — a button on an older message — is acknowledged and ignored
+rather than answered by guess.
+
+The **command menu** is the neighbouring idea: the list registered with
+`setMyCommands` at startup, which Telegram shows beside the input field. It is
+the only place the bot's commands are discoverable without reading `/help`.
 
 ## Orphaned chain
 

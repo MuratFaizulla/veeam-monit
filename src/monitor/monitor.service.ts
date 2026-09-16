@@ -41,7 +41,14 @@ import { OrphansSnapshot, renderOrphans } from '../live/orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
-import { digestBody, digestFields, renderDigest, summarise } from './digest';
+import {
+  DigestSummary,
+  FailingJob,
+  digestBody,
+  digestFields,
+  renderDigest,
+  summarise,
+} from './digest';
 import { isBadResult, isDisabled, isRunning, resultOf } from './job-state';
 import {
   FailedObject,
@@ -72,6 +79,33 @@ const orphanPoints = (chains: { points: number }[]): number =>
 
 /** Sessions read for a job card: enough to show a pattern, cheap enough to ask. */
 const CARD_SESSIONS = 6;
+
+/**
+ * The failing jobs a button can actually open.
+ *
+ * A job Veeam reported without an id can be shown in a list and cannot be
+ * addressed afterwards, so it is named in the text and left out of the buttons
+ * rather than given one that would do nothing.
+ */
+const addressable = (summary: DigestSummary): Array<{ id: string; name: string }> =>
+  summary.failing
+    .filter((job): job is FailingJob & { id: string } => Boolean(job.id))
+    .map(({ id, name }) => ({ id, name }));
+
+/**
+ * An answer to a question from the chat, and what it lets somebody ask next.
+ *
+ * The text alone was enough while every answer was read; it stopped being
+ * enough the moment answers grew buttons, because a button has to address the
+ * job it opens and a rendered name is not an address.
+ */
+export interface MonitorAnswer {
+  text: string;
+  /** Jobs worth offering as a next step, in the order to offer them. */
+  jobs?: Array<{ id: string; name: string }>;
+  /** Set when this answer is about exactly one job, so it can be re-asked. */
+  jobId?: string;
+}
 
 export interface MonitorHealth {
   lastCheckAt: string | null;
@@ -192,10 +226,17 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
    * asked for in General would land in the recoveries topic, where nobody who
    * asked for it is looking. An answer belongs where the question was.
    */
-  async summary(): Promise<string> {
+  async summary(): Promise<MonitorAnswer> {
     const read = await this.jobsNow();
-    if (!read.ok) return read.message;
-    return renderDigest(summarise(read.jobs), this.clock());
+    if (!read.ok) return { text: read.message };
+    const summary = summarise(read.jobs);
+    return {
+      text: renderDigest(summary, this.clock()),
+      // The jobs that are not well are exactly the ones somebody reading this
+      // is about to ask about, so the summary offers them rather than making
+      // them be typed back in.
+      jobs: addressable(summary),
+    };
   }
 
   /**
@@ -206,30 +247,75 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
    * happened, never from a new one, so asking about a job costs two requests
    * rather than the half-minute the scan takes.
    */
-  async describeJob(query: string): Promise<string> {
+  async describeJob(query: string): Promise<MonitorAnswer> {
     if (!query.trim()) {
-      return [
-        '🔎 <b>Укажите задание</b>',
-        '',
-        'Например: <code>/job OPS_Exchange</code>',
-        'Имя можно писать частями и в любом регистре: <code>/job kingston db</code>',
-      ].join('\n');
+      const read = await this.jobsNow();
+      return {
+        text: [
+          '🔎 <b>Укажите задание</b>',
+          '',
+          'Например: <code>/job OPS_Exchange</code>',
+          'Имя можно писать частями и в любом регистре: <code>/job kingston db</code>',
+          '',
+          'Или выберите из тех, что сейчас не в порядке:',
+        ].join('\n'),
+        // Asking for a card without saying which job is most often "show me
+        // the one that is broken", so that list is offered instead of a scold.
+        jobs: read.ok ? addressable(summarise(read.jobs)) : undefined,
+      };
     }
 
     const read = await this.jobsNow();
-    if (!read.ok) return read.message;
+    if (!read.ok) return { text: read.message };
 
     const match = matchJob(read.jobs, query);
     if (match.found === 'none') {
-      return [
-        `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
-        '',
-        `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
-      ].join('\n');
+      return {
+        text: [
+          `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
+          '',
+          `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
+        ].join('\n'),
+      };
     }
-    if (match.found === 'many') return renderChoices(match.names, query);
-    return renderJobCard(await this.cardFor(match.job, read.accessToken), this.clock());
+    if (match.found === 'many') {
+      return {
+        text: renderChoices(match.jobs, query),
+        jobs: match.jobs
+          .filter((job): job is VeeamJobState & { id: string } => Boolean(job.id))
+          .map((job) => ({ id: job.id, name: job.name ?? job.id })),
+      };
+    }
+    return this.cardAnswer(match.job, read.accessToken);
   }
+
+  /**
+   * The same card, addressed by id rather than by name.
+   *
+   * What a button presses. A name would not fit in Telegram's 64 bytes of
+   * callback data, and re-running the search would mean a button could open a
+   * different job than the one it was labelled with, if the estate changed
+   * between the message and the press.
+   */
+  async describeJobById(id: string): Promise<MonitorAnswer> {
+    const read = await this.jobsNow();
+    if (!read.ok) return { text: read.message };
+    const job = read.jobs.find((candidate) => candidate.id === id);
+    if (!job) {
+      return {
+        text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.',
+      };
+    }
+    return this.cardAnswer(job, read.accessToken);
+  }
+
+  private async cardAnswer(job: VeeamJobState, accessToken: string): Promise<MonitorAnswer> {
+    return {
+      text: renderJobCard(await this.cardFor(job, accessToken), this.clock()),
+      jobId: job.id,
+    };
+  }
+
 
   /**
    * The job list, right now, for a question rather than for a cycle.

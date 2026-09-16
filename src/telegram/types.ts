@@ -29,10 +29,36 @@ export interface TelegramMessage {
   forum_topic_created?: TelegramForumTopicCreated;
 }
 
+/** One button under a message. `callback_data` is capped at 64 bytes by Telegram. */
+export interface TelegramButton {
+  text: string;
+  callback_data: string;
+}
+
+/** Rows of buttons attached to a message. */
+export interface TelegramKeyboard {
+  inline_keyboard: TelegramButton[][];
+}
+
+/** Somebody pressed a button. The message it hangs under is in `message`. */
+export interface TelegramCallbackQuery {
+  id: string;
+  data?: string;
+  from?: { id: number; first_name?: string; username?: string };
+  message?: TelegramMessage;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
   my_chat_member?: { chat: TelegramChat };
+}
+
+/** One entry of the command menu Telegram shows next to the input field. */
+export interface TelegramBotCommand {
+  command: string;
+  description: string;
 }
 
 /** A resolved delivery address: a chat and, for forums, a topic inside it. */

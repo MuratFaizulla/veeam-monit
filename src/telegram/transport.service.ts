@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { AppConfig } from '../config/configuration';
-import { TelegramDestination } from './types';
+import { TelegramDestination, TelegramKeyboard } from './types';
 
 export interface TelegramApiResponse<T> {
   ok: boolean;
@@ -47,6 +47,8 @@ export class TelegramApiError extends Error {
 interface QueuedMessage {
   destination: TelegramDestination;
   text: string;
+  /** Buttons to hang under it, when the message is an answer worth acting on. */
+  markup?: TelegramKeyboard;
   attempts: number;
   resolve: (value: number) => void;
   reject: (error: Error) => void;
@@ -129,7 +131,11 @@ export class TelegramTransportService implements OnModuleDestroy {
   }
 
   /** Queues a message and resolves with its message_id once Telegram took it. */
-  sendMessage(destination: TelegramDestination, text: string): Promise<number> {
+  sendMessage(
+    destination: TelegramDestination,
+    text: string,
+    markup?: TelegramKeyboard,
+  ): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       if (!this.enabled) {
         reject(new Error('Telegram is not configured'));
@@ -142,7 +148,7 @@ export class TelegramTransportService implements OnModuleDestroy {
         queue.items.shift()?.reject(new Error('Telegram queue overflow'));
         this.dropped += 1;
       }
-      queue.items.push({ destination, text, attempts: 0, resolve, reject });
+      queue.items.push({ destination, text, markup, attempts: 0, resolve, reject });
       void this.drain(destination.chatId);
     });
   }
@@ -172,6 +178,7 @@ export class TelegramTransportService implements OnModuleDestroy {
             text: item.text,
             parse_mode: 'HTML',
             disable_web_page_preview: true,
+            reply_markup: item.markup,
           });
           queue.items.shift();
           queue.nextAt = Date.now() + this.config.sendIntervalMs;
