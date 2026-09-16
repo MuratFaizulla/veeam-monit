@@ -1,0 +1,36 @@
+services:
+  monitor:
+    build: .
+    image: veeam-telegram-monitor:local
+    container_name: veeam-telegram-monitor
+    restart: unless-stopped
+
+    # The real secrets stay in .env on the host and are handed to the container
+    # at start. They are never copied into the image — see .dockerignore.
+    env_file: .env
+
+    environment:
+      # Fixed inside the container so the port mapping below cannot drift away
+      # from what the process listens on; change HOST_PORT, not this.
+      PORT: 3000
+      # Read when TELEGRAM_TIMEZONE is empty. Set it to the zone whose working
+      # day the messages should describe.
+      TZ: ${TZ:-Asia/Qyzylorda}
+
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+
+    volumes:
+      # telegram-state.json lives here and holds the ids of the live messages.
+      # Without this mount every `docker compose up` starts a second copy of
+      # every live topic next to the first, and forgets which jobs it has
+      # already reported on.
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+    # Veeam usually sits outside Docker. If VEEAM_BASE_URL points at the host
+    # this container runs on, address it as host.docker.internal — `localhost`
+    # inside a container is the container. On Linux this mapping is not
+    # automatic, which is why it is spelled out.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

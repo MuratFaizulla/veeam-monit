@@ -13,20 +13,24 @@ import { NotificationEvent, TelegramChat } from './telegram.types';
  * collapse into `skipped: true`, which made "the alert never arrived" an
  * unanswerable question without reading four modules.
  */
-export type DeliveryOutcome =
-  | 'delivered'
+export const DELIVERY_OUTCOMES = [
+  'delivered',
   /** A rule in the routes file matched and asked for silence. */
-  | 'dropped-by-rule'
+  'dropped-by-rule',
   /** TELEGRAM_SEVERITIES excludes this severity. */
-  | 'severity-filtered'
+  'severity-filtered',
   /** The same condition was reported recently and is still inside its window. */
-  | 'cooldown'
+  'cooldown',
   /** No bot token, so there is nowhere to send. */
-  | 'transport-disabled'
+  'transport-disabled',
   /** The bot belongs to no chat yet. */
-  | 'no-chats'
+  'no-chats',
   /** Delivery was attempted against every chat and none accepted it. */
-  | 'failed';
+  'failed',
+] as const;
+
+/** The list above is the definition, so the published API documents exactly it. */
+export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
 
 export interface DeliveryReport {
   outcome: DeliveryOutcome;

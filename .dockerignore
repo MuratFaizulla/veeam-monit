@@ -1,0 +1,25 @@
+# .env first and loudest: it holds the Veeam service account and the bot token,
+# and anything copied into an image is readable by anyone who can pull it. The
+# real values are passed at run time (env_file), never baked in.
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+logs
+data
+telegram-routes.json
+
+.git
+.gitignore
+.github
+
+# Not needed to run: tests, docs, and the Veeam API reference.
+test
+*.md
+veeam-swagger.json
+
+Dockerfile
+.dockerignore
+docker-compose.yml

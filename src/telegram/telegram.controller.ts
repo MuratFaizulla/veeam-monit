@@ -1,9 +1,18 @@
 import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  ApiBadRequestResponse,
+  ApiForbiddenResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiSecurity,
+  ApiServiceUnavailableResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AppConfig } from '../config/configuration';
 import { TelegramMonitorService } from './telegram-monitor.service';
 import { TelegramRoutingService } from './telegram-routing.service';
-import { TelegramService } from './telegram.service';
+import { DELIVERY_OUTCOMES, DeliveryReport, TelegramService } from './telegram.service';
 import { TelegramUpdatesService } from './telegram-updates.service';
 import {
   TelegramAdminGuard,
@@ -11,14 +20,32 @@ import {
   TelegramWebhookGuard,
 } from './telegram-access.guard';
 import { announcement, ManualEvent, probe } from './telegram-manual-event';
-import { DeliveryReport } from './telegram.service';
+import { AnnouncementBody, ProbeBody } from './telegram.dto';
 import { TelegramUpdate } from './telegram.types';
+
+/** Shape of what `notify` reports back, for the published document. */
+const DELIVERY_REPORT = {
+  type: 'object',
+  properties: {
+    outcome: {
+      type: 'string',
+      enum: [...DELIVERY_OUTCOMES],
+      description: 'Что стало с событием. «Не доставлено» — это пять разных причин.',
+    },
+    sent: { type: 'integer', description: 'В скольких чатах сообщение принято.' },
+    failed: { type: 'integer', description: 'В скольких чатах отправка сорвалась.' },
+    skipped: { type: 'boolean', description: 'true — отправку не пробовали вовсе.' },
+    topic: { type: 'string', nullable: true, description: 'Выбранная тема, null — General.' },
+    reason: { type: 'string', description: 'Какое правило маршрутизации выбрало тему.' },
+  },
+};
 
 /**
  * HTTP in, JSON out. Every endpoint here is a shape and an access rule; the
  * decisions behind them belong to the modules above, so that nothing this file
  * knows can only be tested by standing up a web server.
  */
+@ApiTags('telegram')
 @Controller('telegram')
 export class TelegramController {
   private readonly config: AppConfig['telegram'];
@@ -34,6 +61,14 @@ export class TelegramController {
   }
 
   @Get('status')
+  @ApiOperation({
+    summary: 'Готовность интеграции и здоровье монитора',
+    description:
+      'Открыт без ключа: это проба, по которой судят, жив ли мониторинг.\n\n' +
+      '`mode` — чем бот действительно принимает обновления: `polling`, `webhook`,' +
+      ' `disabled` (нет токена) или `starting` (токен есть, но ни один способ ещё не' +
+      ' поднялся — например, запуск long polling не удался).',
+  })
   status() {
     const reach = this.telegram.reach;
     return {
@@ -50,6 +85,14 @@ export class TelegramController {
 
   @Post('webhook')
   @UseGuards(TelegramWebhookGuard)
+  @ApiSecurity('webhookSecret')
+  @ApiOperation({
+    summary: 'Колбэк Telegram',
+    description:
+      'Вызывает не человек, а Telegram. Используется, только если задан' +
+      ' TELEGRAM_WEBHOOK_URL; иначе бот сам опрашивает Bot API (long polling).',
+  })
+  @ApiForbiddenResponse({ description: 'Секрет не совпал или не задан в конфигурации.' })
   async webhook(@Body() update: TelegramUpdate): Promise<{ ok: true }> {
     await this.updates.handleUpdate(update);
     return { ok: true };
@@ -57,6 +100,9 @@ export class TelegramController {
 
   @Get('chats')
   @UseGuards(TelegramAdminGuard)
+  @ApiSecurity('adminKey')
+  @ApiOperation({ summary: 'Зарегистрированные чаты и известные темы' })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
   chats() {
     return { chats: this.telegram.listChats() };
   }
@@ -64,6 +110,12 @@ export class TelegramController {
   /** The effective routing table, so an operator can see where an alert will land. */
   @Get('routes')
   @UseGuards(TelegramAdminGuard)
+  @ApiSecurity('adminKey')
+  @ApiOperation({
+    summary: 'Действующая таблица маршрутизации',
+    description: 'Где окажется событие, до того как оно случится.',
+  })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
   routes() {
     return {
       mode: this.config.routingMode,
@@ -80,27 +132,42 @@ export class TelegramController {
   /** Picks up edits to TELEGRAM_ROUTES_FILE without a restart. */
   @Post('routes/reload')
   @UseGuards(TelegramAdminGuard)
+  @ApiSecurity('adminKey')
+  @ApiOperation({
+    summary: 'Перечитать файл правил',
+    description: 'Подхватывает правки TELEGRAM_ROUTES_FILE без перезапуска сервиса.',
+  })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
   reload() {
     return { rules: this.routing.reload() };
   }
 
   @Post('notify')
   @UseGuards(TelegramAdminGuard, TelegramEnabledGuard)
-  async notify(@Body() body: { text?: string }): Promise<DeliveryReport> {
+  @ApiSecurity('adminKey')
+  @ApiOperation({ summary: 'Отправить произвольное сообщение' })
+  @ApiOkResponse({ description: 'Что стало с событием.', schema: DELIVERY_REPORT })
+  @ApiBadRequestResponse({ description: 'Пустой text.' })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
+  @ApiServiceUnavailableResponse({ description: 'TELEGRAM_BOT_TOKEN не задан — отправлять некуда.' })
+  async notify(@Body() body: AnnouncementBody): Promise<DeliveryReport> {
     return this.telegram.notify(this.accepted(announcement(body.text)));
   }
 
-  /**
-   * Sends a synthetic event through the real routing path. This is how a
-   * deployment is verified end to end — including topic creation — without
-   * waiting for a job to actually fail.
-   */
   @Post('test')
   @UseGuards(TelegramAdminGuard, TelegramEnabledGuard)
-  async test(
-    @Body()
-    body: { kind?: string; severity?: string; subject?: string; title?: string; body?: string },
-  ): Promise<DeliveryReport> {
+  @ApiSecurity('adminKey')
+  @ApiOperation({
+    summary: 'Синтетическое событие через реальный маршрутизатор',
+    description:
+      'Так проверяют развёртывание целиком — включая создание тем — не дожидаясь,' +
+      ' пока какое-нибудь задание действительно упадёт.',
+  })
+  @ApiOkResponse({ description: 'Что стало с событием.', schema: DELIVERY_REPORT })
+  @ApiBadRequestResponse({ description: 'Неизвестный kind или severity; в ответе — список допустимых.' })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
+  @ApiServiceUnavailableResponse({ description: 'TELEGRAM_BOT_TOKEN не задан — отправлять некуда.' })
+  async test(@Body() body: ProbeBody): Promise<DeliveryReport> {
     return this.telegram.notify(this.accepted(probe(body)));
   }
 
@@ -114,6 +181,14 @@ export class TelegramController {
    */
   @Post('check')
   @UseGuards(TelegramAdminGuard)
+  @ApiSecurity('adminKey')
+  @ApiOperation({
+    summary: 'Прогнать цикл проверки Veeam немедленно',
+    description:
+      '`ran: true` — цикл выполнил именно этот запрос. `ran: false` — цикл уже шёл,' +
+      ' запрос отклонён, а состояние рядом относится к тому, другому циклу.',
+  })
+  @ApiForbiddenResponse({ description: 'Неверный или незаданный TELEGRAM_ADMIN_KEY.' })
   async check() {
     const ran = (await this.monitor.check()) === 'ran';
     return { ran, ...this.monitor.status };
