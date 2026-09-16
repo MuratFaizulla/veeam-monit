@@ -14,7 +14,7 @@ build/
 logs/
 data/
 .vite/
-backend/telegram-routes.json
+telegram-routes.json
 
 # Editor and OS noise
 .vscode/
