@@ -41,6 +41,23 @@ export const statusOf = (job: VeeamJobState): string => (job.status ?? '').toLow
 
 export const isRunning = (job: VeeamJobState): boolean => RUNNING.has(statusOf(job));
 
+/**
+ * Whether the job is transferring right now, from both sources that know.
+ *
+ * Each one misses runs the other sees. A job's own status misses a run somebody
+ * started by hand on a job that is switched off: Veeam keeps reporting that job
+ * as `disabled` while it transfers. A Working session misses a run that is
+ * queued rather than transferring — waiting on a repository slot, say — where
+ * the status is the only evidence.
+ *
+ * `working` is the set of job ids with a Working session. The union never shows
+ * fewer than either source alone, and having it written once is what stops the
+ * ▶️ list and the summary from reporting different numbers of running jobs —
+ * which they did, because each counted its own way.
+ */
+export const isRunningNow = (job: VeeamJobState, working: ReadonlySet<string>): boolean =>
+  isRunning(job) || Boolean(job.id && working.has(job.id));
+
 /** Switched off in Veeam. Says nothing about whether it is transferring. */
 export const isDisabled = (job: VeeamJobState): boolean => statusOf(job) === 'disabled';
 

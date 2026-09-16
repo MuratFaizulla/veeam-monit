@@ -147,8 +147,17 @@ wrong claim: nothing is windowed, every figure comes from each job's own
 counted as failed on Monday. That is the point of it — 🚨 Alerts reports
 **transitions**, so a permanently broken job appears there once and never again.
 
-Counted in `src/monitor/digest.ts`, seen twice: pushed as an event at
-`TELEGRAM_DIGEST_HOUR`, and pulled by `/digest`.
+One event, two deliveries: `digestEvent` builds it, the daily message routes it
+at `TELEGRAM_DIGEST_HOUR`, and `/digest` renders the same event straight back to
+whoever asked. They were briefly two renderings of one set of figures and began
+to differ within a day; there is now nothing that can differ.
+
+The running count comes from the union of job status and Working sessions, not
+from the status alone — see `isRunningNow`. Counting it separately here is what
+let the ▶️ slot and the summary report different numbers of running jobs on the
+same estate at the same moment.
+
+Owned by `src/monitor/digest.ts`.
 
 ## Job card
 

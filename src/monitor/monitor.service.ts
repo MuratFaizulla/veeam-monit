@@ -41,15 +41,8 @@ import { OrphansSnapshot, renderOrphans } from '../live/orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
-import {
-  DigestSummary,
-  FailingJob,
-  digestBody,
-  digestFields,
-  renderDigest,
-  summarise,
-} from './digest';
-import { isBadResult, isDisabled, isRunning, resultOf } from './job-state';
+import { DigestSummary, FailingJob, digestEvent, summarise } from './digest';
+import { isBadResult, isDisabled, isRunningNow, resultOf } from './job-state';
 import {
   FailedObject,
   JobCard,
@@ -60,7 +53,7 @@ import {
   renderJobCard,
   settingsOf,
 } from './job-card';
-import { escapeHtml } from '../telegram/format';
+import { escapeHtml, renderEvent } from '../telegram/format';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
@@ -229,9 +222,12 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   async summary(): Promise<MonitorAnswer> {
     const read = await this.jobsNow();
     if (!read.ok) return { text: read.message };
-    const summary = summarise(read.jobs);
+    const summary = summarise(read.jobs, await this.workingJobs(read.accessToken));
     return {
-      text: renderDigest(summary, this.clock()),
+      // The very same event the daily message sends, rendered instead of
+      // routed. Two renderings of one set of figures began to differ within a
+      // day of existing; there is now nothing that can differ.
+      text: renderEvent(digestEvent(summary)),
       // The jobs that are not well are exactly the ones somebody reading this
       // is about to ask about, so the summary offers them rather than making
       // them be typed back in.
@@ -261,7 +257,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
         ].join('\n'),
         // Asking for a card without saying which job is most often "show me
         // the one that is broken", so that list is offered instead of a scold.
-        jobs: read.ok ? addressable(summarise(read.jobs)) : undefined,
+        // Only the failing list is read here, never the running count, so the
+        // sessions are not worth a request to answer "which job did you mean".
+        jobs: read.ok ? addressable(summarise(read.jobs, new Set())) : undefined,
       };
     }
 
@@ -894,41 +892,25 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    // Two sources, united, because each one misses runs the other sees.
-    //
-    // A job's own status misses a run somebody started by hand on a job that is
-    // switched off: Veeam keeps reporting that job as "disabled" while it
-    // transfers. Two such runs were missing from this list for as long as it
-    // was built from the status alone, and the count said so confidently.
-    //
-    // A Working session misses a run that is queued rather than transferring —
-    // waiting on a repository slot, say — where the job status is the only
-    // evidence. The union never shows fewer than either source alone, which is
-    // also what makes a failure of the session call degrade instead of lie.
+    // Both sources, united by isRunningNow — sessions with no job of ours
+    // behind them, Malware Detection among them, are not jobs and never enter
+    // the list, because it is the jobs that are walked and not the sessions.
     const sessions = await this.runningSessions(accessToken);
-    const running = new Map<string, { job: VeeamJobState; session?: VeeamSession }>();
-
-    for (const job of jobs) {
-      if (isRunning(job)) {
-        running.set(job.id ?? job.name ?? '', { job });
-      }
-    }
-    for (const job of jobs) {
-      const session = job.id ? sessions.get(job.id) : undefined;
-      // Sessions with no job of ours behind them — Malware Detection is one —
-      // are not jobs and do not belong in a list of jobs.
-      if (session) running.set(job.id ?? job.name ?? '', { job, session });
-    }
+    const working = new Set(sessions.keys());
 
     return {
-      jobs: [...running.values()]
-        .map(({ job, session }) => ({
-          name: job.name ?? job.id ?? 'без имени',
-          type: job.type,
-          percent: session?.progressPercent,
-          startedAt: session?.creationTime ?? job.lastRun,
-          disabled: isDisabled(job),
-        }))
+      jobs: jobs
+        .filter((job) => isRunningNow(job, working))
+        .map((job) => {
+          const session = job.id ? sessions.get(job.id) : undefined;
+          return {
+            name: job.name ?? job.id ?? 'без имени',
+            type: job.type,
+            percent: session?.progressPercent,
+            startedAt: session?.creationTime ?? job.lastRun,
+            disabled: isDisabled(job),
+          };
+        })
         // The renderer prints them in the order it is given, and an operator
         // rereads this message every few minutes: a stable order is what makes
         // "is my job still there" answerable at a glance.
@@ -936,6 +918,17 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       totalJobs: jobs.length,
       next: this.upcomingRuns(jobs)[0] ?? null,
     };
+  }
+
+  /**
+   * Job ids Veeam has a Working session for.
+   *
+   * Best effort, and the failure is the safe direction: an empty set makes the
+   * count fall back to the job status alone, which is what it used to be, and
+   * never invents a run that is not happening.
+   */
+  private async workingJobs(accessToken: string): Promise<ReadonlySet<string>> {
+    return new Set((await this.runningSessions(accessToken)).keys());
   }
 
   /** Newest working session per job. Best effort: progress is a nicety. */
@@ -1109,18 +1102,8 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       method: 'GET',
       path: JOB_STATES,
     });
-    const summary = summarise(response.data ?? []);
-
-    const report = await this.emit({
-      kind: 'digest',
-      severity: summary.failed ? 'critical' : summary.warning ? 'warning' : 'success',
-      // Not "за сутки": every figure below is the standing of every job right
-      // now, which is a different claim from what happened in the last day and
-      // was the wrong one on any morning a job had not run since Friday.
-      title: 'Veeam: сводка по заданиям',
-      fields: digestFields(summary),
-      body: digestBody(summary),
-    });
+    const summary = summarise(response.data ?? [], await this.workingJobs(accessToken));
+    const report = await this.emit(digestEvent(summary));
 
     // Arming before the fetch, as this used to, lost the whole digest for 23
     // hours whenever that request threw.
