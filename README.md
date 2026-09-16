@@ -59,6 +59,12 @@ npm run start:dev        # или npm run build && npm run start:prod
 
 Проверки: `npm run lint` (`tsc --noEmit`) и `npm test` (сборка + `node:test`).
 
+Тесты разложены по тем же папкам, что и `src/`: `test/telegram`, `test/monitor`,
+`test/live` (плюс `live-performance`, `live-repositories`), `test/veeam`, а общий
+стенд — `test/world.cjs`. Каждый файл запускается сам по себе, но запускать
+нужно `npm test`: раньше всё лежало в одном файле на две тысячи строк, и прогон
+«того самого» файла однажды скрыл сломанный соседний.
+
 ### В Docker
 
 ```bash
