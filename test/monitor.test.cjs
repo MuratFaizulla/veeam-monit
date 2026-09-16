@@ -10,7 +10,7 @@ const {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -117,10 +117,7 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/sessions': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
   await monitor.check();
 
   // Nothing at all: the persisted result stops a duplicate alert, and the
@@ -145,10 +142,7 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
       return 'tok';
     },
   };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /не авторизуется/.test(payload.text));
@@ -178,10 +172,7 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     '/api/v1/jobs/states': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   w.api.reset();
@@ -208,10 +199,7 @@ test('a repository below the free-space threshold is reported once per cooldown'
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   const alerts = w.api.sent().filter((payload) => /Repo0/.test(payload.text));
@@ -236,10 +224,7 @@ test('a repository that does not report free space raises nothing', async () => 
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   assert.deepEqual(w.api.sent().filter((payload) => /Repo0/.test(payload.text)), []);
@@ -558,4 +543,136 @@ test('/help names every command the bot answers', async () => {
   for (const command of ['/status', '/check', '/digest', '/job', '/topics']) {
     assert.ok(reply.text.includes(command), `${command} описан`);
   }
+});
+
+/**
+ * OPS_ERP_EMM_DB1 as this VBR actually reports it: three days a week at
+ * 03:12, four twenty-second retries that all failed on the same unreachable
+ * machine, and a fifth run that worked.
+ */
+const configured = () => monitorWorld({}, [
+  {
+    id: '1', name: 'OPS_ERP_EMM_DB1', type: 'Backup', status: 'Stopped',
+    lastResult: 'Failed', lastRun: '2026-09-16T03:44:58+05:00',
+    nextRun: '2026-09-18T03:12:00+05:00', objectsCount: 1,
+  },
+], {
+  '/api/v1/jobs/1': {
+    id: '1', name: 'OPS_ERP_EMM_DB1',
+    schedule: {
+      runAutomatically: true,
+      // Veeam lists the days in its own order; the card must not.
+      daily: { isEnabled: true, dailyKind: 'SelectedDays', localTime: '03:12',
+        days: ['friday', 'monday', 'wednesday'] },
+      retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 },
+    },
+    storage: {
+      backupRepositoryId: 'repo-6',
+      backupProxies: { autoSelectEnabled: true, proxyIds: [] },
+      retentionPolicy: { type: 'Days', quantity: 7 },
+      advancedSettings: {
+        backupModeType: 'Incremental',
+        activeFulls: { isEnabled: true, weekly: { isEnabled: true, days: ['saturday'] } },
+      },
+    },
+    virtualMachines: {
+      includes: [{ name: 'APPDB1-T3Q4', hostName: '192.0.2.194', size: '3,9 TB' }],
+      excludes: { vms: [] },
+    },
+  },
+  '/api/v1/backupInfrastructure/repositories': { data: [{ id: 'repo-6', name: 'SITE1_NAS_BKP06' }] },
+  '/api/v1/backupInfrastructure/proxies': { data: [{ id: 'p1', name: '192.0.2.20' }] },
+  '/api/v1/sessions': { data: [{
+    id: 'sess-bad', jobId: '1',
+    creationTime: '2026-09-16T03:44:58+05:00', endTime: '2026-09-16T03:45:17+05:00',
+    result: { result: 'Failed', message: 'Virtual Machine APPDB1-T3Q4 is unavailable and will be skipped from processing' },
+  }] },
+  '/api/v1/sessions/sess-bad/taskSessions': { data: [{
+    name: 'APPDB1-T3Q4', state: 'Stopped',
+    result: { result: 'Failed', message: 'Getting VM info from vSphere' },
+  }] },
+});
+
+test('/job shows how the job is set up, not just how it ran', async () => {
+  const w = configured();
+
+  await said(w, '/job EMM_DB1');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /Расписание:<\/b> пн, ср, пт в 03:12/, 'дни в порядке недели');
+  assert.match(reply, /Повтор при ошибке:<\/b> 3 раза через 10 мин/);
+  assert.match(reply, /Репозиторий:<\/b> SITE1_NAS_BKP06/, 'имя, а не id');
+  assert.match(reply, /Прокси:<\/b> автоматически/);
+  assert.match(reply, /Хранение:<\/b> 7 дней/);
+  assert.match(reply, /Режим:<\/b> Incremental, активный полный: сб/);
+  assert.match(reply, /Машины \(1\)/);
+  assert.match(reply, /APPDB1-T3Q4 — 3,9 TB · 192\.0\.2\.194/);
+});
+
+test('/job names the machine that failed, which the job name never does', async () => {
+  const w = configured();
+
+  await said(w, '/job EMM_DB1');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /Что именно не прошло/);
+  assert.match(reply, /🔴 APPDB1-T3Q4 — Getting VM info from vSphere/);
+});
+
+test('a job that is not failing is not asked which machine failed', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await said(w, '/job SQL');
+
+  // The per-object read costs a request and answers a question nobody asked:
+  // a recovered job's failures are already in its run list.
+  assert.doesNotMatch(w.api.sent().at(-1).text, /Что именно не прошло/);
+});
+
+test('a schedule is read the way Veeam means it', () => {
+  const { describeSchedule, describeRetry } = require('../dist/monitor/schedule-planner');
+
+  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }), 'ежедневно в 22:00');
+  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'WeekDays', localTime: '03:00' } }), 'по рабочим дням в 03:00');
+  assert.equal(describeSchedule({ runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 4 } }), 'каждые 4 ч');
+  assert.equal(describeSchedule({ runAutomatically: true, afterThisJob: { isEnabled: true, jobName: 'OPS_Exchange' } }), 'после «OPS_Exchange»');
+  // A filled-in schedule Veeam will never act on would otherwise be described
+  // as if it ran three times a week.
+  assert.equal(
+    describeSchedule({ runAutomatically: false, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }),
+    'только вручную',
+  );
+  assert.equal(describeRetry({ retry: { isEnabled: false } }), 'выключен');
+});
+
+test('a named proxy is told apart from automatic selection', () => {
+  const { settingsOf } = require('../dist/monitor/job-card');
+  const names = {
+    repositories: new Map([['r1', 'SITE1_BKP06']]),
+    proxies: new Map([['p1', '192.0.2.20'], ['p2', '192.0.2.21']]),
+  };
+
+  const chosen = settingsOf({ storage: { backupProxies: { autoSelectEnabled: false, proxyIds: ['p1', 'p2'] } } }, names);
+  assert.equal(chosen.proxies, '192.0.2.20, 192.0.2.21');
+
+  // An empty proxyIds list means "Veeam picks" only when the flag says so;
+  // without reading the flag the two are indistinguishable.
+  const auto = settingsOf({ storage: { backupProxies: { autoSelectEnabled: true, proxyIds: [] } } }, names);
+  assert.equal(auto.proxies, 'автоматически');
+});
+
+test('the reason is said once: at length by object, or briefly by run', async () => {
+  const detailed = configured();
+  await said(detailed, '/job EMM_DB1');
+  // The per-object block is about to say this at length; saying it twice is
+  // how the card turned into a wall of the same Veeam paragraph.
+  assert.doesNotMatch(detailed.api.sent().at(-1).text, /<b>Причина:<\/b>/);
+
+  // Where a run failed before it reached any object, there is no per-object
+  // block and the session message is the whole story.
+  const plain = monitorWorld({}, [job('1', 'SQL Daily', 'Failed')]);
+  await said(plain, '/job SQL');
+  const reply = plain.api.sent().at(-1).text;
+  assert.match(reply, /<b>Причина:<\/b> Agent failed to process method/);
+  assert.doesNotMatch(reply, /Что именно не прошло/);
 });

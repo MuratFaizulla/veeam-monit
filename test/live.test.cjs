@@ -10,7 +10,7 @@ const {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -209,10 +209,7 @@ test('the live message survives a restart instead of starting a second one', asy
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
   await monitor.check();
 
   assert.deepEqual(w.api.sent(), [], 'the persisted message id is reused');
@@ -228,10 +225,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
 
@@ -265,10 +259,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
     '/api/v1/jobs/states': { data: [] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   assert.equal(w.api.sent().length, 7);
@@ -365,10 +356,7 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
 

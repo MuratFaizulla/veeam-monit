@@ -20,6 +20,7 @@ const { MonitorService } = require('../dist/monitor/monitor.service');
 const { TelegramLiveService } = require('../dist/live/live.service');
 const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/http.service');
+const { VeeamInventoryService } = require('../dist/veeam/inventory.service');
 const { capacities, capacityOf } = require('../dist/monitor/repository-capacity');
 
 const CHAT = '-1001234567890';
@@ -126,6 +127,19 @@ function veeamFake(routes) {
   };
 }
 
+/**
+ * A monitor wired to a world. The argument list was written out at twelve call
+ * sites and every new dependency had to be added to all of them; the twelfth
+ * time it was added, eleven tests stopped compiling at once.
+ */
+function monitorOf(w, veeam, auth, evidence) {
+  return new MonitorService(
+    w.config, veeam, w.service, auth, w.store, w.live,
+    evidence ?? new BackupEvidenceService(w.config, veeam, auth),
+    new VeeamInventoryService(),
+  );
+}
+
 function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   const w = world(env, handlers);
   let states = jobStates;
@@ -146,9 +160,7 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     rejectToken: () => true,
   };
   const evidence = new BackupEvidenceService(w.config, veeam, auth);
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live, evidence,
-  );
+  const monitor = monitorOf(w, veeam, auth, evidence);
   // The real monitor, so /check in these tests drives a real cycle.
   const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, monitor);
   return { ...w, updates, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
@@ -190,7 +202,7 @@ module.exports = {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService,
+  MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

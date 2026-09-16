@@ -153,8 +153,21 @@ Counted in `src/monitor/digest.ts`, seen twice: pushed as an event at
 ## Job card
 
 Everything known about one job, gathered for somebody who asked about it by
-name: its last result and the reason, its next scheduled run, its restore-point
-depth and cadence from the last **Evidence** scan, and its recent **Runs**.
+name. Five sources, one message: its runtime state, its **configuration**
+(schedule, retry, repository, proxies, retention, mode, the machines it
+protects), its recent **Runs**, the per-object detail of the newest bad run,
+and its restore-point depth and **Cadence** from the last **Evidence** scan.
+
+The per-object detail is the part nothing else in the service has: Veeam
+reports a failure against the *job*, and "which machine" is the next question
+every single time. It is read only while the job is actually failing — a
+recovered job's failures are already in its run list — and comes back empty
+when the run never reached an object at all, which is itself the answer.
+
+The **Settings** are strings by the time they reach the card: deciding that
+`dailyKind: SelectedDays` with three days means "пн, ср, пт в 03:12" is a
+reading of Veeam's schedule model and lives with the module that models
+schedules.
 
 Every live slot is an aggregate; this is the only thing in the service that
 answers about a single job. The name is matched approximately — whole name,
@@ -163,6 +176,18 @@ the name arrives half-remembered. Several matches are listed, never resolved by
 guessing.
 
 Owned by `src/monitor/job-card.ts`.
+
+## Inventory
+
+The names behind the ids a job points at — repositories and proxies. A job
+configuration says `backupRepositoryId: 60df9772-…` and nothing else, and no
+part of that is worth showing anybody.
+
+Read once and kept for half an hour, because this is the part of the estate
+that does not change. A failed read keeps the previous names rather than
+clearing them: last month's name is far closer to the truth than a GUID.
+
+Owned by `src/veeam/inventory.service.ts`.
 
 ## Answer
 

@@ -1,8 +1,9 @@
 import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../live/format';
-import { VeeamJobState } from '../veeam/types';
+import { VeeamJob, VeeamJobState, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
 import { iconOf } from './job-state';
+import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
 
 /**
  * One job, answered for.
@@ -21,6 +22,8 @@ import { iconOf } from './job-state';
 
 /** A finished or running session of this job. */
 export interface JobRun {
+  /** The session id, which is how its per-object detail is reached. */
+  id?: string;
   startedAt?: string;
   /** Absent while the run is still going. */
   endedAt?: string;
@@ -28,6 +31,38 @@ export interface JobRun {
   message?: string;
   /** 0-100, only while running and only once Veeam reports any. */
   percent?: number;
+}
+
+/**
+ * How the job is set up, each line already written out.
+ *
+ * Strings rather than the raw configuration: deciding that `dailyKind:
+ * SelectedDays` with three days means "пн, ср, пт в 03:12" is a reading of
+ * Veeam's schedule model, and that belongs with the module that models
+ * schedules, not with the one that lays out a message.
+ */
+export interface JobSettings {
+  schedule?: string;
+  retry?: string;
+  repository?: string;
+  proxies?: string;
+  retention?: string;
+  mode?: string;
+}
+
+/** A machine the job protects. */
+export interface ProtectedObject {
+  name: string;
+  hostName?: string;
+  /** Veeam's own formatting, shown as given. */
+  size?: string;
+}
+
+/** One object of a run that went wrong, and what went wrong with it. */
+export interface FailedObject {
+  name: string;
+  result?: string;
+  message?: string;
 }
 
 /** Everything worth saying about one job, gathered from every source. */
@@ -43,6 +78,18 @@ export interface JobCard {
   objects?: number;
   /** Newest sessions first. Empty when the sessions could not be read. */
   runs: JobRun[];
+  /** Absent when the job configuration could not be read. */
+  settings?: JobSettings;
+  /** The machines this job protects, as its configuration lists them. */
+  machines: ProtectedObject[];
+  /** Machines deliberately left out of the job; counted, not listed. */
+  excluded: number;
+  /**
+   * Which objects of the newest bad run failed, and why. Empty when the last
+   * run was fine, or when the run never got as far as starting an object —
+   * both of which are answers in themselves.
+   */
+  failedObjects: FailedObject[];
   /** Consecutive failed runs; absent when the estate scan has not run. */
   failures?: number;
   /** How far back this job can be restored. Absent with no scan, or no points. */
@@ -109,6 +156,92 @@ export const renderChoices = (names: string[], query: string): string => {
 };
 
 /* ------------------------------------------------------------------ *
+ * Reading the configuration
+ * ------------------------------------------------------------------ */
+
+/**
+ * Names for the ids a job points at. Structural on purpose: the card needs two
+ * lookups, not a dependency on whatever caches them.
+ */
+export interface ResourceNames {
+  repositories: ReadonlyMap<string, string>;
+  proxies: ReadonlyMap<string, string>;
+}
+
+/** An id nobody could name is still shown — it is what Veeam's UI shows too. */
+const named = (names: ReadonlyMap<string, string>, id: string | undefined): string | undefined =>
+  id === undefined ? undefined : names.get(id) ?? id;
+
+const retentionOf = (storage: VeeamJobStorage | undefined): string | undefined => {
+  const policy = storage?.retentionPolicy;
+  if (!policy?.quantity) return undefined;
+  return (policy.type ?? '').toLowerCase() === 'days'
+    ? `${policy.quantity} ${plural(policy.quantity, 'день', 'дня', 'дней')}`
+    : `${policy.quantity} ${plural(policy.quantity, 'точка', 'точки', 'точек')}`;
+};
+
+const modeOf = (storage: VeeamJobStorage | undefined): string | undefined => {
+  const advanced = storage?.advancedSettings;
+  if (!advanced) return undefined;
+  const parts = [advanced.backupModeType].filter((part): part is string => Boolean(part));
+  const active = advanced.activeFulls;
+  const synthetic = advanced.synthenticFulls;
+  if (active?.isEnabled && active.weekly?.isEnabled) {
+    const days = daysOf(active.weekly.days);
+    parts.push(days ? `активный полный: ${days}` : 'активный полный еженедельно');
+  } else if (synthetic?.isEnabled && synthetic.weekly?.isEnabled) {
+    const days = daysOf(synthetic.weekly.days);
+    parts.push(days ? `синтетический полный: ${days}` : 'синтетический полный еженедельно');
+  }
+  return parts.length > 0 ? parts.join(', ') : undefined;
+};
+
+const proxiesOf = (
+  storage: VeeamJobStorage | undefined,
+  names: ReadonlyMap<string, string>,
+): string | undefined => {
+  const proxies = storage?.backupProxies;
+  if (!proxies) return undefined;
+  // Auto-selection is the answer to "which proxy" for most jobs here, and it
+  // is a different answer from "none configured" — which is what an empty
+  // proxyIds looks like if the flag is not read.
+  if (proxies.autoSelectEnabled) return 'автоматически';
+  const chosen = (proxies.proxyIds ?? []).map((id) => named(names, id)).filter(Boolean);
+  return chosen.length > 0 ? chosen.join(', ') : undefined;
+};
+
+export const settingsOf = (
+  configured: VeeamJob | undefined,
+  names: ResourceNames,
+): JobSettings | undefined => {
+  if (!configured) return undefined;
+  const storage = configured.storage;
+  return {
+    schedule: describeSchedule(configured.schedule),
+    retry: describeRetry(configured.schedule),
+    repository: named(names.repositories, storage?.backupRepositoryId),
+    proxies: proxiesOf(storage, names.proxies),
+    retention: retentionOf(storage),
+    mode: modeOf(storage),
+  };
+};
+
+/** The machines a job protects, and how many it deliberately leaves out. */
+export const machinesOf = (
+  configured: VeeamJob | undefined,
+): { machines: ProtectedObject[]; excluded: number } => {
+  const vms = configured?.virtualMachines;
+  return {
+    machines: (vms?.includes ?? []).map((object) => ({
+      name: object.name ?? object.hostName ?? 'без имени',
+      hostName: object.hostName,
+      size: object.size,
+    })),
+    excluded: (vms?.excludes?.vms ?? []).length,
+  };
+};
+
+/* ------------------------------------------------------------------ *
  * Saying what is known
  * ------------------------------------------------------------------ */
 
@@ -156,6 +289,31 @@ const cadenceOf = (days: number | null | undefined): string | undefined => {
 const label = (name: string, value: string | undefined): string | undefined =>
   value === undefined ? undefined : `<b>${name}:</b> ${value}`;
 
+/**
+ * Caps, so the card is bounded before Telegram's limit is.
+ *
+ * Truncating the whole message would cut whatever happens to be last, which is
+ * not the same as leaving out the least useful part. A sixteen-machine job
+ * listing eight of them and saying so is more useful than one that lists
+ * fifteen and loses its run history.
+ */
+const MACHINES_SHOWN = 8;
+const FAILURES_SHOWN = 5;
+const RUNS_SHOWN = 5;
+/** Veeam error text runs to paragraphs; the first sentence carries it. */
+const MESSAGE_SHOWN = 180;
+/** The headline reason gets more room, being the one line most people read. */
+const REASON_SHOWN = 300;
+
+const clip = (text: string, max: number): string =>
+  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+
+/** Veeam writes multi-line errors; a chat line wants one line. */
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+const more = (total: number, shown: number): string[] =>
+  total > shown ? [`<i>…и ещё ${total - shown}</i>`] : [];
+
 export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
   const lines: string[] = [];
   const subtitle = [
@@ -188,10 +346,13 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
       label('Длительность', newest && !inFlight ? spanOf(newest) : undefined),
       label(
         'Причина',
-        // Only worth printing where the run went wrong: on a success Veeam puts
-        // its own "job finished" boilerplate in the same field.
-        card.lastResult === 'failed' || card.lastResult === 'warning'
-          ? newest?.message && escapeHtml(newest.message)
+        // Only where the run went wrong — on a success Veeam puts its own "job
+        // finished" boilerplate in the same field — and only where the
+        // per-object block below is not about to say the same thing at length.
+        (card.lastResult === 'failed' || card.lastResult === 'warning') &&
+          card.failedObjects.length === 0 &&
+          newest?.message
+          ? escapeHtml(clip(oneLine(newest.message), REASON_SHOWN))
           : undefined,
       ),
       label(
@@ -201,6 +362,41 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
       label('Следующий запуск', card.nextRun ? dayOf(card.nextRun, clock) : undefined),
     ].filter((line): line is string => Boolean(line)),
   );
+
+  // Directly under the failure it explains, because "which machine" is the
+  // next question every single time, and the session message names the job.
+  if (card.failedObjects.length > 0) {
+    lines.push('', '<b>❗ Что именно не прошло</b>');
+    for (const object of card.failedObjects.slice(0, FAILURES_SHOWN)) {
+      const why = object.message
+        ? ` — ${escapeHtml(clip(oneLine(object.message), MESSAGE_SHOWN))}`
+        : '';
+      lines.push(`${iconOf((object.result ?? '').toLowerCase())} ${escapeHtml(object.name)}${why}`);
+    }
+    lines.push(...more(card.failedObjects.length, FAILURES_SHOWN));
+  }
+
+  if (card.settings) {
+    const settings = [
+      label('Расписание', card.settings.schedule),
+      label('Повтор при ошибке', card.settings.retry),
+      label('Репозиторий', card.settings.repository),
+      label('Прокси', card.settings.proxies),
+      label('Хранение', card.settings.retention),
+      label('Режим', card.settings.mode),
+    ].filter((line): line is string => Boolean(line));
+    if (settings.length > 0) lines.push('', '<b>⚙️ Настройки</b>', ...settings);
+  }
+
+  if (card.machines.length > 0) {
+    lines.push('', `<b>💻 Машины (${card.machines.length})</b>`);
+    for (const machine of card.machines.slice(0, MACHINES_SHOWN)) {
+      const detail = [machine.size, machine.hostName].filter(Boolean).join(' · ');
+      lines.push(`${escapeHtml(machine.name)}${detail ? ` — ${escapeHtml(detail)}` : ''}`);
+    }
+    lines.push(...more(card.machines.length, MACHINES_SHOWN));
+    if (card.excluded > 0) lines.push(`<i>исключено из задания: ${card.excluded}</i>`);
+  }
 
   lines.push('', '<b>🗂 Точки восстановления</b>');
   if (card.depth) {
@@ -219,12 +415,17 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
   const finished = card.runs.filter((run) => run.endedAt);
   if (finished.length > 0) {
     lines.push('', '<b>Последние запуски</b>');
-    for (const run of finished.slice(0, 5)) {
+    for (const run of finished.slice(0, RUNS_SHOWN)) {
       const when = momentOf(run.startedAt, clock) ?? '—';
       const span = spanOf(run);
-      lines.push(
-        `${iconOf((run.result ?? '').toLowerCase())} ${when}${span ? ` · ${span}` : ''}`,
-      );
+      const result = (run.result ?? '').toLowerCase();
+      // The reason only on the runs that went wrong: on a success Veeam puts
+      // its own boilerplate in the same field and it says nothing.
+      const why =
+        (result === 'failed' || result === 'warning') && run.message
+          ? `\n   <i>${escapeHtml(clip(oneLine(run.message), MESSAGE_SHOWN))}</i>`
+          : '';
+      lines.push(`${iconOf(result)} ${when}${span ? ` · ${span}` : ''}${why}`);
     }
   }
 
