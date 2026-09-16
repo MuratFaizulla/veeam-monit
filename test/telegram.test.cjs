@@ -110,14 +110,22 @@ test('severity mode groups every kind into one topic per severity', async () => 
   assert.notEqual(sent[1].message_thread_id, sent[2].message_thread_id);
 });
 
-test('single mode sends failures to Alerts and keeps non-alerts in General', async () => {
+test('single mode splits alerts, recoveries and everything else', async () => {
   const w = world({ TELEGRAM_ROUTING_MODE: 'single' });
   await w.service.notify({ kind: 'job', severity: 'critical', subject: 'A', title: 'a' });
   await w.service.notify({ kind: 'job', severity: 'success', subject: 'A', title: 'recovered' });
+  await w.service.notify({ kind: 'manual', severity: 'info', title: 'плановые работы' });
 
-  assert.deepEqual(w.api.of('createForumTopic').map((topic) => topic.name), ['🚨 Alerts']);
-  assert.equal(w.api.sent()[0].message_thread_id, 101);
-  assert.equal(w.api.sent()[1].message_thread_id, undefined);
+  assert.deepEqual(
+    w.api.of('createForumTopic').map((topic) => topic.name),
+    ['🚨 Alerts', '🟢 Recovered'],
+  );
+  const sent = w.api.sent();
+  assert.equal(sent[0].message_thread_id, 101, 'the failure');
+  // A recovery answers an alert somebody is waiting on; in General it would
+  // arrive among everything else.
+  assert.equal(sent[1].message_thread_id, 102, 'the recovery');
+  assert.equal(sent[2].message_thread_id, undefined, 'and the rest stays in General');
 });
 
 test('a non-forum chat never gets a thread id', async () => {
