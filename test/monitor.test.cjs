@@ -515,8 +515,10 @@ test('/digest counts every job and names the ones that went wrong', async () => 
   const reply = w.api.sent().at(-1);
   assert.match(reply.text, /Всего заданий:<\/b> 3/);
   assert.match(reply.text, /Успешно:<\/b> 1/);
-  assert.match(reply.text, /🔴 SQL Daily/);
-  assert.match(reply.text, /🟡 Exchange/);
+  // The same rendering the daily message uses: a plain list in a <pre> block,
+  // labelled by Veeam's own word for the result.
+  assert.match(reply.text, /FAILED — SQL Daily/);
+  assert.match(reply.text, /WARNING — Exchange/);
 });
 
 test('a summary asked for in General is answered in General', async () => {
@@ -793,4 +795,34 @@ test('a job that disappeared between the message and the press says so', async (
   await pressed(w, 'a:job:gone');
 
   assert.match(w.api.sent().at(-1).text, /больше не найдено/);
+});
+
+test('a running job Veeam still calls disabled is counted as running', async () => {
+  const { summarise } = require('../dist/monitor/digest');
+  const jobs = [
+    { id: '1', name: 'Kingston EM', status: 'Disabled', lastResult: 'Success' },
+    { id: '2', name: 'Kingston DB', status: 'Disabled', lastResult: 'Success' },
+    { id: '3', name: 'Queued', status: 'Working', lastResult: 'Success' },
+  ];
+
+  // Two of these are transferring right now under a session Veeam opened by
+  // hand; their own status keeps saying "disabled" the whole time. Counting
+  // from the status alone said one job was running while three were.
+  assert.equal(summarise(jobs, new Set(['1', '2'])).running, 3);
+  assert.equal(summarise(jobs, new Set()).running, 1, 'без сессий — только по статусу');
+});
+
+test('the summary and the running list cannot disagree about the count', async () => {
+  const running = { id: '9', name: 'Started by hand', status: 'Disabled', lastResult: 'Success' };
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [running, job('1', 'SQL Daily', 'Success')], {
+    '/api/v1/sessions': { data: [{ id: 's1', jobId: '9', state: 'Working', creationTime: '2026-09-16T10:00:00+05:00' }] },
+  });
+
+  await w.monitor.check();
+  const live = w.api.sent().find((m) => /Сейчас выполня/.test(m.text));
+  w.api.reset();
+  await said(w, '/digest');
+
+  assert.match(live.text, /Started by hand/, '▶️ видит запуск');
+  assert.match(w.api.sent().at(-1).text, /Выполняются:<\/b> 1/, 'и сводка считает его же');
 });

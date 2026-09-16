@@ -1,7 +1,6 @@
-import { escapeHtml } from '../telegram/format';
-import { fitted, LiveClock, plural, stampOf } from '../live/format';
+import { NotificationEvent } from '../telegram/types';
 import { VeeamJobState } from '../veeam/types';
-import { iconOf, isRunning, resultOf } from './job-state';
+import { isRunningNow, resultOf } from './job-state';
 
 /**
  * Where every job stands, counted once.
@@ -12,9 +11,10 @@ import { iconOf, isRunning, resultOf } from './job-state';
  * "how are we doing" — which is what this counts, by asking every job for its
  * last result rather than by reading the history of what was announced.
  *
- * The daily message and the `/digest` command are the same counting seen twice:
- * one is pushed at a fixed hour and one is pulled when somebody asks. Deleting
- * this module would put the counting back in both.
+ * One shape, two deliveries: the daily message pushes this event through the
+ * router at `TELEGRAM_DIGEST_HOUR`, and `/digest` renders the same event
+ * straight back to whoever asked. They were briefly two renderings of the same
+ * figures and immediately began to differ; there is now nothing to differ.
  */
 
 export interface FailingJob {
@@ -30,20 +30,29 @@ export interface DigestSummary {
   success: number;
   warning: number;
   failed: number;
-  /** Jobs Veeam reports no result for at all — typically never run. */
-  none: number;
   running: number;
   /** The jobs behind `failed` and `warning`: errors first, then by name. */
   failing: FailingJob[];
 }
 
-export const summarise = (jobs: VeeamJobState[]): DigestSummary => {
+/**
+ * `working` is the set of job ids Veeam has a Working session for.
+ *
+ * Required rather than optional: counting from the job status alone undercounts
+ * every run started by hand on a job that is switched off, because Veeam keeps
+ * reporting those as `disabled` while they transfer. That is the same
+ * undercount the ▶️ slot had, and passing the set is what stops the two from
+ * being able to disagree about how many jobs are running.
+ */
+export const summarise = (
+  jobs: VeeamJobState[],
+  working: ReadonlySet<string>,
+): DigestSummary => {
   const summary: DigestSummary = {
     total: jobs.length,
     success: 0,
     warning: 0,
     failed: 0,
-    none: 0,
     running: 0,
     failing: [],
   };
@@ -53,11 +62,10 @@ export const summarise = (jobs: VeeamJobState[]): DigestSummary => {
     if (result === 'success') summary.success += 1;
     else if (result === 'warning') summary.warning += 1;
     else if (result === 'failed') summary.failed += 1;
-    else summary.none += 1;
 
-    // Counted from the status, not from the result: a job that is transferring
-    // right now still carries the result of its previous run.
-    if (isRunning(job)) summary.running += 1;
+    // Counted from the status and the sessions, not from the result: a job
+    // transferring right now still carries the result of its previous run.
+    if (isRunningNow(job, working)) summary.running += 1;
 
     if (result === 'failed' || result === 'warning') {
       summary.failing.push({ id: job.id, name: job.name ?? job.id ?? 'без имени', result });
@@ -70,61 +78,48 @@ export const summarise = (jobs: VeeamJobState[]): DigestSummary => {
   return summary;
 };
 
-/** Label/value rows for the daily notification event. */
-export const digestFields = (
-  summary: DigestSummary,
-): Array<[string, string | number]> => [
-  ['Всего заданий', summary.total],
-  ['Успешно', summary.success],
-  ['С предупреждением', summary.warning],
-  ['С ошибкой', summary.failed],
-  ['Выполняются', summary.running],
-];
+/**
+ * Room for the list of jobs, inside Telegram's 4096 with the header allowed for.
+ *
+ * Cut on a line boundary and never by the generic truncation: the list is
+ * rendered inside a `<pre>` block, and a cut that lands between `<pre>` and
+ * `</pre>` produces markup Telegram rejects outright.
+ */
+const BODY_LIMIT = 3400;
 
-/** Which jobs are behind those counts, for the event's trailing block. */
-export const digestBody = (summary: DigestSummary): string | undefined =>
-  summary.failing
-    .map((job) => `${job.result.toUpperCase()} — ${job.name}`)
-    .join('\n')
-    .slice(0, 3000) || undefined;
+const bodyOf = (summary: DigestSummary): string | undefined => {
+  const lines = summary.failing.map((job) => `${job.result.toUpperCase()} — ${job.name}`);
+  if (lines.length === 0) return undefined;
+
+  const whole = lines.join('\n');
+  if (whole.length <= BODY_LIMIT) return whole;
+
+  let kept = 0;
+  let size = 0;
+  while (kept < lines.length && size + lines[kept].length + 1 <= BODY_LIMIT) {
+    size += lines[kept].length + 1;
+    kept += 1;
+  }
+  return [...lines.slice(0, kept), `…и ещё ${lines.length - kept}`].join('\n');
+};
 
 /**
- * The same figures as an answer in the chat.
+ * The summary as an event.
  *
- * Rendered rather than routed: this one was asked for, so it belongs where the
- * question was asked. The daily event keeps going through the router, which is
- * the difference between a report somebody is waiting for and a report nobody
- * asked for.
+ * Not "за сутки": every figure is the standing of every job right now, which
+ * is a different claim from what happened in the last day and was the wrong one
+ * on any morning a job had not run since Friday.
  */
-export const renderDigest = (summary: DigestSummary, clock: LiveClock): string =>
-  fitted(summary.failing.length, (shown) => {
-    const lines = [
-      '📊 <b>Сводка по заданиям</b>',
-      '',
-      `<b>Всего заданий:</b> ${summary.total}`,
-      `🟢 <b>Успешно:</b> ${summary.success}`,
-      `🟡 <b>С предупреждением:</b> ${summary.warning}`,
-      `🔴 <b>С ошибкой:</b> ${summary.failed}`,
-    ];
-    if (summary.running > 0) lines.push(`▶️ <b>Выполняются сейчас:</b> ${summary.running}`);
-    if (summary.none > 0) lines.push(`⚪ <b>Ни разу не запускались:</b> ${summary.none}`);
-
-    if (summary.failing.length === 0) {
-      lines.push('', '✅ Ни одно задание не сообщает об ошибке.');
-    } else {
-      const count = summary.failing.length;
-      lines.push(
-        '',
-        `<b>Требуют внимания — ${count} ${plural(count, 'задание', 'задания', 'заданий')}:</b>`,
-      );
-      for (const job of summary.failing.slice(0, shown)) {
-        lines.push(`${iconOf(job.result)} ${escapeHtml(job.name)}`);
-      }
-      if (shown < count) lines.push(`<i>…и ещё ${count - shown}</i>`);
-    }
-
-    // Said here rather than left to the reader: these are the figures of the
-    // moment the question was asked, not of a nightly cut-off.
-    lines.push('', `<i>Состояние на ${stampOf(clock.now, clock)}</i>`);
-    return lines.join('\n');
-  });
+export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
+  kind: 'digest',
+  severity: summary.failed ? 'critical' : summary.warning ? 'warning' : 'success',
+  title: 'Veeam: сводка по заданиям',
+  fields: [
+    ['Всего заданий', summary.total],
+    ['Успешно', summary.success],
+    ['С предупреждением', summary.warning],
+    ['С ошибкой', summary.failed],
+    ['Выполняются', summary.running],
+  ],
+  body: bodyOf(summary),
+});
