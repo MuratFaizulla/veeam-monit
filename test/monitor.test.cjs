@@ -404,7 +404,7 @@ const said = (w, text) => w.updates.handleUpdate({
   update_id: Math.floor(Math.random() * 1e6),
   message: {
     message_id: 1,
-    message_thread_id: 55,
+    message_thread_id: 1,
     is_topic_message: true,
     text,
     chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
@@ -419,7 +419,7 @@ test('/check runs a pass now and answers with what the monitor knows', async () 
   await said(w, '/check');
 
   const reply = w.api.sent().at(-1);
-  assert.equal(reply.message_thread_id, 55, 'answered where it was asked');
+  assert.equal(reply.message_thread_id, undefined, 'answered in General');
   assert.match(reply.text, /Цикл проверки выполнен/);
   assert.match(reply.text, /Veeam отвечает:<\/b> 🟢 да/);
   assert.match(reply.text, /Заданий под наблюдением:<\/b> 1/);
@@ -488,7 +488,7 @@ test('/job answers about one job, which no live topic can', async () => {
   await said(w, '/job exchange');
 
   const reply = w.api.sent().at(-1);
-  assert.equal(reply.message_thread_id, 55, 'answered where it was asked');
+  assert.equal(reply.message_thread_id, undefined, 'answered in General');
   assert.match(reply.text, /TTC_Exchange/);
   assert.match(reply.text, /Последний результат:<\/b> FAILED/);
   assert.match(reply.text, /Точки восстановления/);
@@ -695,7 +695,7 @@ const pressed = (w, data) => w.updates.handleUpdate({
     from: { id: 42, first_name: 'Оператор' },
     message: {
       message_id: 9,
-      message_thread_id: 55,
+      message_thread_id: 1,
       is_topic_message: true,
       chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
     },
@@ -758,7 +758,7 @@ test('pressing a job button opens that job, without anybody typing a name', asyn
   await pressed(w, 'a:job:1');
 
   const sent = w.api.sent().at(-1);
-  assert.equal(sent.message_thread_id, 55, 'ответ там, где нажали');
+  assert.equal(sent.message_thread_id, undefined, 'ответ в General');
   assert.match(sent.text, /TTC_ASUEDT_EMM_DB1/);
   assert.match(sent.text, /Расписание:<\/b> пн, ср, пт в 03:12/);
   // And the card offers its own refresh, so the loop closes.
@@ -853,7 +853,7 @@ test('/clear takes back the answers and leaves the record alone', async () => {
   assert.match(w.api.sent().at(-1).text, /Убрано 2 сообщения/);
 });
 
-test('/clear reaches only the topic it was asked in', async () => {
+test('/clear removes only answers in General', async () => {
   const w = monitorWorld({}, []);
   const inThread = (thread, text) => w.updates.handleUpdate({
     update_id: Math.floor(Math.random() * 1e6),
@@ -866,17 +866,17 @@ test('/clear reaches only the topic it was asked in', async () => {
     },
   });
 
-  await inThread(55, '/help');
-  await inThread(77, '/help');
+  await inThread(1, '/help');
+  w.store.rememberAnswer(CHAT, 9001, 77);
   await inThread(undefined, '/help');
   w.api.reset();
 
-  await inThread(77, '/clear');
+  await inThread(1, '/clear');
 
-  // Somebody may be mid-conversation in the next topic over.
   const deleted = w.api.of('deleteMessages').flatMap((call) => call.message_ids);
-  assert.equal(deleted.length, 1);
-  assert.equal(w.api.sent().at(-1).message_thread_id, 77);
+  assert.equal(deleted.length, 2);
+  assert.ok(!deleted.includes(9001));
+  assert.equal(w.api.sent().at(-1).message_thread_id, undefined);
 });
 
 test('/clear with nothing to remove says so instead of claiming work', async () => {

@@ -10,6 +10,7 @@ import {
   TelegramChat,
   TelegramDestination,
   TelegramKeyboard,
+  TelegramMessage,
   TelegramUpdate,
 } from './types';
 import { MonitorAnswer, MonitorService } from '../monitor/monitor.service';
@@ -64,7 +65,7 @@ const HELP = [
   '',
   '<b>/topics</b> — какие темы форума бот уже знает.',
   '',
-  '<b>/clear</b> — убрать мои ответы в этой теме, когда их накопилось много.',
+  '<b>/clear</b> — убрать мои ответы в General, когда их накопилось много.',
   'Оповещения и живые сообщения не трогает — это записи о событиях.',
   '',
   '<i>Перезапустить службу из чата нельзя: процесс не может перезапустить сам себя,</i>',
@@ -184,6 +185,8 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    if (!message || !this.isGeneral(chat, message)) return;
+
     // Split rather than tokenised: everything after the command word is one
     // argument, kept in the case it was typed in, because a job name has
     // underscores and capitals and the person asking copied it from somewhere.
@@ -194,10 +197,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     if (!command.startsWith('/')) return;
     const argument = gap === -1 ? '' : text.slice(gap + 1).trim();
 
-    const reply: TelegramDestination = {
-      chatId: String(chat.id),
-      threadId: message?.is_topic_message ? message.message_thread_id : undefined,
-    };
+    const reply: TelegramDestination = { chatId: String(chat.id) };
     // The "/clear" somebody typed is clutter of the same kind, but it is their
     // message: deleting it needs administrator rights the bot may not have, so
     // it is attempted and never depended on.
@@ -221,17 +221,24 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     const chat = query.message?.chat;
     if (!chat) return;
     this.registerChat(chat);
+    if (!query.message || !this.isGeneral(chat, query.message)) return;
 
     // An unknown action is an old message from a version that had buttons this
     // one does not. Acknowledged and then ignored, rather than answered wrongly.
     const action = decode(query.data);
     if (!action) return;
 
-    const reply: TelegramDestination = {
-      chatId: String(chat.id),
-      threadId: query.message?.is_topic_message ? query.message.message_thread_id : undefined,
-    };
+    const reply: TelegramDestination = { chatId: String(chat.id) };
     await this.send(reply, await this.act(action, chat, reply));
+  }
+
+  /** General has id 1; Telegram may also omit the topic fields for it. */
+  private isGeneral(chat: TelegramChat, message: TelegramMessage): boolean {
+    if (!chat.is_forum) return true;
+    return (
+      message.message_thread_id === 1 ||
+      (!message.is_topic_message && message.message_thread_id === undefined)
+    );
   }
 
   /** Every button leads to an answer one of the commands could also produce. */
