@@ -15,7 +15,40 @@ interface TelegramState {
   cooldowns: Record<string, number>;
   /** chat id -> slot -> the one message that slot keeps current. */
   liveMessages: Record<string, Record<string, LiveMessageRef>>;
+  /** chat id -> answers this bot sent there, oldest first. */
+  answers: Record<string, AnswerRef[]>;
 }
+
+/**
+ * One message the bot sent as an answer to somebody — a command reply or the
+ * result of a button.
+ *
+ * Remembered only so `/clear` can take it back. The Bot API cannot enumerate a
+ * chat's history and cannot clear it: a bot may delete a message only if it
+ * knows the id, so the ids it will ever be able to delete are exactly the ones
+ * it wrote down at the time.
+ *
+ * Alerts and live slot messages are deliberately not here. An alert is the
+ * record of something that happened and deleting it destroys that record; a
+ * live message is the slot, and deleting it orphans the id the slot is kept
+ * under. `/clear` is for the chatter, which is what actually piles up.
+ */
+export interface AnswerRef {
+  messageId: number;
+  /** The forum topic it was sent to; absent means General. */
+  threadId?: number;
+  /** Epoch ms, so answers Telegram will no longer let a bot delete are dropped. */
+  at: number;
+}
+
+/**
+ * Telegram refuses to let a bot delete its own message after 48 hours, so an
+ * older id is worth neither storing nor trying.
+ */
+const DELETABLE_MS = 48 * 3_600_000;
+
+/** Ceiling per chat. A deep backlog is not what anybody is trying to clear. */
+const ANSWERS_KEPT = 500;
 
 /**
  * The single message a live slot owns. Surviving a restart is the whole point:
@@ -37,6 +70,7 @@ const empty = (): TelegramState => ({
   jobResults: {},
   cooldowns: {},
   liveMessages: {},
+  answers: {},
 });
 
 /**
@@ -229,6 +263,47 @@ export class TelegramStateStore implements OnModuleDestroy {
     if (this.state.liveMessages[chatId]?.[slot] === undefined) return;
     delete this.state.liveMessages[chatId][slot];
     this.save();
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Answers
+   * ---------------------------------------------------------------- */
+
+  /** Records an answer so `/clear` has something to take back. */
+  rememberAnswer(chatId: string, messageId: number, threadId?: number): void {
+    const kept = this.fresh(chatId);
+    kept.push({ messageId, threadId, at: Date.now() });
+    this.state.answers[chatId] = kept.slice(-ANSWERS_KEPT);
+    this.save();
+  }
+
+  /**
+   * The answers still worth deleting in one topic, newest first.
+   *
+   * Scoped to the thread on purpose: clearing a forum topic must not reach into
+   * the others, where somebody may be mid-conversation. `undefined` is General,
+   * and is its own scope rather than "everything".
+   */
+  answers(chatId: string, threadId?: number): number[] {
+    return this.fresh(chatId)
+      .filter((answer) => answer.threadId === threadId)
+      .map((answer) => answer.messageId)
+      .reverse();
+  }
+
+  /** Called once the messages are gone, or Telegram says they already were. */
+  forgetAnswers(chatId: string, messageIds: number[]): void {
+    const gone = new Set(messageIds);
+    const kept = this.fresh(chatId).filter((answer) => !gone.has(answer.messageId));
+    if (kept.length === 0) delete this.state.answers[chatId];
+    else this.state.answers[chatId] = kept;
+    this.save();
+  }
+
+  /** Drops what Telegram would refuse to delete anyway, without a write. */
+  private fresh(chatId: string): AnswerRef[] {
+    const cutoff = Date.now() - DELETABLE_MS;
+    return (this.state.answers[chatId] ?? []).filter((answer) => answer.at > cutoff);
   }
 
   /** Visible for tests: the persisted file, parsed. */

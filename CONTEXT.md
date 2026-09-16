@@ -212,6 +212,24 @@ An answer carries the ids of whatever it lets the reader ask about next, not
 only its text. That is what a **Button** is built from: a rendered job name is
 not an address.
 
+## Answer log
+
+The message ids of **Answers** the bot has sent, per chat and topic, so
+`/clear` has something to take back.
+
+It exists because the Bot API offers no way to clear a chat: a bot can delete a
+message only by id, cannot enumerate history, and loses the right after 48
+hours. The set it can ever remove is therefore exactly the set it wrote down as
+it sent — which is why only `TelegramUpdatesService.send` records, and alerts
+and **Live slot** messages, sent by other modules, are structurally out of
+reach rather than excluded by a rule somebody has to remember.
+
+Scoped by thread: clearing one topic must not reach into the next, where
+somebody may be mid-conversation.
+
+Kept in the state store, newest 500 per chat, entries older than 48 hours
+dropped on read.
+
 ## Button
 
 One offered next step under an answer. What it means travels in Telegram's

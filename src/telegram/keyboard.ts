@@ -112,5 +112,6 @@ export const BOT_COMMANDS: TelegramBotCommand[] = [
   { command: 'job', description: 'Карточка задания: /job часть имени' },
   { command: 'check', description: 'Опросить Veeam сейчас' },
   { command: 'topics', description: 'Известные боту темы форума' },
+  { command: 'clear', description: 'Убрать мои ответы в этой теме' },
   { command: 'help', description: 'Что умеет бот' },
 ];
