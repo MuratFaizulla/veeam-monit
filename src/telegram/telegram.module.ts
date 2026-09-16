@@ -6,6 +6,7 @@ import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { BackupEvidenceService } from '../monitor/backup-evidence.service';
 import { MonitorService } from '../monitor/monitor.service';
+import { JobQueryService } from '../monitor/job-query.service';
 import { TelegramLiveService } from '../live/live.service';
 import {
   TelegramAdminGuard,
@@ -65,6 +66,7 @@ import { TelegramUpdatesService } from './updates.service';
 
     // monitor/ and veeam/ — what is being watched
     MonitorService,
+    JobQueryService,
     BackupEvidenceService,
     VeeamMonitorAuthService,
     VeeamInventoryService,

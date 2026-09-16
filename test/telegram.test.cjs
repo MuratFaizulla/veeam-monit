@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
+const { validateEnvironment } = require('../dist/config/validate');
 
 // One harness for every test file. Everything it pulls out of dist/ is
 // re-exported, so each file opens with the same line and takes what it needs.
@@ -523,4 +524,41 @@ test('every state write persists without the caller managing save()', async () =
   reopened.flush();
   assert.equal(new TelegramStateStore(file).jobResult('job-1'), undefined);
   fs.rmSync(file, { force: true });
+});
+
+test('a damaged Telegram state is restored from the last complete copy', async () => {
+  const file = path.join(os.tmpdir(), `veeam-backup-${Math.random().toString(36).slice(2)}.json`);
+  const store = new TelegramStateStore(file, [CHAT]);
+  store.recordJobResult('job-1', 'failed');
+  store.flush();
+  assert.ok(fs.existsSync(`${file}.bak`));
+
+  fs.writeFileSync(file, '{broken', 'utf8');
+  const restored = new TelegramStateStore(file);
+  assert.equal(restored.jobResult('job-1'), 'failed');
+  assert.deepEqual(restored.chats().map(([id]) => id), [CHAT]);
+  restored.flush();
+  assert.equal(new TelegramStateStore(file).jobResult('job-1'), 'failed');
+
+  await new Promise(setImmediate);
+  fs.rmSync(file, { force: true });
+  fs.rmSync(`${file}.bak`, { force: true });
+});
+
+test('invalid operator settings fail before the monitor starts', () => {
+  assert.throws(() => validateEnvironment({ PORT: '3000x' }), /PORT/);
+  assert.throws(() => validateEnvironment({ TELEGRAM_DIGEST_HOUR: '24' }), /TELEGRAM_DIGEST_HOUR/);
+  assert.throws(() => validateEnvironment({ TELEGRAM_QUEUE_LIMIT: '0' }), /TELEGRAM_QUEUE_LIMIT/);
+  assert.throws(() => validateEnvironment({ TELEGRAM_LIVE: 'maybe' }), /TELEGRAM_LIVE/);
+  assert.throws(() => validateEnvironment({ VEEAM_MONITOR_USERNAME: 'svc' }), /VEEAM_MONITOR_PASSWORD/);
+  assert.throws(() => validateEnvironment({ VEEAM_BASE_URL: 'not-a-url' }), /VEEAM_BASE_URL/);
+  assert.throws(() => validateEnvironment({ TELEGRAM_WEBHOOK_URL: 'https://example.com' }), /TELEGRAM_WEBHOOK_SECRET/);
+  assert.throws(() => validateEnvironment({ TELEGRAM_TIMEZONE: 'No/Such_Zone' }), /TELEGRAM_TIMEZONE/);
+  assert.doesNotThrow(() => validateEnvironment({
+    PORT: '3000',
+    TELEGRAM_MONITOR_INTERVAL_MS: '0',
+    TELEGRAM_DIGEST_HOUR: '-1',
+    TELEGRAM_WEBHOOK_URL: 'https://example.com',
+    TELEGRAM_WEBHOOK_SECRET: 'secret',
+  }));
 });

@@ -35,6 +35,12 @@ export interface DigestSummary {
   failing: FailingJob[];
 }
 
+/** Jobs from a digest that can be opened by a Telegram button. */
+export const addressable = (summary: DigestSummary): Array<{ id: string; name: string }> =>
+  summary.failing
+    .filter((job): job is FailingJob & { id: string } => Boolean(job.id))
+    .map(({ id, name }) => ({ id, name }));
+
 /**
  * `working` is the set of job ids Veeam has a Working session for.
  *

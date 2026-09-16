@@ -17,6 +17,7 @@ const {
   NOTIFICATION_SEVERITIES,
 } = require('../dist/telegram/types');
 const { MonitorService } = require('../dist/monitor/monitor.service');
+const { JobQueryService } = require('../dist/monitor/job-query.service');
 const { TelegramLiveService } = require('../dist/live/live.service');
 const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/http.service');
@@ -134,10 +135,11 @@ function veeamFake(routes) {
  * time it was added, eleven tests stopped compiling at once.
  */
 function monitorOf(w, veeam, auth, evidence) {
+  const scan = evidence ?? new BackupEvidenceService(w.config, veeam, auth);
+  const query = new JobQueryService(w.config, veeam, auth, scan, new VeeamInventoryService());
   return new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
-    evidence ?? new BackupEvidenceService(w.config, veeam, auth),
-    new VeeamInventoryService(),
+    scan, query,
   );
 }
 
