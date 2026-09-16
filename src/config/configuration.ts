@@ -193,7 +193,7 @@ export const configuration = (): AppConfig => ({
     },
     performanceTopicId: int(process.env.TELEGRAM_PERFORMANCE_TOPIC_ID, 0),
     repositoriesTopicId: int(process.env.TELEGRAM_REPOSITORIES_TOPIC_ID, 0),
-    protectionIntervalMs: int(process.env.TELEGRAM_PROTECTION_INTERVAL_MIN, 30) * 60_000,
+    protectionIntervalMs: int(process.env.TELEGRAM_PROTECTION_INTERVAL_MIN, 60) * 60_000,
     protectionStaleDays: int(process.env.TELEGRAM_PROTECTION_STALE_DAYS, 3),
     protectionOverdueFactor: Number(process.env.TELEGRAM_PROTECTION_OVERDUE_FACTOR) || 2.5,
     protectionFailureStreak: int(process.env.TELEGRAM_PROTECTION_FAILURE_STREAK, 3),
