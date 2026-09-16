@@ -31,7 +31,7 @@ const collection = (total, size, quirks = {}) => {
   return {
     asked,
     reader: {
-      auth: { invalidateAccessToken: () => {}, getAccessToken: async () => 'fresh' },
+      auth: { rejectToken: () => true, getAccessToken: async () => 'fresh' },
       accessToken: 'tok',
       veeam: {
         request: async ({ params }) => {
@@ -90,30 +90,100 @@ test('a server that reports no total is walked until a page comes back short', a
   assert.deepEqual(c.asked.map((a) => a.skip), [0, 100, 200]);
 });
 
-test('a token that expires mid-read is refreshed and the page re-fetched', async () => {
-  const { allPages } = require('../dist/veeam/pages');
+/** A reader whose first request is refused with `status`, and works after. */
+const refusedOnce = (status) => {
   const { VeeamApiError } = require('../dist/veeam/api.error');
-  let invalidated = false;
+  const state = { rejected: 0, tokensUsed: [] };
   let first = true;
-  const reader = {
-    auth: {
-      invalidateAccessToken: () => (invalidated = true),
-      getAccessToken: async () => 'fresh',
-    },
-    accessToken: 'stale',
-    veeam: {
-      request: async ({ accessToken }) => {
-        if (first) {
-          first = false;
-          throw new VeeamApiError('Veeam rejected the token', 401);
-        }
-        return { data: [{ id: accessToken }], pagination: { total: 1, skip: 0, limit: 500 } };
+  return {
+    state,
+    reader: {
+      auth: {
+        rejectToken: () => (state.rejected += 1) > 0,
+        getAccessToken: async () => 'fresh',
+      },
+      accessToken: 'stale',
+      veeam: {
+        request: async ({ accessToken }) => {
+          state.tokensUsed.push(accessToken);
+          if (first) {
+            first = false;
+            throw new VeeamApiError(`Veeam API responded with HTTP ${status}`, status);
+          }
+          return { data: [{ id: accessToken }], pagination: { total: 1, skip: 0, limit: 500 } };
+        },
       },
     },
   };
+};
+
+test('a token that expires mid-read is refreshed and the page re-fetched', async () => {
+  const { allPages } = require('../dist/veeam/pages');
+  const { state, reader } = refusedOnce(401);
 
   const rows = await allPages(reader, '/api/v1/backups', {}, 500);
 
-  assert.ok(invalidated, 'the expired token is dropped');
+  assert.equal(state.rejected, 1, 'the refused token is dropped');
   assert.deepEqual(rows, [{ id: 'fresh' }], 'the page is re-fetched with the new one');
+});
+
+test('a 403 is a refused token too, not a dead end', async () => {
+  const { allPages } = require('../dist/veeam/pages');
+  const { state, reader } = refusedOnce(403);
+
+  // This is the failure that used to need a restart: 403 on every endpoint,
+  // starting the moment a token was renewed, with nothing in the code treating
+  // it as a reason to ask for another one. The service then waited out the
+  // token's full hour while every cycle failed.
+  const rows = await allPages(reader, '/api/v1/backups', {}, 500);
+
+  assert.equal(state.rejected, 1);
+  assert.deepEqual(state.tokensUsed, ['stale', 'fresh']);
+  assert.deepEqual(rows, [{ id: 'fresh' }]);
+});
+
+test('a refusal the auth service has already acted on is not re-fetched', async () => {
+  const { authorized } = require('../dist/veeam/pages');
+  const { VeeamApiError } = require('../dist/veeam/api.error');
+  let logins = 0;
+  const reader = {
+    // Says no: this same refusal was acted on moments ago.
+    auth: { rejectToken: () => false, getAccessToken: async () => `token-${(logins += 1)}` },
+    accessToken: 'stale',
+    veeam: { request: async () => { throw new VeeamApiError('Forbidden', 403); } },
+  };
+
+  await assert.rejects(
+    () => authorized(reader, { method: 'GET', path: '/api/v1/jobs/states' }),
+    /Forbidden/,
+  );
+  // One cycle's worth of calls carries one token and needs one new one, not a
+  // login per call against a Veeam that is refusing everything.
+  assert.equal(logins, 0);
+});
+
+test('a failure that is not about the token is passed straight through', async () => {
+  const { authorized } = require('../dist/veeam/pages');
+  const { VeeamApiError } = require('../dist/veeam/api.error');
+  let rejected = 0;
+  const reader = {
+    auth: { rejectToken: () => (rejected += 1) > 0, getAccessToken: async () => 'fresh' },
+    accessToken: 'stale',
+    veeam: { request: async () => { throw new VeeamApiError('Internal server error', 500); } },
+  };
+
+  await assert.rejects(
+    () => authorized(reader, { method: 'GET', path: '/api/v1/jobs/states' }),
+    /Internal server error/,
+  );
+  assert.equal(rejected, 0, 'a working token is not thrown away over a server fault');
+});
+
+test('one burst of refusals buys one new token, not one per call', async () => {
+  const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
+  const config = { getOrThrow: () => ({ veeamUsername: 'svc', veeamPassword: 'p' }) };
+  const auth = new VeeamMonitorAuthService(config, { login: async () => ({ access_token: 't' }) });
+
+  assert.equal(auth.rejectToken(), true, 'the first refusal is acted on');
+  assert.equal(auth.rejectToken(), false, 'and the rest of the same burst is not');
 });

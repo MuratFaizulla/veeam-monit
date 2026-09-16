@@ -208,7 +208,7 @@ test('the live message survives a restart instead of starting a second one', asy
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -227,7 +227,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -264,7 +264,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
     }),
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -364,7 +364,7 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),

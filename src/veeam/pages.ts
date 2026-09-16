@@ -1,5 +1,5 @@
 import { VeeamApiError } from './api.error';
-import { VeeamHttpService } from './http.service';
+import { RawRequest, VeeamHttpService } from './http.service';
 import { VeeamCollection } from './types';
 
 /**
@@ -14,13 +14,45 @@ import { VeeamCollection } from './types';
 /** Pages read at once. Enough to be quick, few enough to be polite. */
 const CONCURRENCY = 5;
 
-/** What the caller must already hold to read a collection. */
+/** What the caller must already hold to read from Veeam. */
 export interface VeeamReader {
   veeam: VeeamHttpService;
-  /** Consulted only when a token expires mid-read. */
-  auth: { invalidateAccessToken(): void; getAccessToken(): Promise<string> };
+  /** Consulted only when Veeam refuses the token being used. */
+  auth: { rejectToken(): boolean; getAccessToken(): Promise<string> };
   accessToken: string;
 }
+
+/**
+ * One authenticated request, tried again with a fresh token if Veeam refuses
+ * the one it was given.
+ *
+ * Every read from Veeam goes through here, not just the paged ones. A cycle
+ * makes about a dozen calls and only the paged ones used to recover from a
+ * refused token; the rest simply failed, and went on failing every minute for
+ * as long as the service believed its token was still good — an hour, or until
+ * somebody restarted the process.
+ *
+ * Exactly one retry. If the fresh token is refused too, the answer is "Veeam is
+ * not letting us in", and that belongs in the health message rather than in a
+ * loop.
+ */
+export const authorized = async <T>(
+  reader: VeeamReader,
+  request: Omit<RawRequest, 'accessToken'>,
+): Promise<T> => {
+  try {
+    return await reader.veeam.request<T>({ ...request, accessToken: reader.accessToken });
+  } catch (error) {
+    if (!(error instanceof VeeamApiError) || !error.isTokenRejected) throw error;
+    // Says no when the same refusal was already acted on moments ago: one
+    // cycle's worth of calls carries one token and needs one new one.
+    if (!reader.auth.rejectToken()) throw error;
+    return reader.veeam.request<T>({
+      ...request,
+      accessToken: await reader.auth.getAccessToken(),
+    });
+  }
+};
 
 /** Reads every page of `path`. */
 export const allPages = async <T>(
@@ -67,24 +99,16 @@ export const allPages = async <T>(
   return items;
 };
 
-/** One page, retried once against a token that expired mid-read. */
-const page = async <T>(
+/** One page. Recovering from a refused token is `authorized`'s business. */
+const page = <T>(
   reader: VeeamReader,
   path: string,
   params: Record<string, unknown>,
   skip: number,
   limit: number,
-): Promise<VeeamCollection<T>> => {
-  try {
-    return await reader.veeam.request<VeeamCollection<T>>({
-      method: 'GET', path, accessToken: reader.accessToken, params: { ...params, skip, limit },
-    });
-  } catch (error) {
-    if (!(error instanceof VeeamApiError) || !error.isUnauthorized) throw error;
-    reader.auth.invalidateAccessToken();
-    const accessToken = await reader.auth.getAccessToken();
-    return reader.veeam.request<VeeamCollection<T>>({
-      method: 'GET', path, accessToken, params: { ...params, skip, limit },
-    });
-  }
-};
+): Promise<VeeamCollection<T>> =>
+  authorized<VeeamCollection<T>>(reader, {
+    method: 'GET',
+    path,
+    params: { ...params, skip, limit },
+  });

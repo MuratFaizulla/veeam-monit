@@ -135,6 +135,7 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     username: 'svc@example.com',
     getAccessToken: async () => 'tok',
     invalidateAccessToken: () => {},
+    rejectToken: () => true,
   };
   const evidence = new BackupEvidenceService(w.config, veeam, auth);
   const monitor = new MonitorService(

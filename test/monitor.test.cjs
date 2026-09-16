@@ -116,7 +116,7 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
     '/api/v1/sessions': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -177,7 +177,7 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     },
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -207,7 +207,7 @@ test('a repository below the free-space threshold is reported once per cooldown'
       ],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -235,7 +235,7 @@ test('a repository that does not report free space raises nothing', async () => 
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, usedSpaceGB: 120 }],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),

@@ -6,6 +6,8 @@ import { VeeamTokenResponse } from './types';
 
 const REFRESH_SKEW_MS = 60_000;
 const DEFAULT_TOKEN_LIFETIME_MS = 15 * 60_000;
+/** Shortest gap between two logins forced by Veeam refusing a token. */
+const REJECT_COOLDOWN_MS = 60_000;
 
 @Injectable()
 export class VeeamMonitorAuthService {
@@ -15,6 +17,7 @@ export class VeeamMonitorAuthService {
   private accessToken = '';
   private refreshToken = '';
   private expiresAt = 0;
+  private rejectedAt = 0;
   private pending?: Promise<string>;
 
   constructor(config: ConfigService, private readonly veeam: VeeamHttpService) {
@@ -44,6 +47,23 @@ export class VeeamMonitorAuthService {
   invalidateAccessToken(): void {
     this.accessToken = '';
     this.expiresAt = 0;
+  }
+
+  /**
+   * Veeam refused this token. Says whether a fresh one is worth fetching.
+   *
+   * A burst of refusals is one event, not twenty: every call in a cycle carries
+   * the same token, so the first refusal already told us everything and the
+   * rest would each buy their own login. One per minute is enough to recover
+   * quickly without turning a Veeam that refuses everything — a genuine
+   * permission problem, say — into a login storm against it.
+   */
+  rejectToken(): boolean {
+    const now = Date.now();
+    if (now - this.rejectedAt < REJECT_COOLDOWN_MS) return false;
+    this.rejectedAt = now;
+    this.invalidateAccessToken();
+    return true;
   }
 
   private async authenticate(): Promise<string> {

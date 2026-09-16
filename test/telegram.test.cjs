@@ -416,7 +416,7 @@ test('a failing job step does not abort the repository check', async () => {
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
@@ -440,7 +440,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {} };
+  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     new BackupEvidenceService(w.config, veeam, auth),
