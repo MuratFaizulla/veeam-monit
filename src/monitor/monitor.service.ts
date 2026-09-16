@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/http.service';
-import { allPages } from '../veeam/pages';
+import { allPages, authorized } from '../veeam/pages';
 import {
   VeeamCollection,
   VeeamJobState,
@@ -271,10 +271,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
 
   /** Returns the states it just read, so the live message reuses that fetch. */
   private async checkJobs(accessToken: string): Promise<VeeamJobState[]> {
-    const response = await this.veeam.request<VeeamCollection<VeeamJobState>>({
+    const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
       path: '/api/v1/jobs/states',
-      accessToken,
     });
     const jobs = response.data ?? [];
 
@@ -653,10 +652,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   private async runningSessions(accessToken: string): Promise<Map<string, VeeamSession>> {
     const byJob = new Map<string, VeeamSession>();
     try {
-      const response = await this.veeam.request<VeeamCollection<VeeamSession>>({
+      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
         method: 'GET',
         path: SESSIONS,
-        accessToken,
         params: {
           skip: 0,
           limit: 100,
@@ -751,10 +749,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   ): Promise<string | undefined> {
     if (!job.id) return undefined;
     try {
-      const response = await this.veeam.request<VeeamCollection<VeeamSession>>({
+      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
         method: 'GET',
         path: SESSIONS,
-        accessToken,
         params: {
           skip: 0,
           limit: 1,
@@ -818,10 +815,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     if (hour < 0 || new Date().getHours() !== hour) return;
     if (this.store.isSuppressed('digest')) return;
 
-    const response = await this.veeam.request<VeeamCollection<VeeamJobState>>({
+    const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
       path: '/api/v1/jobs/states',
-      accessToken,
     });
     const jobs = response.data ?? [];
     const by = (result: string): VeeamJobState[] =>

@@ -17,7 +17,7 @@ export interface VeeamReachability {
   error?: string;
 }
 
-interface RawRequest {
+export interface RawRequest {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
   accessToken?: string;
