@@ -82,11 +82,17 @@ export class TelegramRoutingService {
   private byStrategy(event: NotificationEvent): RoutingDecision {
     const mode = this.config.routingMode;
     if (mode === 'single') {
-      const isAlert = event.severity === 'critical' || event.severity === 'warning';
-      return {
-        topic: isAlert ? topicName(this.config.alertsTopic) : null,
-        reason: isAlert ? 'mode=single alert' : 'mode=single',
-      };
+      if (event.severity === 'critical' || event.severity === 'warning') {
+        return { topic: topicName(this.config.alertsTopic), reason: 'mode=single alert' };
+      }
+      // A recovery is neither an alert nor chatter. It is the answer to an
+      // alert somebody is still waiting on, and in General it arrives among
+      // everything else — so the way to find out whether last night's failure
+      // was fixed is to read the whole topic. It gets its own.
+      if (event.severity === 'success') {
+        return { topic: this.severityTopic(event), reason: 'mode=single recovery' };
+      }
+      return { topic: null, reason: 'mode=single' };
     }
     if (mode === 'severity') {
       return { topic: this.severityTopic(event), reason: 'mode=severity' };
