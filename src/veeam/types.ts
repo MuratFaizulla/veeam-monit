@@ -3,12 +3,17 @@
  * service consumes. Every field is optional on purpose: the exact shape differs
  * between VBR builds, and a missing property must never abort a monitor cycle.
  *
- * Four endpoints are read, and nothing else:
+ * What is read, and nothing else:
  *   GET /api/v1/serverTime                                  — reachability
  *   GET /api/v1/jobs/states                                 — VeeamJobState
+ *   GET /api/v1/jobs, /api/v1/jobs/{id}                     — VeeamJob
  *   GET /api/v1/sessions                                    — VeeamSession
+ *   GET /api/v1/sessions/{id}/taskSessions                  — VeeamTaskSession
+ *   GET /api/v1/backups, /api/v1/restorePoints              — VeeamBackup, VeeamRestorePoint
  *   GET /api/v1/backupInfrastructure/repositories/states    — VeeamRepositoryState
- * plus POST /api/oauth2/token for VeeamTokenResponse.
+ *   GET /api/v1/backupInfrastructure/repositories, /proxies — VeeamNamedResource
+ * plus POST /api/oauth2/token for VeeamTokenResponse. Every one of them is a
+ * GET: this service has no business changing anything on the backup server.
  *
  * The file used to carry 21 models covering jobs configuration, backups,
  * restore points, replicas, licensing, proxies and malware events. Those served
@@ -80,10 +85,16 @@ export interface VeeamTaskProgress {
 
 export interface VeeamTaskSession {
   id?: string;
+  /** The object this task processed — a VM name, which is what is asked for. */
   name?: string;
   type?: string;
   state?: string;
   status?: string;
+  /** Per-object outcome: this is where "which machine failed, and why" lives. */
+  result?: {
+    result?: string;
+    message?: string;
+  };
   progress?: VeeamTaskProgress | null;
 }
 
@@ -150,12 +161,69 @@ export interface VeeamSchedule {
   };
 }
 
+/** One protected object, as the job configuration names it. */
+export interface VeeamJobObject {
+  name?: string;
+  /** The host it lives on, which is what an operator recognises it by. */
+  hostName?: string;
+  type?: string;
+  platform?: string;
+  /** Veeam's own formatting, locale and all: "3,9 TB". Never parsed. */
+  size?: string;
+}
+
+/** Where a job writes, and what it may use to get there. */
+export interface VeeamJobStorage {
+  backupRepositoryId?: string;
+  backupProxies?: {
+    /** True when Veeam picks the proxy per run; then `proxyIds` is empty. */
+    autoSelectEnabled?: boolean;
+    proxyIds?: string[];
+  };
+  retentionPolicy?: {
+    /** `Days` or `RestorePoints`. */
+    type?: string;
+    quantity?: number;
+  };
+  advancedSettings?: {
+    backupModeType?: string;
+    activeFulls?: VeeamFullBackups;
+    /** Veeam's own spelling of "synthetic", kept so the field is found. */
+    synthenticFulls?: VeeamFullBackups;
+  };
+}
+
+export interface VeeamFullBackups {
+  isEnabled?: boolean;
+  weekly?: { isEnabled?: boolean; days?: string[] };
+}
+
 export interface VeeamJob {
   id?: string;
   name?: string;
+  type?: string;
+  description?: string;
   isDisabled?: boolean;
-  /** False when the job only ever runs because somebody started it. */
+  /** `runAutomatically: false` when the job only ever runs by hand. */
   schedule?: VeeamSchedule;
+  /** Only present on a single job read by id, not in the collection. */
+  storage?: VeeamJobStorage;
+  virtualMachines?: {
+    includes?: VeeamJobObject[];
+    excludes?: { vms?: VeeamJobObject[] };
+  };
+}
+
+/**
+ * Item of the backup infrastructure collections — repositories and proxies.
+ *
+ * Jobs point at these by id and nothing else, so without this a card can only
+ * say that the job writes to `60df9772-a2d9-…`.
+ */
+export interface VeeamNamedResource {
+  id?: string;
+  name?: string;
+  type?: string;
 }
 
 /** Item of .../repositories/states — capacity figures live here, not in the config. */

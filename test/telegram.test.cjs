@@ -10,7 +10,7 @@ const {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -417,10 +417,7 @@ test('a failing job step does not abort the repository check', async () => {
     },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
 
@@ -441,10 +438,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
   const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const monitor = new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
-    new BackupEvidenceService(w.config, veeam, auth),
-  );
+  const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
   assert.equal(w.store.snapshot().cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');

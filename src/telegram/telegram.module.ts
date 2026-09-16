@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpModule } from '../veeam/http.module';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
+import { VeeamInventoryService } from '../veeam/inventory.service';
 import { BackupEvidenceService } from '../monitor/backup-evidence.service';
 import { MonitorService } from '../monitor/monitor.service';
 import { TelegramLiveService } from '../live/live.service';
@@ -66,6 +67,7 @@ import { TelegramUpdatesService } from './updates.service';
     MonitorService,
     BackupEvidenceService,
     VeeamMonitorAuthService,
+    VeeamInventoryService,
   ],
 })
 export class TelegramModule {}

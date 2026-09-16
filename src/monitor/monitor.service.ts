@@ -5,6 +5,7 @@ import { VeeamHttpService } from '../veeam/http.service';
 import { allPages, authorized } from '../veeam/pages';
 import {
   VeeamCollection,
+  VeeamJob,
   VeeamJobState,
   VeeamRepositoryState,
   VeeamSession,
@@ -23,6 +24,7 @@ import {
 } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
+import { VeeamInventoryService } from '../veeam/inventory.service';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
 import {
   ACTIVE_SESSION_STATES,
@@ -41,13 +43,23 @@ import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
 import { digestBody, digestFields, renderDigest, summarise } from './digest';
 import { isBadResult, isDisabled, isRunning, resultOf } from './job-state';
-import { JobCard, JobRun, matchJob, renderChoices, renderJobCard } from './job-card';
+import {
+  FailedObject,
+  JobCard,
+  JobRun,
+  machinesOf,
+  matchJob,
+  renderChoices,
+  renderJobCard,
+  settingsOf,
+} from './job-card';
 import { escapeHtml } from '../telegram/format';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const SESSIONS = '/api/v1/sessions';
 const JOB_STATES = '/api/v1/jobs/states';
+const JOBS = '/api/v1/jobs';
 
 /**
  * What a slot says when Veeam answered nothing this cycle. The evidence module
@@ -113,6 +125,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     private readonly store: TelegramStateStore,
     private readonly live: TelegramLiveService,
     private readonly evidence: BackupEvidenceService,
+    private readonly inventory: VeeamInventoryService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -246,12 +259,31 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Everything known about one job, from the three places that know it. */
+  /** Everything known about one job, from the five places that know it. */
   private async cardFor(job: VeeamJobState, accessToken: string): Promise<JobCard> {
     const evidence = this.evidence.evidence;
     const scanned = evidence.status === 'ready' ? evidence : undefined;
     const id = job.id;
+
+    // In parallel: the three reads are independent, and a card that took three
+    // round trips in sequence is a card nobody waits for.
+    const [runs, configured, names] = await Promise.all([
+      this.recentRuns(job, accessToken),
+      this.jobConfig(job, accessToken),
+      this.inventory.names(this.reader(accessToken)),
+    ]);
+
+    const { machines, excluded } = machinesOf(configured);
     return {
+      settings: settingsOf(configured, names),
+      machines,
+      excluded,
+      // Only while the job is actually broken: a recovered job's failures are
+      // already visible in its run list, and this costs another request.
+      failedObjects: isBadResult(resultOf(job))
+        ? await this.failedObjects(runs, accessToken)
+        : [],
+      runs,
       name: job.name ?? id ?? 'без имени',
       type: job.type,
       status: job.status,
@@ -260,7 +292,6 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       lastRun: job.lastRun,
       nextRun: job.nextRun,
       objects: job.objectsCount,
-      runs: await this.recentRuns(job, accessToken),
       failures: scanned && id ? scanned.streakByJob.get(id) : undefined,
       depth: scanned && id ? scanned.depthByJob.get(id) : undefined,
       cadenceDays: scanned && id ? scanned.cadenceByJob.get(id) ?? null : undefined,
@@ -284,6 +315,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
         },
       });
       return (response.data ?? []).map((session) => ({
+        id: session.id,
         startedAt: session.creationTime,
         endedAt: session.endTime,
         result: session.result?.result,
@@ -292,6 +324,57 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       }));
     } catch (error) {
       this.logger.debug(`No session history for job ${job.id}: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
+  /**
+   * The job's own configuration — schedule, repository, proxies, machines.
+   *
+   * Read by id rather than taken from the estate scan's copy: that copy keeps
+   * only the schedules of all 112 jobs, and holding every job's full storage
+   * settings in memory to answer a question nobody may ask is the wrong trade.
+   */
+  private async jobConfig(
+    job: VeeamJobState,
+    accessToken: string,
+  ): Promise<VeeamJob | undefined> {
+    if (!job.id) return undefined;
+    try {
+      return await authorized<VeeamJob>(this.reader(accessToken), {
+        method: 'GET',
+        path: `${JOBS}/${encodeURIComponent(job.id)}`,
+      });
+    } catch (error) {
+      this.logger.debug(`No configuration for job ${job.id}: ${(error as Error).message}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Which objects of the newest bad run failed, and why.
+   *
+   * An empty answer is not a failure of this method: a run that could not
+   * reach the machine at all — "Virtual Machine … is unavailable" — never
+   * starts a task for it, and then the session message is the whole story.
+   */
+  private async failedObjects(runs: JobRun[], accessToken: string): Promise<FailedObject[]> {
+    const bad = runs.find((run) => isBadResult((run.result ?? '').toLowerCase()));
+    if (!bad?.id) return [];
+    try {
+      const tasks = await allPages<VeeamTaskSession>(
+        this.reader(accessToken),
+        `/api/v1/sessions/${encodeURIComponent(bad.id)}/taskSessions`,
+      );
+      return tasks
+        .filter((task) => isBadResult((task.result?.result ?? '').toLowerCase()))
+        .map((task) => ({
+          name: task.name ?? 'без имени',
+          result: task.result?.result,
+          message: task.result?.message?.trim() || undefined,
+        }));
+    } catch (error) {
+      this.logger.debug(`No task detail for session ${bad.id}: ${(error as Error).message}`);
       return [];
     }
   }
