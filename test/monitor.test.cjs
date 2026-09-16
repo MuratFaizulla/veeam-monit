@@ -447,7 +447,9 @@ test('/status carries the same health as /check, without running anything', asyn
 
   const reply = w.api.sent().at(-1);
   assert.match(reply.text, /Учётная запись:<\/b> 🟢 да/);
-  assert.match(reply.text, /\/help/, 'и дорога к остальным командам');
+  // The way to the rest is a button now, not a line telling somebody to type.
+  const buttons = reply.reply_markup.inline_keyboard.flat().map((b) => b.text);
+  assert.deepEqual(buttons, ['📊 Сводка', '🔄 Проверить', '🤖 Команды']);
 });
 
 test('an approximate name finds the job somebody meant', () => {
@@ -473,7 +475,9 @@ test('a name that fits several jobs is listed, never guessed at', () => {
   const match = matchJob(jobs, 'konaev');
 
   assert.equal(match.found, 'many');
-  assert.deepEqual(match.names, ['TTC_Konaev_EM_DB', 'TTC_Veeam_DB_Konaev']);
+  // The jobs, not their names: a button has to address what it opens.
+  assert.deepEqual(match.jobs.map((j) => j.name), ['TTC_Konaev_EM_DB', 'TTC_Veeam_DB_Konaev']);
+  assert.deepEqual(match.jobs.map((j) => j.id), ['2', '1']);
 });
 
 test('/job answers about one job, which no live topic can', async () => {
@@ -675,4 +679,118 @@ test('the reason is said once: at length by object, or briefly by run', async ()
   const reply = plain.api.sent().at(-1).text;
   assert.match(reply, /<b>Причина:<\/b> Agent failed to process method/);
   assert.doesNotMatch(reply, /Что именно не прошло/);
+});
+
+/* ------------------------------------------------------------------ *
+ * The menu and the buttons
+ * ------------------------------------------------------------------ */
+
+const pressed = (w, data) => w.updates.handleUpdate({
+  update_id: Math.floor(Math.random() * 1e6),
+  callback_query: {
+    id: 'cb-1',
+    data,
+    from: { id: 42, first_name: 'Оператор' },
+    message: {
+      message_id: 9,
+      message_thread_id: 55,
+      is_topic_message: true,
+      chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+    },
+  },
+});
+
+test('a button and its reader cannot disagree about what it means', () => {
+  const { encode, decode, BOT_COMMANDS } = require('../dist/telegram/keyboard');
+
+  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
+    assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
+  }
+  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf' };
+  assert.deepEqual(decode(encode(job)), job, 'GUID помещается в 64 байта Telegram');
+
+  // A button from a version that had actions this one does not.
+  assert.equal(decode('a:whatever'), undefined);
+  assert.equal(decode(undefined), undefined);
+
+  // The menu names only commands the bot actually answers.
+  assert.deepEqual(
+    BOT_COMMANDS.map((c) => c.command).sort(),
+    ['check', 'digest', 'help', 'job', 'status', 'topics'],
+  );
+});
+
+test('the command menu is registered with Telegram at startup', async () => {
+  // A webhook world on purpose: long polling would leave a loop running for as
+  // long as the test process lives.
+  const w = monitorWorld({ TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com' }, []);
+
+  await w.updates.onModuleInit();
+
+  const published = w.api.of('setMyCommands').at(-1);
+  assert.ok(published, 'меню отправлено в Bot API');
+  assert.ok(published.commands.some((c) => c.command === 'job' && /имени/.test(c.description)));
+  // Without this Telegram never delivers a press, and every button is dead.
+  assert.ok(w.api.of('setWebhook').at(-1).allowed_updates.includes('callback_query'));
+});
+
+test('the summary offers the jobs it just named', async () => {
+  const w = monitorWorld({}, [
+    job('1', 'SQL Daily', 'Failed'),
+    job('2', 'Files', 'Success'),
+    job('3', 'Exchange', 'Warning'),
+  ]);
+
+  await said(w, '/digest');
+
+  const rows = w.api.sent().at(-1).reply_markup.inline_keyboard;
+  assert.deepEqual(rows.map((row) => row[0].text), ['SQL Daily', 'Exchange', '🔄 Обновить']);
+  // Addressed by id: a name would not fit the 64 bytes, and would open the
+  // wrong job if the estate changed between the message and the press.
+  assert.equal(rows[0][0].callback_data, 'a:job:1');
+});
+
+test('pressing a job button opens that job, without anybody typing a name', async () => {
+  const w = configured();
+
+  await pressed(w, 'a:job:1');
+
+  const sent = w.api.sent().at(-1);
+  assert.equal(sent.message_thread_id, 55, 'ответ там, где нажали');
+  assert.match(sent.text, /TTC_ASUEDT_EMM_DB1/);
+  assert.match(sent.text, /Расписание:<\/b> пн, ср, пт в 03:12/);
+  // And the card offers its own refresh, so the loop closes.
+  assert.deepEqual(
+    sent.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
+    ['a:job:1', 'a:sum'],
+  );
+});
+
+test('a press is acknowledged before the work, not after', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await pressed(w, 'a:sum');
+
+  // Telegram spins on the presser's screen until this is answered, so it must
+  // not wait behind a Veeam read.
+  const order = w.api.calls.map((call) => call.method);
+  assert.equal(order[0], 'answerCallbackQuery');
+  assert.ok(order.includes('sendMessage'));
+});
+
+test('a button this version does not know is acknowledged and ignored', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await pressed(w, 'a:from-a-future-version');
+
+  assert.equal(w.api.of('answerCallbackQuery').length, 1, 'спиннер снят');
+  assert.deepEqual(w.api.sent(), [], 'и ничего не отвечено наугад');
+});
+
+test('a job that disappeared between the message and the press says so', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await pressed(w, 'a:job:gone');
+
+  assert.match(w.api.sent().at(-1).text, /больше не найдено/);
 });

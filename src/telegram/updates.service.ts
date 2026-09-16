@@ -5,9 +5,23 @@ import { escapeHtml, truncate } from './format';
 import { TelegramStateStore } from './state.store';
 import { TelegramTopicsService } from './topics.service';
 import { TelegramTransportService } from './transport.service';
-import { TelegramChat, TelegramDestination, TelegramUpdate } from './types';
-import { MonitorService } from '../monitor/monitor.service';
+import {
+  TelegramCallbackQuery,
+  TelegramChat,
+  TelegramDestination,
+  TelegramKeyboard,
+  TelegramUpdate,
+} from './types';
+import { MonitorAnswer, MonitorService } from '../monitor/monitor.service';
 import { stampOf } from '../live/format';
+import {
+  Action,
+  BOT_COMMANDS,
+  cardKeyboard,
+  decode,
+  jobsKeyboard,
+  mainKeyboard,
+} from './keyboard';
 
 /** Shortest gap between two passes asked for by hand, in the group. */
 const CHECK_COOLDOWN_MS = 30_000;
@@ -51,6 +65,19 @@ const HELP = [
   '<i>а кнопка перезагрузки, доступная всей группе, — это новая проблема вместо старой.</i>',
 ];
 
+/** One message the bot is about to send, and what it lets the reader do next. */
+interface Reply {
+  lines: string[];
+  markup?: TelegramKeyboard;
+}
+
+type ButtonRow = Array<[string, Action]>;
+
+/** Offered under a list of jobs, so the way back is never retyping a command. */
+const SUMMARY_BUTTON: ButtonRow = [['📊 Сводка', { kind: 'summary' }]];
+/** Under the summary itself, where another "Сводка" would say nothing. */
+const REFRESH_SUMMARY_BUTTON: ButtonRow = [['🔄 Обновить', { kind: 'summary' }]];
+
 /**
  * How the bot hears from Telegram.
  *
@@ -89,6 +116,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
+    await this.publishCommands();
 
     if (this.config.webhookUrl) {
       await this.configureWebhook();
@@ -130,6 +158,11 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
    * the two transports need no further difference anywhere else.
    */
   async handleUpdate(update: TelegramUpdate): Promise<void> {
+    if (update.callback_query) {
+      await this.handleCallback(update.callback_query);
+      return;
+    }
+
     const message = update.message;
     const chat = message?.chat ?? update.my_chat_member?.chat;
     if (!chat) return;
@@ -159,7 +192,46 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       chatId: String(chat.id),
       threadId: message?.is_topic_message ? message.message_thread_id : undefined,
     };
-    await this.respond(command, argument, chat, reply);
+    const answer = await this.respond(command, argument, chat, reply);
+    if (answer) await this.send(reply, answer);
+  }
+
+  /**
+   * A button was pressed.
+   *
+   * The press is acknowledged first and unconditionally: Telegram shows the
+   * sender a spinner until it is, and a read that takes two seconds would
+   * otherwise look like a bot that ignored them.
+   */
+  private async handleCallback(query: TelegramCallbackQuery): Promise<void> {
+    await this.acknowledge(query.id);
+    const chat = query.message?.chat;
+    if (!chat) return;
+    this.registerChat(chat);
+
+    // An unknown action is an old message from a version that had buttons this
+    // one does not. Acknowledged and then ignored, rather than answered wrongly.
+    const action = decode(query.data);
+    if (!action) return;
+
+    const reply: TelegramDestination = {
+      chatId: String(chat.id),
+      threadId: query.message?.is_topic_message ? query.message.message_thread_id : undefined,
+    };
+    await this.send(reply, await this.act(action, chat, reply));
+  }
+
+  /** Every button leads to an answer one of the commands could also produce. */
+  private async act(
+    action: Action,
+    chat: TelegramChat,
+    reply: TelegramDestination,
+  ): Promise<Reply> {
+    if (action.kind === 'summary') return this.summaryReply();
+    if (action.kind === 'check') return { lines: await this.runCheck(), markup: mainKeyboard() };
+    if (action.kind === 'help') return { lines: HELP, markup: mainKeyboard() };
+    if (action.kind === 'status') return this.statusReply(chat, reply);
+    return this.reading(() => this.monitor.describeJobById(action.id));
   }
 
   private async respond(
@@ -167,10 +239,31 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     argument: string,
     chat: TelegramChat,
     reply: TelegramDestination,
-  ): Promise<void> {
-    const lines: string[] = [];
+  ): Promise<Reply | undefined> {
     if (command === '/start' || command === '/status' || command === '/chatid') {
-      lines.push(
+      return this.statusReply(chat, reply);
+    }
+    if (command === '/help') return { lines: HELP, markup: mainKeyboard() };
+    if (command === '/check') return { lines: await this.runCheck(), markup: mainKeyboard() };
+    if (command === '/digest') return this.summaryReply();
+    if (command === '/job') {
+      return this.reading(() => this.monitor.describeJob(argument), SUMMARY_BUTTON);
+    }
+    if (command === '/topics') {
+      const known = this.topics.list(String(chat.id));
+      const lines = ['<b>Известные топики</b>'];
+      for (const [name, threadId] of Object.entries(known)) {
+        lines.push(`${escapeHtml(name)} — <code>${threadId}</code>`);
+      }
+      if (Object.keys(known).length === 0) lines.push('пока ни одного');
+      return { lines, markup: mainKeyboard() };
+    }
+    return undefined;
+  }
+
+  private statusReply(chat: TelegramChat, reply: TelegramDestination): Reply {
+    return {
+      lines: [
         '<b>Veeam Monitor</b>',
         `<b>Chat ID:</b> <code>${escapeHtml(chat.id)}</code>`,
         `<b>Форум:</b> ${chat.is_forum ? 'да' : 'нет'}`,
@@ -178,34 +271,35 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
         `<b>Маршрутизация:</b> ${escapeHtml(this.config.routingMode)}`,
         '',
         ...this.healthLines(),
-        '',
-        'Что умеет бот — <code>/help</code>',
-      );
-    } else if (command === '/help') {
-      lines.push(...HELP);
-    } else if (command === '/check') {
-      lines.push(...(await this.runCheck()));
-    } else if (command === '/digest') {
-      lines.push(...(await this.reading(() => this.monitor.summary())));
-    } else if (command === '/job') {
-      lines.push(...(await this.reading(() => this.monitor.describeJob(argument))));
-    } else if (command === '/topics') {
-      const known = this.topics.list(String(chat.id));
-      lines.push('<b>Известные топики</b>');
-      for (const [name, threadId] of Object.entries(known)) {
-        lines.push(`${escapeHtml(name)} — <code>${threadId}</code>`);
-      }
-      if (Object.keys(known).length === 0) lines.push('пока ни одного');
-    } else {
-      return;
-    }
+      ],
+      markup: mainKeyboard(),
+    };
+  }
 
+  private summaryReply(): Promise<Reply> {
+    return this.reading(() => this.monitor.summary(), REFRESH_SUMMARY_BUTTON);
+  }
+
+  private async send(destination: TelegramDestination, answer: Reply): Promise<void> {
     try {
       // Cut to Telegram's limit rather than rejected by it: a job card is
       // bounded, but a forum with a hundred topics is not.
-      await this.transport.sendMessage(reply, truncate(lines.join('\n')));
+      await this.transport.sendMessage(
+        destination,
+        truncate(answer.lines.join('\n')),
+        answer.markup,
+      );
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
+    }
+  }
+
+  /** Best effort: an unacknowledged press only ever leaves a spinner behind. */
+  private async acknowledge(id: string): Promise<void> {
+    try {
+      await this.transport.call('answerCallbackQuery', { callback_query_id: id });
+    } catch (error) {
+      this.logger.debug(`Callback not acknowledged: ${(error as Error).message}`);
     }
   }
 
@@ -250,17 +344,43 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
    * nothing, so unlike `/check` they need no cycle and cannot collide with one.
    * A failure is answered too: an unanswered command reads as a dead bot.
    */
-  private async reading(ask: () => Promise<string>): Promise<string[]> {
+  private async reading(
+    ask: () => Promise<MonitorAnswer>,
+    tail: ButtonRow = [],
+  ): Promise<Reply> {
     if (this.store.isSuppressed(READ_COOLDOWN_KEY)) {
-      return ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'];
+      return {
+        lines: ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'],
+        markup: mainKeyboard(),
+      };
     }
     this.store.armCooldown(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
     try {
-      return [await ask()];
+      return this.offered(await ask(), tail);
     } catch (error) {
       this.logger.error(`Telegram command failed: ${(error as Error).message}`);
-      return ['⚠️ <b>Не удалось ответить</b>', '', escapeHtml((error as Error).message)];
+      return {
+        lines: ['⚠️ <b>Не удалось ответить</b>', '', escapeHtml((error as Error).message)],
+        markup: mainKeyboard(),
+      };
     }
+  }
+
+  /**
+   * What the answer lets somebody do next.
+   *
+   * An answer about one job offers that job again; an answer listing jobs
+   * offers each of them. Which is why the monitor hands back ids alongside the
+   * text: a button has to address a job, and the name printed in the message
+   * is not an address.
+   */
+  private offered(answer: MonitorAnswer, tail: ButtonRow): Reply {
+    const lines = [answer.text];
+    if (answer.jobId) return { lines, markup: cardKeyboard(answer.jobId) };
+    if (answer.jobs && answer.jobs.length > 0) {
+      return { lines, markup: jobsKeyboard(answer.jobs, tail) };
+    }
+    return { lines, markup: mainKeyboard() };
   }
 
   /** The monitor's own state, compact enough to sit under any answer. */
@@ -280,6 +400,26 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   private registerChat(chat: TelegramChat): void {
     const { becameForum } = this.store.mergeChat(chat);
     if (becameForum) this.topics.unblock();
+  }
+
+  /**
+   * Registers the command menu Telegram shows next to the input field.
+   *
+   * The commands existed and were discoverable only by reading `/help`, which
+   * in a group is not how anybody finds anything: the bot was added once, by
+   * one person, and everyone else inherited a silent box. This is the one place
+   * Telegram will show them without being asked.
+   *
+   * Best effort — a bot that could not publish its menu still answers every
+   * command typed by hand.
+   */
+  private async publishCommands(): Promise<void> {
+    try {
+      await this.transport.call('setMyCommands', { commands: BOT_COMMANDS });
+      this.logger.log(`Telegram command menu published (${BOT_COMMANDS.length} commands)`);
+    } catch (error) {
+      this.logger.warn(`Telegram command menu was not published: ${(error as Error).message}`);
+    }
   }
 
   /** Learns title and forum flag for chats that were configured, not discovered. */
@@ -304,7 +444,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       await this.transport.call('setWebhook', {
         url: `${this.config.webhookUrl}/api/telegram/webhook`,
         secret_token: this.config.webhookSecret || undefined,
-        allowed_updates: ['message', 'my_chat_member'],
+        allowed_updates: ['message', 'callback_query', 'my_chat_member'],
       });
       this.logger.log('Telegram webhook configured');
     } catch (error) {
@@ -331,7 +471,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
         const updates = await this.transport.call<TelegramUpdate[]>('getUpdates', {
           offset: this.updateOffset,
           timeout: 25,
-          allowed_updates: ['message', 'my_chat_member'],
+          allowed_updates: ['message', 'callback_query', 'my_chat_member'],
         });
         for (const update of updates ?? []) {
           this.updateOffset = Math.max(this.updateOffset, update.update_id + 1);

@@ -2,7 +2,7 @@ import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../live/format';
 import { VeeamJob, VeeamJobState, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
-import { iconOf } from './job-state';
+import { iconOf, resultOf } from './job-state';
 import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
 
 /**
@@ -106,7 +106,9 @@ export interface JobCard {
 
 export type JobMatch =
   | { found: 'one'; job: VeeamJobState }
-  | { found: 'many'; names: string[] }
+  // The jobs themselves, not their names: whatever offers the choice needs to
+  // be able to address what was chosen, and a name is not an address.
+  | { found: 'many'; jobs: VeeamJobState[] }
   | { found: 'none' };
 
 /**
@@ -139,19 +141,19 @@ export const matchJob = (jobs: VeeamJobState[], query: string): JobMatch => {
   const hits = contained.length > 0 ? contained : scattered;
   if (hits.length === 0) return { found: 'none' };
   if (hits.length === 1) return { found: 'one', job: hits[0] };
-  return { found: 'many', names: hits.map((job) => job.name).sort((a, b) => a.localeCompare(b)) };
+  return { found: 'many', jobs: [...hits].sort((a, b) => a.name.localeCompare(b.name)) };
 };
 
 /** What to say when the name fits several jobs. */
-export const renderChoices = (names: string[], query: string): string => {
-  const shown = names.slice(0, 20);
+export const renderChoices = (jobs: VeeamJobState[], query: string): string => {
+  const shown = jobs.slice(0, 20);
   const lines = [
-    `🔎 <b>Под «${escapeHtml(query)}» подходит ${names.length} ${plural(names.length, 'задание', 'задания', 'заданий')}:</b>`,
+    `🔎 <b>Под «${escapeHtml(query)}» подходит ${jobs.length} ${plural(jobs.length, 'задание', 'задания', 'заданий')}:</b>`,
     '',
-    ...shown.map((name) => `• <code>${escapeHtml(name)}</code>`),
+    ...shown.map((job) => `${iconOf(resultOf(job))} <code>${escapeHtml(job.name ?? '')}</code>`),
   ];
-  if (shown.length < names.length) lines.push(`<i>…и ещё ${names.length - shown.length}</i>`);
-  lines.push('', 'Уточните запрос — можно скопировать имя целиком.');
+  if (shown.length < jobs.length) lines.push(`<i>…и ещё ${jobs.length - shown.length}</i>`);
+  lines.push('', 'Выберите кнопкой ниже или уточните запрос.');
   return lines.join('\n');
 };
 
