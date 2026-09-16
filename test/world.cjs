@@ -95,7 +95,13 @@ function world(env = {}, handlers = {}, stateFile) {
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
-  const updates = new TelegramUpdatesService(config, transport, topics, store);
+  // /check needs a monitor. Tests that have no monitor get one that says it
+  // ran and reports nothing; monitorWorld swaps in the real one below.
+  const idleMonitor = {
+    check: async () => 'ran',
+    status: { reachable: null, authenticated: null, trackedJobs: 0, lastCheckAt: null, lastError: null },
+  };
+  const updates = new TelegramUpdatesService(config, transport, topics, store, idleMonitor);
   const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
@@ -141,7 +147,9 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   const monitor = new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live, evidence,
   );
-  return { ...w, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
+  // The real monitor, so /check in these tests drives a real cycle.
+  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, monitor);
+  return { ...w, updates, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });

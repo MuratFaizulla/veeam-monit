@@ -6,6 +6,12 @@ import { TelegramStateStore } from './state.store';
 import { TelegramTopicsService } from './topics.service';
 import { TelegramTransportService } from './transport.service';
 import { TelegramChat, TelegramDestination, TelegramUpdate } from './types';
+import { MonitorService } from '../monitor/monitor.service';
+import { stampOf } from '../live/format';
+
+/** Shortest gap between two passes asked for by hand, in the group. */
+const CHECK_COOLDOWN_MS = 30_000;
+const CHECK_COOLDOWN_KEY = 'command:check';
 
 /**
  * How the bot hears from Telegram.
@@ -34,6 +40,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     private readonly transport: TelegramTransportService,
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
+    private readonly monitor: MonitorService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -122,7 +129,13 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
         `<b>Форум:</b> ${chat.is_forum ? 'да' : 'нет'}`,
         `<b>Топик:</b> <code>${escapeHtml(reply.threadId ?? 'General')}</code>`,
         `<b>Маршрутизация:</b> ${escapeHtml(this.config.routingMode)}`,
+        '',
+        ...this.healthLines(),
+        '',
+        '<b>Команды:</b> /status, /topics, /check',
       );
+    } else if (command === '/check') {
+      lines.push(...(await this.runCheck()));
     } else if (command === '/topics') {
       const known = this.topics.list(String(chat.id));
       lines.push('<b>Известные топики</b>');
@@ -139,6 +152,54 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
     }
+  }
+
+  /**
+   * `/check` — run a monitoring pass now instead of waiting for the timer.
+   *
+   * Everything the command can do is read Veeam and refresh what the bot
+   * already publishes, so it is open to the group rather than gated behind the
+   * admin key. What it is not is free: a pass can pull the whole restore-point
+   * scan behind it, so it is rate-limited, and a pass already in flight is
+   * reported rather than queued.
+   */
+  private async runCheck(): Promise<string[]> {
+    if (this.store.isSuppressed(CHECK_COOLDOWN_KEY)) {
+      return [
+        '⏳ <b>Проверка уже была только что</b>',
+        '',
+        'Цикл запускается сам раз в минуту; вручную — не чаще одного раза в полминуты.',
+        '',
+        ...this.healthLines(),
+      ];
+    }
+    this.store.armCooldown(CHECK_COOLDOWN_KEY, CHECK_COOLDOWN_MS);
+
+    const outcome = await this.monitor.check();
+    return [
+      outcome === 'ran'
+        ? '✅ <b>Цикл проверки выполнен</b>'
+        : '⏳ <b>Цикл уже шёл, этот запрос отклонён</b>',
+      // Said plainly: when a pass was declined, the state below belongs to the
+      // pass that was already running, not to this request.
+      outcome === 'ran' ? '' : 'Ниже — состояние того цикла, а не этого запроса.',
+      '',
+      ...this.healthLines(),
+    ];
+  }
+
+  /** The monitor's own state, compact enough to sit under any answer. */
+  private healthLines(): string[] {
+    const health = this.monitor.status;
+    const mark = (value: boolean | null): string =>
+      value === null ? '⚪ неизвестно' : value ? '🟢 да' : '🔴 нет';
+    return [
+      `<b>Veeam отвечает:</b> ${mark(health.reachable)}`,
+      `<b>Учётная запись:</b> ${mark(health.authenticated)}`,
+      `<b>Заданий под наблюдением:</b> ${health.trackedJobs}`,
+      `<b>Последняя проверка:</b> ${health.lastCheckAt ? stampOf(new Date(health.lastCheckAt), { now: new Date(), timezone: this.config.timezone }) : 'ещё не было'}`,
+      ...(health.lastError ? [`<b>Последняя ошибка:</b> ${escapeHtml(health.lastError)}`] : []),
+    ];
   }
 
   private registerChat(chat: TelegramChat): void {
