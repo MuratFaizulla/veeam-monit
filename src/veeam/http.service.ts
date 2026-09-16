@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, isAxiosError } from 'axios';
 import { Agent } from 'https';
 import { AppConfig } from '../config/configuration';
-import { VeeamApiError } from './veeam-api.error';
-import { VeeamTokenResponse } from './veeam.types';
+import { VeeamApiError } from './api.error';
+import { VeeamTokenResponse } from './types';
 
 type VeeamConfig = AppConfig['veeam'];
 

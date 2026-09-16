@@ -2,12 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readFileSync } from 'fs';
 import { AppConfig } from '../config/configuration';
-import { topicName } from './telegram.format';
+import { topicName } from './format';
 import {
   NotificationEvent,
   TelegramRouteRule,
   TelegramRoutesFile,
-} from './telegram.types';
+} from './types';
 
 export interface RoutingDecision {
   /** Topic name, or null for the General topic. */

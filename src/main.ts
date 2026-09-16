@@ -6,7 +6,7 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/configuration';
 import { FileLogger } from './logging/file-logger';
-import { DOCS_PATH, mountOpenApi } from './openapi';
+import { DOCS_PATH, mountOpenApi } from './http/openapi';
 
 async function bootstrap(): Promise<void> {
   const logFile = process.env.LOG_FILE ?? join(process.cwd(), 'logs', 'backend.log');

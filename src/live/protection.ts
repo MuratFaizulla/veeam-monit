@@ -1,6 +1,6 @@
-import { escapeHtml } from './telegram.format';
-import { Standings } from './job-standing';
-import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './telegram-live.format';
+import { escapeHtml } from '../telegram/format';
+import { Standings } from '../monitor/job-standing';
+import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './format';
 
 /**
  * "What is not actually protected right now."

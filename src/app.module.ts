@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { configuration } from './config/configuration';
-import { HealthController } from './health.controller';
+import { HealthController } from './http/health.controller';
 import { TelegramModule } from './telegram/telegram.module';
-import { VeeamHttpModule } from './veeam/veeam-http.module';
+import { VeeamHttpModule } from './veeam/http.module';
 
 /**
  * Telegram-only build: the service watches Veeam and reports what changed.

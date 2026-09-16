@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { VeeamHttpService, VeeamReachability } from './veeam/veeam-http.service';
+import { VeeamHttpService, VeeamReachability } from '../veeam/http.service';
 
 @ApiTags('health')
 @Controller('health')

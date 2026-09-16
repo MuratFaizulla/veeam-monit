@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { SEVERITY_TOPIC_COLOR, topicName } from './telegram.format';
-import { TelegramStateStore } from './telegram-state.store';
-import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
-import { NotificationSeverity, TelegramChat, TelegramDestination } from './telegram.types';
+import { SEVERITY_TOPIC_COLOR, topicName } from './format';
+import { TelegramStateStore } from './state.store';
+import { TelegramApiError, TelegramTransportService } from './transport.service';
+import { NotificationSeverity, TelegramChat, TelegramDestination } from './types';
 
 interface ForumTopic {
   message_thread_id: number;

@@ -1,4 +1,4 @@
-import { NotificationEvent, NotificationSeverity } from './telegram.types';
+import { NotificationEvent, NotificationSeverity } from './types';
 
 /**
  * Messages are sent with parse_mode=HTML because Veeam job names routinely

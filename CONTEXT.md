@@ -18,7 +18,7 @@ Evidence is either **ready** or **pending**, and pending carries the reason a
 slot can show. There is no third state and no sentinel: "never scanned" and
 "Veeam did not answer this cycle" are both pending, with different reasons.
 
-Owned by `src/telegram/backup-evidence.service.ts`. Readers take it as
+Owned by `src/monitor/backup-evidence.service.ts`. Readers take it as
 an argument; nothing reads it out of a field.
 
 ## Run
@@ -67,7 +67,7 @@ slots ask different questions of the same Standing — "how many Runs has it
 skipped" and "is this past the deadline worth reporting" — and those are
 decisions about what to alarm on.
 
-Owned by `src/telegram/job-standing.ts`.
+Owned by `src/monitor/job-standing.ts`.
 
 ## Cadence
 
@@ -94,7 +94,7 @@ low-space alarm and exists only when Veeam actually reported free space — a
 guess is not grounds for waking somebody up, and an unknown percentage is never
 zero.
 
-Owned by `src/telegram/repository-capacity.ts`. The 💾 slot renders what
+Owned by `src/monitor/repository-capacity.ts`. The 💾 slot renders what
 it is given, like every other live slot.
 
 ## Live slot
@@ -103,7 +103,7 @@ A topic holding exactly one message, edited in place rather than appended to.
 State, not events. 🗂 Restore points is the exception that holds two, because
 the list does not fit in Telegram's limit.
 
-Declared once in `src/telegram/live-slots.ts`: whether it is **pinned**,
+Declared once in `src/live/slots.ts`: whether it is **pinned**,
 whether it gets a **heartbeat** rewrite when its content has not changed, and
 whether it addresses a thread somebody created by hand. The slot names come from
 that declaration, including the type and the config record.
@@ -133,7 +133,7 @@ by whether `TELEGRAM_WEBHOOK_URL` is set, and nothing downstream knows which.
 Hearing and sending are separate modules. They share the transport and the chat
 registry and nothing else, and no caller of one ever wants the other.
 
-Owned by `src/telegram/telegram-updates.service.ts`.
+Owned by `src/telegram/updates.service.ts`.
 
 ## Orphaned chain
 

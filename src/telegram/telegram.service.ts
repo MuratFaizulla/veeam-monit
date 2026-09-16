@@ -1,12 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { renderEvent } from './telegram.format';
-import { TelegramRoutingService } from './telegram-routing.service';
-import { TelegramStateStore } from './telegram-state.store';
-import { TelegramApiError, TelegramTransportService } from './telegram-transport.service';
-import { TelegramTopicsService } from './telegram-topics.service';
-import { NotificationEvent, TelegramChat } from './telegram.types';
+import { renderEvent } from './format';
+import { TelegramRoutingService } from './routing.service';
+import { TelegramStateStore } from './state.store';
+import { TelegramApiError, TelegramTransportService } from './transport.service';
+import { TelegramTopicsService } from './topics.service';
+import { NotificationEvent, TelegramChat } from './types';
 
 /**
  * Why an event did or did not reach Telegram. Every non-delivery used to

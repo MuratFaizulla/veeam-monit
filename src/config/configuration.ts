@@ -1,10 +1,10 @@
 import { join } from 'path';
-import type { LiveSlot } from '../telegram/live-slots';
+import type { LiveSlot } from '../live/slots';
 import {
   NOTIFICATION_SEVERITIES,
   type NotificationKind,
   type NotificationSeverity,
-} from '../telegram/telegram.types';
+} from '../telegram/types';
 
 /** How an event is mapped onto a forum topic when no rule in the routes file matches. */
 export type TelegramRoutingMode = 'job' | 'severity' | 'kind' | 'single';

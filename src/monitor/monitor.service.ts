@@ -1,17 +1,17 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpService } from '../veeam/veeam-http.service';
-import { allPages } from '../veeam/veeam-pages';
+import { VeeamHttpService } from '../veeam/http.service';
+import { allPages } from '../veeam/pages';
 import {
   VeeamCollection,
   VeeamJobState,
   VeeamRepositoryState,
   VeeamSession,
   VeeamTaskSession,
-} from '../veeam/veeam.types';
-import { DeliveryOutcome, DeliveryReport, TelegramService } from './telegram.service';
-import { TelegramLiveService } from './telegram-live.service';
+} from '../veeam/types';
+import { DeliveryOutcome, DeliveryReport, TelegramService } from '../telegram/telegram.service';
+import { TelegramLiveService } from '../live/live.service';
 import {
   LiveClock,
   LiveRunning,
@@ -20,22 +20,22 @@ import {
   renderHealth,
   renderRunning,
   renderSchedule,
-} from './telegram-live.format';
-import { TelegramStateStore } from './telegram-state.store';
-import { VeeamMonitorAuthService } from './veeam-monitor-auth.service';
-import { NotificationEvent, NotificationSeverity } from './telegram.types';
+} from '../live/format';
+import { TelegramStateStore } from '../telegram/state.store';
+import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
+import { NotificationEvent, NotificationSeverity } from '../telegram/types';
 import {
   ACTIVE_SESSION_STATES,
   PerformanceJob,
   PerformanceSnapshot,
   aggregatePerformance,
   renderPerformance,
-} from './telegram-performance';
-import { renderRepositories } from './telegram-repositories.format';
+} from '../live/performance';
+import { renderRepositories } from '../live/repositories';
 import { capacities, RepositoryCapacity } from './repository-capacity';
-import { ProtectionSnapshot, assessProtection, renderProtection } from './telegram-protection';
-import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './telegram-restore-points';
-import { OrphansSnapshot, renderOrphans } from './telegram-orphans';
+import { ProtectionSnapshot, assessProtection, renderProtection } from '../live/protection';
+import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from '../live/restore-points';
+import { OrphansSnapshot, renderOrphans } from '../live/orphans';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
@@ -95,8 +95,8 @@ export interface MonitorHealth {
  * looked exactly like a healthy server with no failing jobs.
  */
 @Injectable()
-export class TelegramMonitorService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(TelegramMonitorService.name);
+export class MonitorService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(MonitorService.name);
   private readonly config: AppConfig['telegram'];
   private timer?: NodeJS.Timeout;
   private running = false;

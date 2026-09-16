@@ -8,7 +8,7 @@ const {
   parseProcessingRate,
   renderPerformance,
   sortPerformanceJobs,
-} = require('../dist/telegram/telegram-performance.js');
+} = require('../dist/live/performance.js');
 
 test('performance rate parser accepts KB/s, MB/s and GB/s safely', () => {
   assert.equal(parseProcessingRate('850 KB/s'), 850 * 1024);

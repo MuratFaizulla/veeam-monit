@@ -10,18 +10,18 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AppConfig } from '../config/configuration';
-import { TelegramMonitorService } from './telegram-monitor.service';
-import { TelegramRoutingService } from './telegram-routing.service';
+import { MonitorService } from '../monitor/monitor.service';
+import { TelegramRoutingService } from './routing.service';
 import { DELIVERY_OUTCOMES, DeliveryReport, TelegramService } from './telegram.service';
-import { TelegramUpdatesService } from './telegram-updates.service';
+import { TelegramUpdatesService } from './updates.service';
 import {
   TelegramAdminGuard,
   TelegramEnabledGuard,
   TelegramWebhookGuard,
-} from './telegram-access.guard';
-import { announcement, ManualEvent, probe } from './telegram-manual-event';
-import { AnnouncementBody, ProbeBody } from './telegram.dto';
-import { TelegramUpdate } from './telegram.types';
+} from './access.guard';
+import { announcement, ManualEvent, probe } from './manual-event';
+import { AnnouncementBody, ProbeBody } from './dto';
+import { TelegramUpdate } from './types';
 
 /** Shape of what `notify` reports back, for the published document. */
 const DELIVERY_REPORT = {
@@ -55,7 +55,7 @@ export class TelegramController {
     private readonly telegram: TelegramService,
     private readonly updates: TelegramUpdatesService,
     private readonly routing: TelegramRoutingService,
-    private readonly monitor: TelegramMonitorService,
+    private readonly monitor: MonitorService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }

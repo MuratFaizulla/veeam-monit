@@ -1,4 +1,4 @@
-import { escapeHtml, MAX_LENGTH, truncate } from './telegram.format';
+import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
 
 /**
  * Renders the two always-current status messages.

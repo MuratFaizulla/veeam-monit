@@ -1,5 +1,5 @@
-import { escapeHtml } from './telegram.format';
-import { dayOf, LiveClock, longMoment, paged, plural, stampOf } from './telegram-live.format';
+import { escapeHtml } from '../telegram/format';
+import { dayOf, LiveClock, longMoment, paged, plural, stampOf } from './format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
