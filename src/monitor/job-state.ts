@@ -63,6 +63,25 @@ export const isDisabled = (job: VeeamJobState): boolean => statusOf(job) === 'di
 
 export const isBadResult = (result: string): boolean => BAD.has(result);
 
+/**
+ * The result worth remembering, given what was already known.
+ *
+ * `none` is not a result. Veeam reports it while a job is running and before a
+ * job has ever run, and recording it over a real one erases the fact that the
+ * job is failing. Two things depend on that fact, and both were broken by it:
+ *
+ *   - a recovery is defined as "the previous result was bad", so a job that
+ *     failed, retried, and finally succeeded went `failed → none → success`
+ *     and its recovery was never announced at all;
+ *   - an unchanged failure is silent because the previous result equals the new
+ *     one, so the same broken run going `failed → none → failed` through its
+ *     retries was announced again on every attempt.
+ *
+ * Both are the same mistake, and this is the one place it was made.
+ */
+export const rememberedResult = (result: string, previous: string | undefined): string =>
+  result === 'none' && previous !== undefined ? previous : result;
+
 /** One glyph per result, so every list spells the same outcome the same way. */
 export const iconOf = (result: string): string => {
   if (result === 'success') return '🟢';

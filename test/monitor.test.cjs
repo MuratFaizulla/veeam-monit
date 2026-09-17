@@ -924,3 +924,142 @@ test('answers older than Telegram allows are never offered for deletion', () => 
   assert.deepEqual(store.answers(CHAT, 55), [], 'забытое не возвращается');
   fs.rmSync(file, { force: true });
 });
+
+/* ------------------------------------------------------------------ *
+ * Retries: one broken run, not three
+ * ------------------------------------------------------------------ */
+
+test('"none" never erases what was known about a job', () => {
+  const { rememberedResult } = require('../dist/monitor/job-state');
+
+  // Veeam says "none" while a job is running. Recording it over a real result
+  // is what lost every recovery and re-announced every retry.
+  assert.equal(rememberedResult('none', 'failed'), 'failed');
+  assert.equal(rememberedResult('none', 'success'), 'success');
+  assert.equal(rememberedResult('failed', 'success'), 'failed');
+  // Nothing known yet: "none" is the honest answer and is recorded.
+  assert.equal(rememberedResult('none', undefined), 'none');
+});
+
+test('a run that fails, retries and finally succeeds is one alert and one recovery', async () => {
+  const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  w.api.reset();
+
+  // It fails.
+  w.setJobs([job('1', 'SQL Daily', 'Failed')]);
+  await w.monitor.check();
+  assert.equal(w.api.sent().length, 1, 'об отказе сообщено один раз');
+
+  // Veeam retries: while the retry runs, the job reports no result at all.
+  w.api.reset();
+  w.setJobs([{ id: '1', name: 'SQL Daily', lastResult: 'None', status: 'Working' }]);
+  await w.monitor.check();
+  assert.deepEqual(w.api.sent(), [], 'запущенный повтор — не событие');
+
+  // The retry fails too. This is the same broken run, and used to be announced
+  // again because the remembered result had been overwritten with "none".
+  w.setJobs([job('1', 'SQL Daily', 'Failed')]);
+  await w.monitor.check();
+  assert.deepEqual(w.api.sent(), [], 'тот же отказ не сообщается второй раз');
+
+  // The next retry works. This is the message that never arrived at all.
+  w.setJobs([job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  const sent = w.api.sent();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /восстановлено/);
+});
+
+test('an attempt is counted from the sessions behind it', () => {
+  const { attemptOf, retryWindowOf, retriesAllowed } = require('../dist/monitor/retries');
+  const run = (started, ended, result) => ({ startedAt: started, endedAt: ended, result });
+  // Newest first, ten minutes apart — Veeam retrying one run.
+  const retried = [
+    run('2026-09-17T03:54:49+05:00', '2026-09-17T03:55:08+05:00', 'Failed'),
+    run('2026-09-17T03:02:45+05:00', '2026-09-17T03:44:00+05:00', 'Failed'),
+    run('2026-09-16T23:46:16+05:00', '2026-09-17T02:52:00+05:00', 'Failed'),
+  ];
+  const window = retryWindowOf({ retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } });
+
+  assert.equal(attemptOf(retried, window), 3);
+  assert.equal(retriesAllowed({ retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } }), 4);
+
+  // A run a day later is a different run, however it ended.
+  const separate = [run('2026-09-18T03:00:00+05:00', '2026-09-18T03:20:00+05:00', 'Failed'), ...retried];
+  assert.equal(attemptOf(separate, window), 1);
+  assert.equal(retriesAllowed({ retry: { isEnabled: false } }), undefined, 'без повторов нечего считать');
+});
+
+test('the alert says which attempt it is', async () => {
+  let sessions = [{ id: 's0', jobId: '1', result: { result: 'Success', message: 'ok' } }];
+  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Success')], {
+    '/api/v1/jobs': { data: [{
+      id: '1',
+      schedule: { runAutomatically: true, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } },
+    }] },
+    '/api/v1/sessions': () => ({ data: sessions }),
+  });
+  await w.monitor.check();
+  w.api.reset();
+
+  // Second attempt of one run: three identical messages a night were three of
+  // these, and nothing in them said so.
+  sessions = [
+    { id: 's2', jobId: '1', creationTime: '2026-09-17T03:02:45+05:00', endTime: '2026-09-17T03:44:00+05:00',
+      result: { result: 'Failed', message: 'Processing REMS-DACA03' } },
+    { id: 's1', jobId: '1', creationTime: '2026-09-16T23:46:16+05:00', endTime: '2026-09-17T02:52:00+05:00',
+      result: { result: 'Failed', message: 'Processing REMS-REMS01' } },
+  ];
+  w.setJobs([job('1', 'REMS_DBS03', 'Failed')]);
+  await w.monitor.check();
+
+  const alert = w.api.sent().at(-1);
+  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+  assert.match(alert.text, /Processing REMS-DACA03/, 'и причина именно этой попытки');
+});
+
+/* ------------------------------------------------------------------ *
+ * Live slots outliving Telegram's edit window
+ * ------------------------------------------------------------------ */
+
+test('a live message is retired before Telegram stops answering for it', async () => {
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  const first = w.store.liveMessage(CHAT, 'health');
+  assert.ok(first.createdAt, 'дата отправки запомнена');
+
+  // Two days on. Telegram would refuse both the edit and the deletion, and the
+  // slot would be left with a frozen message and a second one beside it.
+  w.store.rememberLiveMessage(CHAT, 'health', {
+    ...first,
+    createdAt: Date.now() - 40 * 3_600_000,
+  });
+  w.api.reset();
+  await w.monitor.check();
+
+  assert.deepEqual(
+    w.api.of('deleteMessage').map((c) => c.message_id),
+    [first.messageId],
+    'старое убрано, пока это ещё разрешено',
+  );
+  const now = w.store.liveMessage(CHAT, 'health');
+  assert.notEqual(now.messageId, first.messageId, 'слот ведёт уже новое сообщение');
+  assert.ok(now.createdAt > Date.now() - 60_000, 'и отсчёт пошёл заново');
+});
+
+test('a message of unknown age is retired rather than edited on faith', async () => {
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
+  await w.monitor.check();
+  const first = w.store.liveMessage(CHAT, 'health');
+
+  // A ref persisted before createdAt existed: it may be minutes or weeks old,
+  // and betting on minutes is how the stuck message appeared.
+  const { createdAt, ...ageless } = first;
+  w.store.rememberLiveMessage(CHAT, 'health', ageless);
+  w.api.reset();
+  await w.monitor.check();
+
+  assert.equal(w.api.of('deleteMessage').length, 1);
+  assert.notEqual(w.store.liveMessage(CHAT, 'health').messageId, first.messageId);
+});

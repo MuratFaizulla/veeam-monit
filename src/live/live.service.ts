@@ -7,6 +7,15 @@ import { TelegramTopicsService } from '../telegram/topics.service';
 import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat } from '../telegram/types';
 import { LiveSlot, specOf } from './slots';
+import { LiveMessageRef } from '../telegram/state.store';
+
+/**
+ * How long a live slot keeps one message before posting a fresh one.
+ *
+ * Under Telegram's own limit of roughly 48 hours, with room for a monitor that
+ * was down for a few hours and comes back to a message nearly out of time.
+ */
+const ROTATE_AFTER_MS = 36 * 3_600_000;
 
 export { LiveSlot };
 
@@ -95,7 +104,20 @@ export class TelegramLiveService {
   ): Promise<void> {
     const key = this.key(slot, index);
     const hash = this.hash(text);
-    const previous = this.store.liveMessage(chatId, key);
+    const held = this.store.liveMessage(chatId, key);
+
+    // Retired while Telegram still answers for it. A slot's message is edited
+    // for as long as the slot exists, but the right to edit or delete one's own
+    // message runs out about two days after it was *sent*, however recently it
+    // was last written. A long-lived slot therefore eventually meets an edit
+    // that fails and a delete that fails with it, and is left with a message
+    // frozen at its last good content and a second one posted beside it. That
+    // is what the ▶️ topic did: two messages, one stuck a day behind.
+    const previous = held && !this.expired(held) ? held : undefined;
+    if (held && !previous) {
+      this.store.forgetLiveMessage(chatId, key);
+      await this.remove(chatId, held.messageId);
+    }
 
     // Unchanged content is not rewritten, or a bot that is merely alive would
     // edit two messages a minute forever. The heartbeat still refreshes it now
@@ -114,18 +136,41 @@ export class TelegramLiveService {
         messageId: previous.messageId,
         hash,
         at: Date.now(),
+        createdAt: previous.createdAt,
       });
       return;
     }
 
     if (previous) {
       this.store.forgetLiveMessage(chatId, key);
-      await this.remove(chatId, previous.messageId);
+      // An edit that failed on a message too old to delete leaves it in the
+      // chat for good, and only a person can clear it. Said out loud rather
+      // than swallowed, because the alternative is somebody reading a stale
+      // status for weeks and nobody knowing why it is there.
+      if (!(await this.remove(chatId, previous.messageId))) {
+        this.logger.warn(
+          `Live "${slot}" left message ${previous.messageId} behind in chat ${chatId}: ` +
+            'Telegram refused both the edit and the deletion, so it must be removed by hand',
+        );
+      }
     }
 
+    const now = Date.now();
     const messageId = await this.send(chat, slot, text);
-    this.store.rememberLiveMessage(chatId, key, { messageId, hash, at: Date.now() });
+    this.store.rememberLiveMessage(chatId, key, { messageId, hash, at: now, createdAt: now });
     if (spec.pinned) await this.pin(chatId, messageId);
+  }
+
+  /**
+   * Whether this message is close enough to Telegram's two-day limit that the
+   * next edit might fail — or is of unknown age, which amounts to the same.
+   *
+   * Retiring early costs one extra message per slot every day and a half.
+   * Retiring late costs a message nobody can remove, saying something wrong,
+   * for as long as the chat exists.
+   */
+  private expired(ref: LiveMessageRef): boolean {
+    return Date.now() - (ref.createdAt ?? 0) > ROTATE_AFTER_MS;
   }
 
   /** True when the existing message now carries `text`. */
@@ -171,11 +216,13 @@ export class TelegramLiveService {
   }
 
   /** Best effort: an orphaned status message is noise, not a failure. */
-  private async remove(chatId: string, messageId: number): Promise<void> {
+  private async remove(chatId: string, messageId: number): Promise<boolean> {
     try {
       await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+      return true;
     } catch {
       /* already gone, or older than Telegram lets a bot delete */
+      return false;
     }
   }
 

@@ -183,8 +183,14 @@ export class JobQueryService {
     };
   }
 
-  /** Newest sessions of one job. Best effort: a card without them still helps. */
-  private async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobRun[]> {
+  /**
+   * Newest sessions of one job. Best effort: a card without them still helps.
+   *
+   * Public because an alert needs the same thing a card does — the reason the
+   * run failed, and enough history around it to say which attempt this is.
+   * Reading it twice would be two requests to answer one question.
+   */
+  async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobRun[]> {
     if (!job.id) return [];
     try {
       const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
