@@ -40,7 +40,9 @@ import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { Standings, standingsOf } from './job-standing';
 import { todayRuns } from './schedule-planner';
 import { addressable, digestEvent, summarise } from './digest';
-import { isBadResult, isDisabled, isRunningNow, resultOf } from './job-state';
+import { isBadResult, isDisabled, isRunningNow, rememberedResult, resultOf } from './job-state';
+import { attemptOf, retriesAllowed, retryWindowOf } from './retries';
+import { JobRun } from './job-card';
 import { renderEvent } from '../telegram/format';
 import { MonitorAnswer } from './answer';
 import { JobQueryService } from './job-query.service';
@@ -325,7 +327,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
         // anything, so the transition stays pending and is retried next tick.
         if (report.outcome === 'failed') continue;
       }
-      this.store.recordJobResult(job.id, result);
+      // Never `none` over something known: that is what lost every recovery
+      // and re-announced every retry. See rememberedResult.
+      this.store.recordJobResult(job.id, rememberedResult(result, previous));
     }
 
     this.store.forgetJobsExcept(new Set(jobs.map((job) => job.id)));
@@ -739,6 +743,11 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
         ? `${name}: задание восстановлено`
         : `${name}: ${result === 'failed' ? 'ОШИБКА' : 'предупреждение'}`;
 
+    // One read, two answers: the reason the run failed, and which attempt of
+    // the run this is. They come from the same sessions, and fetching them
+    // twice would be two requests to say one thing.
+    const runs = severity === 'success' ? [] : await this.jobQuery.recentRuns(job, accessToken);
+
     return {
       kind: 'job',
       severity,
@@ -747,18 +756,37 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       fields: [
         ['Результат', result.toUpperCase()],
         ['Было', previous ? previous.toUpperCase() : '—'],
+        ['Попытка', this.attemptLabel(job, runs)],
         ['Тип', job.type],
         ['Статус', job.status],
         ['Последний запуск', job.lastRun],
         ['Следующий запуск', job.nextRun],
         ['Объектов', job.objectsCount],
       ],
-      body: severity === 'success' ? undefined : await this.lastSessionMessage(job, accessToken),
+      body: severity === 'success' ? undefined : runs[0]?.message,
       // One message per job per transition; the cooldown only guards against a
       // job flapping between two results within the window.
       dedupeKey: `job:${job.id}:${result}`,
       cooldownMs: this.config.jobAlertCooldownMs,
     };
+  }
+
+  /**
+   * "2 из 3", or nothing when this is a first attempt with no retries behind it.
+   *
+   * Three alerts a night with identical text were three attempts at one run,
+   * and nothing in the message said so. The retry policy comes from the estate
+   * scan, which already reads every job configuration — a policy that changed
+   * in the last twenty minutes is not worth a request per alert.
+   */
+  private attemptLabel(job: VeeamJobState, runs: JobRun[]): string | undefined {
+    const evidence = this.evidence.evidence;
+    const schedule =
+      evidence.status === 'ready' && job.id ? evidence.schedulesByJob.get(job.id) : undefined;
+    const attempt = attemptOf(runs, retryWindowOf(schedule));
+    const allowed = retriesAllowed(schedule);
+    if (attempt === 1 && !allowed) return undefined;
+    return allowed ? `${attempt} из ${allowed}` : String(attempt);
   }
 
   /**

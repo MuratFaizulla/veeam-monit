@@ -111,6 +111,15 @@ that declaration, including the type and the config record.
 Pinned and heartbeat are opposites today and should stay that way: rewriting a
 pinned message to move its timestamp is churn the whole room sees.
 
+A slot outlives its message. Telegram stops letting a bot edit or delete its own
+message about two days after it was *sent*, however recently it was last
+written, so the message is retired and replaced after 36 hours — while deleting
+it is still allowed. Left later, the slot meets an edit that fails and a
+deletion that fails with it, and is left with one message frozen at its last
+good content and a second posted beside it, which is what the ▶️ topic did. A
+ref whose `createdAt` is unknown is retired at once: betting on it being young
+is the same bet that produced the frozen message.
+
 ## Delivery
 
 Turning one notification event into one message per chat it belongs in, and
@@ -134,6 +143,24 @@ Hearing and sending are separate modules. They share the transport and the chat
 registry and nothing else, and no caller of one ever wants the other.
 
 Owned by `src/telegram/updates.service.ts`.
+
+## Attempt
+
+Veeam retries a failed job by starting another session, so one bad night is
+three or four sessions. Two of them are the same **Run** when the newer started
+inside the retry window of the older finishing — the job's own `awaitMinutes`
+plus an allowance for how long the failing attempt took.
+
+The alert says which attempt it is ("2 из 4"), because three messages a night
+with identical text were three attempts at one run and nothing said so.
+
+Distinct from the remembered result, which is what stops the repeats: a job
+reports `none` while a retry runs, and recording that over `failed` made the
+next failure look like a new one. `none` is not a result — see
+`rememberedResult`. The same mistake lost every recovery, whose definition is
+"the previous result was bad".
+
+Owned by `src/monitor/retries.ts`.
 
 ## Summary
 

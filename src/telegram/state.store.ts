@@ -61,6 +61,19 @@ export interface LiveMessageRef {
   hash: string;
   /** Epoch ms of the last write, for the heartbeat refresh. */
   at: number;
+  /**
+   * Epoch ms the message was posted.
+   *
+   * Distinct from `at`, and the distinction is the whole point: Telegram stops
+   * letting a bot edit or delete its own message about two days after it was
+   * *sent*, however recently it was last written to. A slot kept current for
+   * three days therefore cannot go on being one message, and the id has to be
+   * retired while it can still be deleted.
+   *
+   * Absent on a ref written before this existed; such a message is of unknown
+   * age, which is treated as "old enough to retire now".
+   */
+  createdAt?: number;
 }
 
 const empty = (): TelegramState => ({
