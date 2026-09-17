@@ -74,6 +74,16 @@ export interface LiveMessageRef {
    * age, which is treated as "old enough to retire now".
    */
   createdAt?: number;
+  /**
+   * The forum topic the message was posted into.
+   *
+   * Preferred over resolving the configured topic name again. Editing a
+   * message needs no name, so a topic renamed in Telegram stays invisible for
+   * as long as the message survives — and then, the first time a new message
+   * is needed, the configured name matches nothing and a second topic is
+   * created beside the first.
+   */
+  threadId?: number;
 }
 
 const empty = (): TelegramState => ({
