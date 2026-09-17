@@ -318,11 +318,19 @@ const jobBlock = (job: RunningJob, clock: LiveClock): string[] => {
   return details.length ? [head, details.join(' · ')] : [head];
 };
 
-/** A filled/empty block bar. Telegram has no progress widget, so this is it. */
-const bar = (percent: number): string => {
+/**
+ * A filled/empty block bar. Telegram has no progress widget, so this is it.
+ *
+ * Block elements rather than the parallelograms this used: a Windows Telegram
+ * client with no glyph for ▰ substituted a hyphen, so half the bar rendered as
+ * `-----□□□□□` and the shape stopped reading as a bar at all. These are the
+ * same characters 💾 Repositories has always drawn its bar with, which is the
+ * other half of the reason — one bot should not have two bars.
+ */
+export const bar = (percent: number, width = BAR): string => {
   const clamped = Math.max(0, Math.min(100, percent));
-  const filled = Math.round((clamped / 100) * BAR);
-  return `${'▰'.repeat(filled)}${'▱'.repeat(BAR - filled)}`;
+  const filled = Math.round((clamped / 100) * width);
+  return `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`;
 };
 
 const nextRunLabel = (

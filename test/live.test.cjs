@@ -80,7 +80,9 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
 
   const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
   assert.match(text, /<b>SQL Daily<\/b> — 62%/);
-  assert.match(text, /▰▰▰▰▰▰▱▱▱▱/);
+  // Block elements, the same ones 💾 Repositories draws with: a Windows client
+  // with no glyph for ▰ rendered half the bar as hyphens.
+  assert.match(text, /██████░░░░/);
   assert.match(text, /идёт 22 мин/);
   // While something is running, the next run belongs to the schedule slot only.
   assert.ok(!/Ближайший запуск/.test(text));
