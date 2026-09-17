@@ -123,42 +123,91 @@ export class TelegramLiveService {
     // edit two messages a minute forever. The heartbeat still refreshes it now
     // and then, so a frozen "обновлено" is evidence the monitor stopped.
     const spec = specOf(slot);
-    if (
-      previous &&
-      previous.hash === hash &&
-      (!spec.heartbeat || Date.now() - previous.at < this.config.liveRefreshMs)
-    ) {
-      return;
+    let current = previous;
+    if (current && current.hash === hash) {
+      if (Date.now() - current.at < this.config.liveRefreshMs) return;
+
+      // A pinned slot is never rewritten on the heartbeat, because moving its
+      // timestamp is churn the whole room sees. That left it with no reason to
+      // ever look at its message again — so when somebody deleted the message
+      // by hand, the topic stayed empty for good and nothing anywhere noticed.
+      // Asked about instead of written to: this changes nothing and still says
+      // whether the message is there.
+      if (!spec.heartbeat) {
+        if (await this.present(chatId, current.messageId)) {
+          this.store.rememberLiveMessage(chatId, key, { ...current, at: Date.now() });
+          return;
+        }
+        this.logger.warn(`Live "${slot}" message ${current.messageId} is gone from chat ${chatId}, posting a new one`);
+        this.store.forgetLiveMessage(chatId, key);
+        current = undefined;
+      }
     }
 
-    if (previous && (await this.edit(chatId, previous.messageId, text))) {
+    if (current && (await this.edit(chatId, current.messageId, text))) {
       this.store.rememberLiveMessage(chatId, key, {
-        messageId: previous.messageId,
+        messageId: current.messageId,
         hash,
         at: Date.now(),
-        createdAt: previous.createdAt,
+        createdAt: current.createdAt,
+        threadId: current.threadId,
       });
       return;
     }
 
-    if (previous) {
+    if (current) {
       this.store.forgetLiveMessage(chatId, key);
       // An edit that failed on a message too old to delete leaves it in the
       // chat for good, and only a person can clear it. Said out loud rather
       // than swallowed, because the alternative is somebody reading a stale
       // status for weeks and nobody knowing why it is there.
-      if (!(await this.remove(chatId, previous.messageId))) {
+      if (!(await this.remove(chatId, current.messageId))) {
         this.logger.warn(
-          `Live "${slot}" left message ${previous.messageId} behind in chat ${chatId}: ` +
+          `Live "${slot}" left message ${current.messageId} behind in chat ${chatId}: ` +
             'Telegram refused both the edit and the deletion, so it must be removed by hand',
         );
       }
     }
 
     const now = Date.now();
-    const messageId = await this.send(chat, slot, text);
-    this.store.rememberLiveMessage(chatId, key, { messageId, hash, at: now, createdAt: now });
-    if (spec.pinned) await this.pin(chatId, messageId);
+    // The thread the slot was last posted in, preferred over resolving the
+    // configured name again. Somebody renaming the topic in Telegram used to
+    // be invisible for as long as the message survived — nothing resolves a
+    // name to edit a message — and then produced a second topic the moment a
+    // new message was needed. That is how this chat ended up with both
+    // "📅 Ближайшие запуски" and "📅 Upcoming runs", one of them empty.
+    const posted = await this.send(chat, slot, text, held?.threadId ?? previous?.threadId);
+    this.store.rememberLiveMessage(chatId, key, {
+      messageId: posted.messageId,
+      hash,
+      at: now,
+      createdAt: now,
+      threadId: posted.threadId,
+    });
+    if (spec.pinned) await this.pin(chatId, posted.messageId);
+  }
+
+  /**
+   * Whether Telegram still holds this message, asked without changing it.
+   *
+   * An empty markup edit on a message that has none is refused as "not
+   * modified", which is the answer: the message is there. A message that is
+   * gone answers "not found" instead. Anything else says nothing about the
+   * message and is read as "still there", because the cost of being wrong that
+   * way is one late refresh, and the cost of the other way is a duplicate.
+   */
+  private async present(chatId: string, messageId: number): Promise<boolean> {
+    try {
+      await this.transport.call('editMessageReplyMarkup', {
+        chat_id: chatId,
+        message_id: messageId,
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof TelegramApiError)) return true;
+      if (/not modified/i.test(error.description)) return true;
+      return !/message to edit not found/i.test(error.description);
+    }
   }
 
   /**
@@ -192,14 +241,33 @@ export class TelegramLiveService {
     }
   }
 
-  private async send(chat: TelegramChat, slot: LiveSlot, text: string): Promise<number> {
+  /**
+   * Posts the slot's new message and says where it landed.
+   *
+   * `remembered` is the thread this slot used last time, preferred over the
+   * configured topic name so that renaming the topic in Telegram does not
+   * silently split the slot across two. A thread Telegram no longer has is
+   * recovered from inside `topics.send`, which falls back to the name.
+   *
+   * A slot with a thread id set by hand in configuration outranks both: that
+   * one is somebody saying explicitly where the slot belongs.
+   */
+  private async send(
+    chat: TelegramChat,
+    slot: LiveSlot,
+    text: string,
+    remembered?: number,
+  ): Promise<{ messageId: number; threadId?: number }> {
     const fixedThread = specOf(slot).fixedThread;
-    return this.topics.send(
-      chat,
-      this.config.liveTopics[slot],
-      text,
-      fixedThread ? this.config[fixedThread] : 0,
-    );
+    const configured = fixedThread ? this.config[fixedThread] : 0;
+    const thread = configured > 0 ? configured : remembered ?? 0;
+    const name = this.config.liveTopics[slot];
+
+    const messageId = await this.topics.send(chat, name, text, thread);
+    return {
+      messageId,
+      threadId: thread > 0 ? thread : this.store.threadId(String(chat.id), name),
+    };
   }
 
   /** Pinning is optional: missing administrator rights must not break updates. */

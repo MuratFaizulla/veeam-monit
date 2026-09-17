@@ -858,3 +858,68 @@ test('an unread scan says so rather than showing an empty estate', async () => {
   assert.match(text, /не прочитаны/);
   assert.ok(!/Сначала те/.test(text));
 });
+
+/* ------------------------------------------------------------------ *
+ * A message somebody deleted by hand
+ * ------------------------------------------------------------------ */
+
+test('a pinned slot notices its message was deleted, and posts a new one', async () => {
+  // 💾 is pinned and therefore never rewritten on the heartbeat, which left it
+  // with no reason to look at its message again. Somebody clearing the chat by
+  // hand emptied the topic for good: nothing had changed, so nothing looked.
+  let present = true;
+  const w = world({ TELEGRAM_LIVE: 'true', TELEGRAM_LIVE_REFRESH_MIN: '0' }, {
+    // Telegram's own two answers: an empty markup edit on a message that has
+    // none is refused as "not modified", and a message that is gone as "not found".
+    editMessageReplyMarkup: () => ({
+      ok: false,
+      error_code: 400,
+      description: present
+        ? 'Bad Request: message is not modified'
+        : 'Bad Request: message to edit not found',
+    }),
+  });
+
+  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
+  const first = w.store.liveMessage(CHAT, 'repositories').messageId;
+
+  // Unchanged content while the message is still there: asked about, not
+  // rewritten, so the pinned message keeps its timestamp.
+  w.api.reset();
+  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
+  assert.deepEqual(w.api.sent(), [], 'ничего не отправлено заново');
+  assert.equal(w.store.liveMessage(CHAT, 'repositories').messageId, first);
+
+  // Now it is gone.
+  present = false;
+  w.api.reset();
+  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
+
+  assert.equal(w.api.sent().length, 1, 'слот восстановился сам');
+  assert.notEqual(w.store.liveMessage(CHAT, 'repositories').messageId, first);
+});
+
+test('a slot returns to the topic it was in, not to the one now configured', async () => {
+  const w = world({ TELEGRAM_LIVE: 'true', TELEGRAM_LIVE_REFRESH_MIN: '0' }, {
+    // The message is gone and the topic has since been renamed by hand, so its
+    // configured name resolves to nothing.
+    editMessageText: () => ({
+      ok: false,
+      error_code: 400,
+      description: 'Bad Request: message to edit not found',
+    }),
+  });
+  w.store.rememberTopic(CHAT, '📅 Upcoming runs', 86);
+  await w.live.publish('schedule', '📅 первый');
+  const thread = w.store.liveMessage(CHAT, 'schedule').threadId;
+  assert.equal(thread, 86, 'тема запомнена вместе с сообщением');
+
+  w.store.forgetTopic(CHAT, '📅 Upcoming runs');
+  w.api.reset();
+  await w.live.publish('schedule', '📅 второй');
+
+  // Without the remembered thread the bot creates a second topic beside the
+  // first and leaves the one everybody is looking at empty.
+  assert.equal(w.api.of('createForumTopic').length, 0, 'вторая тема не создана');
+  assert.equal(w.api.sent().at(-1).message_thread_id, 86);
+});
