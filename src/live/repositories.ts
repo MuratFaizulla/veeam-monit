@@ -1,5 +1,5 @@
 import { escapeHtml, MAX_LENGTH } from '../telegram/format';
-import { LiveClock } from './format';
+import { bar, LiveClock } from './format';
 import { RepositoryCapacity } from '../monitor/repository-capacity';
 
 /**
@@ -41,15 +41,14 @@ export const renderRepositories = (
 
 const repositoryLines = (repository: RepositoryCapacity, index: number): string[] => {
   const percent = repository.usedPercent;
-  const filled = percent === undefined ? 0 : Math.round((percent / 100) * BAR_WIDTH);
-  const bar = `${'█'.repeat(filled)}${'░'.repeat(BAR_WIDTH - filled)}`;
+  const usage = bar(percent ?? 0, BAR_WIDTH);
   const usageIcon =
     percent === undefined ? '⚪' : percent >= 90 ? '🔴' : percent >= 80 ? '🟠' : percent >= 70 ? '🟡' : '🟢';
   const onlineIcon = repository.isOnline === undefined ? '⚪' : repository.isOnline ? '🟢' : '🔴';
   return [
     `<b>${index}. ${escapeHtml(repository.name)}</b>`,
     '',
-    `${usageIcon} ${bar}  <b>${percent === undefined ? 'нет данных' : `${Math.round(percent)}% занято`}</b>`,
+    `${usageIcon} ${usage}  <b>${percent === undefined ? 'нет данных' : `${Math.round(percent)}% занято`}</b>`,
     `📦 ${formatGb(repository.usedGB)} / ${formatGb(repository.capacityGB)}`,
     `💧 Свободно: <b>${formatGb(repository.freeGB)}</b>`,
     `${onlineIcon} Статус: <b>${repository.isOnline === undefined ? 'UNKNOWN' : repository.isOnline ? 'ONLINE' : 'OFFLINE'}</b>`,
