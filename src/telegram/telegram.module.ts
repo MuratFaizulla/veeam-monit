@@ -5,6 +5,7 @@ import { VeeamHttpModule } from '../veeam/http.module';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { BackupEvidenceService } from '../monitor/backup-evidence.service';
+import { MONITOR } from '../monitor/monitor';
 import { MonitorService } from '../monitor/monitor.service';
 import { JobQueryService } from '../monitor/job-query.service';
 import { TelegramLiveService } from '../live/live.service';
@@ -68,6 +69,8 @@ import { TelegramUpdatesService } from './updates.service';
 
     // monitor/ and veeam/ — what is being watched
     MonitorService,
+    // What the ear and the HTTP surface depend on instead of the whole class.
+    { provide: MONITOR, useExisting: MonitorService },
     JobQueryService,
     BackupEvidenceService,
     VeeamMonitorAuthService,
