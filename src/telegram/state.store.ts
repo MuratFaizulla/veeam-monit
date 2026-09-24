@@ -1,6 +1,10 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
+import { LiveMessageRef, LiveMessages } from '../live/live-messages';
+import { JobResults } from '../monitor/job-results';
+import { AnswerLog, AnswerRef } from './answer-log';
+import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';
 
 interface TelegramState {
@@ -19,73 +23,6 @@ interface TelegramState {
   answers: Record<string, AnswerRef[]>;
 }
 
-/**
- * One message the bot sent as an answer to somebody — a command reply or the
- * result of a button.
- *
- * Remembered only so `/clear` can take it back. The Bot API cannot enumerate a
- * chat's history and cannot clear it: a bot may delete a message only if it
- * knows the id, so the ids it will ever be able to delete are exactly the ones
- * it wrote down at the time.
- *
- * Alerts and live slot messages are deliberately not here. An alert is the
- * record of something that happened and deleting it destroys that record; a
- * live message is the slot, and deleting it orphans the id the slot is kept
- * under. `/clear` is for the chatter, which is what actually piles up.
- */
-export interface AnswerRef {
-  messageId: number;
-  /** The forum topic it was sent to; absent means General. */
-  threadId?: number;
-  /** Epoch ms, so answers Telegram will no longer let a bot delete are dropped. */
-  at: number;
-}
-
-/**
- * Telegram refuses to let a bot delete its own message after 48 hours, so an
- * older id is worth neither storing nor trying.
- */
-const DELETABLE_MS = 48 * 3_600_000;
-
-/** Ceiling per chat. A deep backlog is not what anybody is trying to clear. */
-const ANSWERS_KEPT = 500;
-
-/**
- * The single message a live slot owns. Surviving a restart is the whole point:
- * without the id, every start would post a fresh "current state" message next
- * to the previous one, which is exactly the pile this replaces.
- */
-export interface LiveMessageRef {
-  messageId: number;
-  /** Hash of the meaningful content, so an unchanged message is not rewritten. */
-  hash: string;
-  /** Epoch ms of the last write, for the heartbeat refresh. */
-  at: number;
-  /**
-   * Epoch ms the message was posted.
-   *
-   * Distinct from `at`, and the distinction is the whole point: Telegram stops
-   * letting a bot edit or delete its own message about two days after it was
-   * *sent*, however recently it was last written to. A slot kept current for
-   * three days therefore cannot go on being one message, and the id has to be
-   * retired while it can still be deleted.
-   *
-   * Absent on a ref written before this existed; such a message is of unknown
-   * age, which is treated as "old enough to retire now".
-   */
-  createdAt?: number;
-  /**
-   * The forum topic the message was posted into.
-   *
-   * Preferred over resolving the configured topic name again. Editing a
-   * message needs no name, so a topic renamed in Telegram stays invisible for
-   * as long as the message survives — and then, the first time a new message
-   * is needed, the configured name matches nothing and a second topic is
-   * created beside the first.
-   */
-  threadId?: number;
-}
-
 const empty = (): TelegramState => ({
   version: 1,
   chats: {},
@@ -97,9 +34,14 @@ const empty = (): TelegramState => ({
 });
 
 /**
- * Everything the notifier must not forget across a restart: which chats and
- * forum topics exist, what each job's last reported result was, and which
- * alerts are still inside their cooldown.
+ * Everything the notifier must not forget across a restart, in one file.
+ *
+ * The store owns the file, the chats and the forum topics. The four other
+ * things kept in it — job results, cooldowns, live messages and the answer log
+ * — are each their own module, handed their part of the state and a way to
+ * save it. They carry their own rules (48 hours, 500 answers, "never arm on
+ * the way in") where somebody looking for those rules will find them, and are
+ * tested on a plain object without a file.
  *
  * The state graph is deliberately private. It used to be handed out through a
  * public `data` getter, which made "mutate the object, then remember to call
@@ -116,6 +58,11 @@ export class TelegramStateStore implements OnModuleDestroy {
   private readonly state: TelegramState;
   private writeQueued = false;
 
+  readonly jobResults: JobResults;
+  readonly cooldowns: Cooldowns;
+  readonly liveMessages: LiveMessages;
+  readonly answerLog: AnswerLog;
+
   /**
    * `chatIds` are the chats named in configuration. They are registered here
    * rather than by whichever service happens to be constructed first: a
@@ -127,6 +74,11 @@ export class TelegramStateStore implements OnModuleDestroy {
     chatIds: string[] = [],
   ) {
     this.state = this.load();
+    const save = () => this.save();
+    this.jobResults = new JobResults(this.state.jobResults, save);
+    this.cooldowns = new Cooldowns(this.state.cooldowns, save);
+    this.liveMessages = new LiveMessages(this.state.liveMessages, save);
+    this.answerLog = new AnswerLog(this.state.answers, save);
     for (const id of chatIds) this.seedChat(id, { id: Number(id), type: 'supergroup' });
   }
 
@@ -164,11 +116,11 @@ export class TelegramStateStore implements OnModuleDestroy {
     return { becameForum: chat.is_forum === true && previous?.is_forum !== true };
   }
 
-  /** Forgets a chat and every topic mapping belonging to it. */
+  /** Forgets a chat, every topic mapping belonging to it, and its live slots. */
   dropChat(chatId: string): void {
     delete this.state.chats[chatId];
     delete this.state.topics[chatId];
-    delete this.state.liveMessages[chatId];
+    this.liveMessages.dropChat(chatId);
     this.save();
   }
 
@@ -198,135 +150,6 @@ export class TelegramStateStore implements OnModuleDestroy {
     delete topics[name];
     this.save();
     return true;
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Job results
-   * ---------------------------------------------------------------- */
-
-  /** False on a installation never observed before — the seeding cycle. */
-  hasJobResults(): boolean {
-    return Object.keys(this.state.jobResults).length > 0;
-  }
-
-  trackedJobs(): number {
-    return Object.keys(this.state.jobResults).length;
-  }
-
-  jobResult(jobId: string): string | undefined {
-    return this.state.jobResults[jobId];
-  }
-
-  recordJobResult(jobId: string, result: string): void {
-    if (this.state.jobResults[jobId] === result) return;
-    this.state.jobResults[jobId] = result;
-    this.save();
-  }
-
-  /** Jobs deleted in Veeam must not keep a slot in the file forever. */
-  forgetJobsExcept(liveIds: Set<string | undefined>): void {
-    let changed = false;
-    for (const id of Object.keys(this.state.jobResults)) {
-      if (liveIds.has(id)) continue;
-      delete this.state.jobResults[id];
-      changed = true;
-    }
-    if (changed) this.save();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Cooldowns
-   * ---------------------------------------------------------------- */
-
-  /**
-   * True when the condition is still inside its cooldown window.
-   *
-   * Checking and arming are two operations on purpose. Arming on the way in
-   * burns the window even when the message never reaches Telegram, which
-   * silences the next stretch of a real outage.
-   */
-  isSuppressed(key: string | undefined): boolean {
-    if (!key) return false;
-    return (this.state.cooldowns[key] ?? 0) > Date.now();
-  }
-
-  /** Starts the cooldown window. Call after the report actually went out. */
-  armCooldown(key: string | undefined, cooldownMs: number | undefined): void {
-    if (!key || !cooldownMs) return;
-    const now = Date.now();
-    this.state.cooldowns[key] = now + cooldownMs;
-    for (const [existing, until] of Object.entries(this.state.cooldowns)) {
-      if (until <= now) delete this.state.cooldowns[existing];
-    }
-    this.save();
-  }
-
-  /** Drops a cooldown so the next occurrence reports immediately. */
-  clearCooldown(key: string): void {
-    if (this.state.cooldowns[key] === undefined) return;
-    delete this.state.cooldowns[key];
-    this.save();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Live messages
-   * ---------------------------------------------------------------- */
-
-  liveMessage(chatId: string, slot: string): LiveMessageRef | undefined {
-    return this.state.liveMessages[chatId]?.[slot];
-  }
-
-  rememberLiveMessage(chatId: string, slot: string, ref: LiveMessageRef): void {
-    (this.state.liveMessages[chatId] ??= {})[slot] = ref;
-    this.save();
-  }
-
-  /** Called when Telegram no longer holds the message, so the next pass resends. */
-  forgetLiveMessage(chatId: string, slot: string): void {
-    if (this.state.liveMessages[chatId]?.[slot] === undefined) return;
-    delete this.state.liveMessages[chatId][slot];
-    this.save();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Answers
-   * ---------------------------------------------------------------- */
-
-  /** Records an answer so `/clear` has something to take back. */
-  rememberAnswer(chatId: string, messageId: number, threadId?: number): void {
-    const kept = this.fresh(chatId);
-    kept.push({ messageId, threadId, at: Date.now() });
-    this.state.answers[chatId] = kept.slice(-ANSWERS_KEPT);
-    this.save();
-  }
-
-  /**
-   * The answers still worth deleting in one topic, newest first.
-   *
-   * Scoped to the thread on purpose: clearing a forum topic must not reach into
-   * the others, where somebody may be mid-conversation. `undefined` is General,
-   * and is its own scope rather than "everything".
-   */
-  answers(chatId: string, threadId?: number): number[] {
-    return this.fresh(chatId)
-      .filter((answer) => answer.threadId === threadId)
-      .map((answer) => answer.messageId)
-      .reverse();
-  }
-
-  /** Called once the messages are gone, or Telegram says they already were. */
-  forgetAnswers(chatId: string, messageIds: number[]): void {
-    const gone = new Set(messageIds);
-    const kept = this.fresh(chatId).filter((answer) => !gone.has(answer.messageId));
-    if (kept.length === 0) delete this.state.answers[chatId];
-    else this.state.answers[chatId] = kept;
-    this.save();
-  }
-
-  /** Drops what Telegram would refuse to delete anyway, without a write. */
-  private fresh(chatId: string): AnswerRef[] {
-    const cutoff = Date.now() - DELETABLE_MS;
-    return (this.state.answers[chatId] ?? []).filter((answer) => answer.at > cutoff);
   }
 
   /** Visible for tests: the persisted file, parsed. */

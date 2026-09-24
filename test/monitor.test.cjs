@@ -867,7 +867,7 @@ test('/clear removes only answers in General', async () => {
   });
 
   await inThread(1, '/help');
-  w.store.rememberAnswer(CHAT, 9001, 77);
+  w.store.answerLog.remember(CHAT, 9001, 77);
   await inThread(undefined, '/help');
   w.api.reset();
 
@@ -914,14 +914,14 @@ test('answers older than Telegram allows are never offered for deletion', () => 
   const file = path.join(os.tmpdir(), `veeam-clear-${Math.random().toString(36).slice(2)}.json`);
   const store = new TelegramStateStore(file, []);
 
-  store.rememberAnswer(CHAT, 5001, 55);
+  store.answerLog.remember(CHAT, 5001, 55);
   // Reach past the interface deliberately: the alternative is a test that
   // waits two days.
   const state = JSON.parse(JSON.stringify(store.snapshot()));
   assert.equal(state.answers[CHAT].length, 1);
-  store.forgetAnswers(CHAT, [5001]);
+  store.answerLog.forget(CHAT, [5001]);
 
-  assert.deepEqual(store.answers(CHAT, 55), [], 'забытое не возвращается');
+  assert.deepEqual(store.answerLog.inTopic(CHAT, 55), [], 'забытое не возвращается');
   fs.rmSync(file, { force: true });
 });
 
@@ -1026,12 +1026,12 @@ test('the alert says which attempt it is', async () => {
 test('a live message is retired before Telegram stops answering for it', async () => {
   const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
   await w.monitor.check();
-  const first = w.store.liveMessage(CHAT, 'health');
+  const first = w.store.liveMessages.of(CHAT, 'health');
   assert.ok(first.createdAt, 'дата отправки запомнена');
 
   // Two days on. Telegram would refuse both the edit and the deletion, and the
   // slot would be left with a frozen message and a second one beside it.
-  w.store.rememberLiveMessage(CHAT, 'health', {
+  w.store.liveMessages.remember(CHAT, 'health', {
     ...first,
     createdAt: Date.now() - 40 * 3_600_000,
   });
@@ -1043,7 +1043,7 @@ test('a live message is retired before Telegram stops answering for it', async (
     [first.messageId],
     'старое убрано, пока это ещё разрешено',
   );
-  const now = w.store.liveMessage(CHAT, 'health');
+  const now = w.store.liveMessages.of(CHAT, 'health');
   assert.notEqual(now.messageId, first.messageId, 'слот ведёт уже новое сообщение');
   assert.ok(now.createdAt > Date.now() - 60_000, 'и отсчёт пошёл заново');
 });
@@ -1051,15 +1051,15 @@ test('a live message is retired before Telegram stops answering for it', async (
 test('a message of unknown age is retired rather than edited on faith', async () => {
   const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
   await w.monitor.check();
-  const first = w.store.liveMessage(CHAT, 'health');
+  const first = w.store.liveMessages.of(CHAT, 'health');
 
   // A ref persisted before createdAt existed: it may be minutes or weeks old,
   // and betting on minutes is how the stuck message appeared.
   const { createdAt, ...ageless } = first;
-  w.store.rememberLiveMessage(CHAT, 'health', ageless);
+  w.store.liveMessages.remember(CHAT, 'health', ageless);
   w.api.reset();
   await w.monitor.check();
 
   assert.equal(w.api.of('deleteMessage').length, 1);
-  assert.notEqual(w.store.liveMessage(CHAT, 'health').messageId, first.messageId);
+  assert.notEqual(w.store.liveMessages.of(CHAT, 'health').messageId, first.messageId);
 });

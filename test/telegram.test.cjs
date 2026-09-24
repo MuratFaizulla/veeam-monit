@@ -356,7 +356,7 @@ test('commands and old buttons in other topics are ignored', async () => {
   assert.equal(w.api.sent().length, 0);
   assert.equal(w.api.of('deleteMessage').length, 0, '/clear must not delete anything');
   assert.equal(w.api.of('answerCallbackQuery').length, 1, 'old button presses are acknowledged');
-  assert.equal(w.store.isSuppressed('command:check'), false, '/check did not run');
+  assert.equal(w.store.cooldowns.isSuppressed('command:check'), false, '/check did not run');
 });
 
 test('General commands work when Telegram omits topic fields', async () => {
@@ -427,12 +427,12 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {}, rejectSend(() => broken));
 
   await w.monitor.check();
-  assert.equal(w.store.jobResult('1'), 'success', 'первый цикл засеял состояние');
+  assert.equal(w.store.jobResults.of('1'), 'success', 'первый цикл засеял состояние');
 
   w.setJobs([job('1', 'SQL Daily', 'Failed')]);
   await w.monitor.check();
   assert.equal(
-    w.store.jobResult('1'),
+    w.store.jobResults.of('1'),
     'success',
     'провалившаяся отправка не отмечает переход как обработанный',
   );
@@ -446,7 +446,7 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
   assert.match(sent[0].text, /SQL Daily/);
   assert.match(sent[0].text, /FAILED/);
-  assert.equal(w.store.jobResult('1'), 'failed');
+  assert.equal(w.store.jobResults.of('1'), 'failed');
   assert.equal(w.monitor.status.lastOutcome, 'delivered');
 });
 
@@ -504,41 +504,41 @@ test('every state write persists without the caller managing save()', async () =
   const w = world({}, {}, file);
 
   w.store.rememberTopic(CHAT, 'SQL Daily', 77);
-  w.store.recordJobResult('job-1', 'failed');
-  w.store.armCooldown('k', 60_000);
+  w.store.jobResults.record('job-1', 'failed');
+  w.store.cooldowns.arm('k', 60_000);
   w.store.flush();
 
   // A second store over the same file sees everything, and no caller in the
   // three modules above ever had to remember a save.
   const reopened = new TelegramStateStore(file);
   assert.equal(reopened.threadId(CHAT, 'SQL Daily'), 77);
-  assert.equal(reopened.jobResult('job-1'), 'failed');
-  assert.equal(reopened.isSuppressed('k'), true);
+  assert.equal(reopened.jobResults.of('job-1'), 'failed');
+  assert.equal(reopened.cooldowns.isSuppressed('k'), true);
   assert.deepEqual(
     reopened.chats().map(([id]) => id),
     [CHAT],
     'чат, засеянный из конфигурации, тоже сохранён',
   );
 
-  reopened.forgetJobsExcept(new Set(['other']));
+  reopened.jobResults.keepOnly(new Set(['other']));
   reopened.flush();
-  assert.equal(new TelegramStateStore(file).jobResult('job-1'), undefined);
+  assert.equal(new TelegramStateStore(file).jobResults.of('job-1'), undefined);
   fs.rmSync(file, { force: true });
 });
 
 test('a damaged Telegram state is restored from the last complete copy', async () => {
   const file = path.join(os.tmpdir(), `veeam-backup-${Math.random().toString(36).slice(2)}.json`);
   const store = new TelegramStateStore(file, [CHAT]);
-  store.recordJobResult('job-1', 'failed');
+  store.jobResults.record('job-1', 'failed');
   store.flush();
   assert.ok(fs.existsSync(`${file}.bak`));
 
   fs.writeFileSync(file, '{broken', 'utf8');
   const restored = new TelegramStateStore(file);
-  assert.equal(restored.jobResult('job-1'), 'failed');
+  assert.equal(restored.jobResults.of('job-1'), 'failed');
   assert.deepEqual(restored.chats().map(([id]) => id), [CHAT]);
   restored.flush();
-  assert.equal(new TelegramStateStore(file).jobResult('job-1'), 'failed');
+  assert.equal(new TelegramStateStore(file).jobResults.of('job-1'), 'failed');
 
   await new Promise(setImmediate);
   fs.rmSync(file, { force: true });
@@ -584,4 +584,54 @@ test('a Telegram error says what it means, so nobody else reads its text', () =>
   // exactly why a person has to remove it.
   assert.equal(error(400, "Bad Request: message can't be deleted").isMessageGone, false);
   assert.equal(error(400, 'Bad Request: message thread not found').isMessageGone, false);
+});
+
+/* The parts of the state store, on a plain object: no file, no store. */
+
+test('the answer log keeps one topic apart from the next, and forgets what Telegram would refuse', () => {
+  const { AnswerLog, DELETABLE_MS, ANSWERS_KEPT } = require('../dist/telegram/answer-log');
+  const record = {};
+  let saves = 0;
+  const log = new AnswerLog(record, () => { saves += 1; });
+
+  log.remember('c', 1);         // General
+  log.remember('c', 2, 7);      // topic 7
+  log.remember('c', 3, 7);
+  assert.deepEqual(log.inTopic('c', 7), [3, 2], 'newest first, topic 7 only');
+  assert.deepEqual(log.inTopic('c'), [1], 'General is its own scope, not "everything"');
+  assert.equal(saves, 3);
+
+  // Older than Telegram lets a bot delete: not offered, and dropped on the next write.
+  record.c.unshift({ messageId: 0, at: Date.now() - DELETABLE_MS - 1 });
+  assert.deepEqual(log.inTopic('c'), [1]);
+
+  log.forget('c', [1, 2, 3]);
+  assert.equal(record.c, undefined, 'an emptied chat leaves nothing behind');
+
+  for (let id = 0; id < ANSWERS_KEPT + 20; id += 1) log.remember('d', id);
+  assert.equal(record.d.length, ANSWERS_KEPT);
+  assert.equal(log.inTopic('d')[0], ANSWERS_KEPT + 19, 'the ceiling drops the oldest');
+});
+
+test('a cooldown is armed only when asked, and clears itself when it runs out', () => {
+  const { Cooldowns } = require('../dist/telegram/cooldowns');
+  const record = { stale: Date.now() - 1 };
+  const cooldowns = new Cooldowns(record, () => {});
+
+  assert.equal(cooldowns.isSuppressed('k'), false);
+  assert.equal(cooldowns.isSuppressed(undefined), false);
+  cooldowns.arm('k', 60_000);
+  assert.equal(cooldowns.isSuppressed('k'), true);
+  assert.equal(record.stale, undefined, 'arming sweeps windows that already ran out');
+  cooldowns.clear('k');
+  assert.equal(cooldowns.isSuppressed('k'), false);
+});
+
+test('dropping a chat takes its live slots with it', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'state-')), 'state.json');
+  const store = new TelegramStateStore(file, ['-1001']);
+  store.liveMessages.remember('-1001', 'health', { messageId: 5, hash: 'h', at: 1 });
+  store.dropChat('-1001');
+  assert.equal(store.liveMessages.of('-1001', 'health'), undefined);
+  assert.equal(store.snapshot().liveMessages['-1001'], undefined);
 });

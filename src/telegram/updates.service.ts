@@ -313,7 +313,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       // Written down here and nowhere else, which is what makes `/clear` reach
       // the chatter and nothing else: alerts and live slots are sent by other
       // modules and never pass through this method.
-      this.store.rememberAnswer(destination.chatId, messageId, destination.threadId);
+      this.store.answerLog.remember(destination.chatId, messageId, destination.threadId);
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
     }
@@ -332,7 +332,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
    * would be a worse problem than a long chat.
    */
   private async clear(reply: TelegramDestination): Promise<Reply> {
-    const ids = this.store.answers(reply.chatId, reply.threadId);
+    const ids = this.store.answerLog.inTopic(reply.chatId, reply.threadId);
     if (ids.length === 0) {
       return {
         lines: [
@@ -346,7 +346,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
 
     const removed = await this.removeAll(reply.chatId, ids);
-    this.store.forgetAnswers(reply.chatId, ids);
+    this.store.answerLog.forget(reply.chatId, ids);
     const stuck = ids.length - removed;
     return {
       lines: [
@@ -408,7 +408,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
    * reported rather than queued.
    */
   private async runCheck(): Promise<string[]> {
-    if (this.store.isSuppressed(CHECK_COOLDOWN_KEY)) {
+    if (this.store.cooldowns.isSuppressed(CHECK_COOLDOWN_KEY)) {
       return [
         '⏳ <b>Проверка уже была только что</b>',
         '',
@@ -417,7 +417,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
         ...this.healthLines(),
       ];
     }
-    this.store.armCooldown(CHECK_COOLDOWN_KEY, CHECK_COOLDOWN_MS);
+    this.store.cooldowns.arm(CHECK_COOLDOWN_KEY, CHECK_COOLDOWN_MS);
 
     const outcome = await this.monitor.check();
     return [
@@ -443,13 +443,13 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     ask: () => Promise<MonitorAnswer>,
     tail: ButtonRow = [],
   ): Promise<Reply> {
-    if (this.store.isSuppressed(READ_COOLDOWN_KEY)) {
+    if (this.store.cooldowns.isSuppressed(READ_COOLDOWN_KEY)) {
       return {
         lines: ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'],
         markup: mainKeyboard(),
       };
     }
-    this.store.armCooldown(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
+    this.store.cooldowns.arm(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
     try {
       return this.offered(await ask(), tail);
     } catch (error) {

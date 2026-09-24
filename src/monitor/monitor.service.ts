@@ -96,7 +96,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   get status(): MonitorHealth {
-    return { ...this.health, trackedJobs: this.store.trackedJobs() };
+    return { ...this.health, trackedJobs: this.store.jobResults.count() };
   }
 
   /**
@@ -234,7 +234,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       const token = await this.monitorAuth.getAccessToken();
       this.health.authenticated = true;
       if (this.lastAuthenticated === false) {
-        this.store.clearCooldown('veeam:auth:failed');
+        this.store.cooldowns.clear('veeam:auth:failed');
         await this.emit({
           kind: 'infrastructure',
           severity: 'success',
@@ -275,12 +275,12 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     // An empty store means this installation has never been observed. Seeding
     // silently avoids announcing history as if it just happened; every later
     // start compares against the persisted results instead.
-    const seeding = !this.store.hasJobResults();
+    const seeding = !this.store.jobResults.seeded();
 
     for (const job of jobs) {
       if (!job.id) continue;
       const result = resultOf(job);
-      const previous = this.store.jobResult(job.id);
+      const previous = this.store.jobResults.of(job.id);
       const severity = seeding || previous === result ? null : this.severityOf(result, previous);
 
       if (severity) {
@@ -294,10 +294,10 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       }
       // Never `none` over something known: that is what lost every recovery
       // and re-announced every retry. See rememberedResult.
-      this.store.recordJobResult(job.id, rememberedResult(result, previous));
+      this.store.jobResults.record(job.id, rememberedResult(result, previous));
     }
 
-    this.store.forgetJobsExcept(new Set(jobs.map((job) => job.id)));
+    this.store.jobResults.keepOnly(new Set(jobs.map((job) => job.id)));
 
     if (seeding) {
       this.logger.log(`Veeam monitor seeded with ${jobs.length} job states, alerts start next cycle`);
@@ -332,7 +332,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
         serverUrl: this.veeam.baseUrl,
         serverTime: this.lastServerTime,
         error: this.health.lastError,
-        trackedJobs: this.store.trackedJobs(),
+        trackedJobs: this.store.jobResults.count(),
         intervalMs: this.config.monitorIntervalMs,
       },
     });
@@ -429,7 +429,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       if (freePercent === undefined) continue;
       const key = `repo:${repository.key}`;
       if (freePercent >= this.config.repositoryFreePercent) {
-        this.store.clearCooldown(key);
+        this.store.cooldowns.clear(key);
         continue;
       }
       await this.emit({
@@ -455,7 +455,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   private async maybeSendDigest(accessToken: string): Promise<void> {
     const hour = this.config.digestHour;
     if (hour < 0 || new Date().getHours() !== hour) return;
-    if (this.store.isSuppressed('digest')) return;
+    if (this.store.cooldowns.isSuppressed('digest')) return;
 
     const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
@@ -466,7 +466,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
 
     // Arming before the fetch, as this used to, lost the whole digest for 23
     // hours whenever that request threw.
-    if (report.outcome === 'delivered') this.store.armCooldown('digest', 23 * HOUR);
+    if (report.outcome === 'delivered') this.store.cooldowns.arm('digest', 23 * HOUR);
   }
 
   private async emit(event: NotificationEvent): Promise<DeliveryReport> {
