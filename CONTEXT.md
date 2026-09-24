@@ -111,6 +111,12 @@ that declaration, including the type and the config record.
 Pinned and heartbeat are opposites today and should stay that way: rewriting a
 pinned message to move its timestamp is churn the whole room sees.
 
+Every slot ends on one footer line, "Обновлено …", written by `footerOf` and
+recognised by `isFooter` in `src/live/format.ts`. The live module leaves that
+line out when deciding whether a slot changed, so a renderer that spelled the
+footer itself would rewrite its message every cycle. Fitting a slot under
+Telegram's limit is `fitted` or `paged`, never a loop of the renderer's own.
+
 A slot outlives its message. Telegram stops letting a bot edit or delete its own
 message about two days after it was *sent*, however recently it was last
 written, so the message is retired and replaced after 36 hours — while deleting

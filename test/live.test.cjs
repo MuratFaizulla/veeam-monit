@@ -923,3 +923,31 @@ test('a slot returns to the topic it was in, not to the one now configured', asy
   assert.equal(w.api.of('createForumTopic').length, 0, 'вторая тема не создана');
   assert.equal(w.api.sent().at(-1).message_thread_id, 86);
 });
+
+test('every live slot ends on the footer the live module leaves out of the comparison', () => {
+  // A slot whose last line is not recognised as the footer hashes its own
+  // timestamp, never compares as unchanged, and is rewritten every cycle —
+  // for a pinned slot, in front of the whole room. Two renderers used to
+  // spell the footer themselves; this is what keeps that from coming back.
+  const { isFooter } = require('../dist/live/format.js');
+  const { renderRepositories } = require('../dist/live/repositories.js');
+  const { renderPerformance } = require('../dist/live/performance.js');
+  const clock = { now: new Date('2026-09-14T12:00:00Z'), timezone: 'UTC' };
+  const many = Array.from({ length: 60 }, (_, i) => ({
+    id: `j${i}`, name: `Job ${i} ${'x'.repeat(80)}`, rateBps: i * 1024, bottleneck: 'Target',
+    processedSize: 1, readSize: 1, transferredSize: 1, progressPercent: 50,
+  }));
+  const texts = [
+    renderRepositories(undefined, clock),
+    renderRepositories([], clock),
+    renderRepositories(Array.from({ length: 80 }, (_, i) => ({
+      name: `Repository ${i} ${'y'.repeat(60)}`, usedPercent: 50, usedGB: 1, capacityGB: 2, freeGB: 1, isOnline: true,
+    })), clock),
+    renderPerformance({ activeCount: 0, statisticsAvailable: true, jobs: [] }, clock),
+    renderPerformance({ activeCount: 60, statisticsAvailable: true, jobs: many }, clock),
+  ];
+  for (const text of texts) {
+    assert.ok(text.length <= 4096, `over the limit: ${text.length}`);
+    assert.ok(isFooter(text.split('\n').at(-1)), `last line is not the footer:\n${text.split('\n').at(-1)}`);
+  }
+});

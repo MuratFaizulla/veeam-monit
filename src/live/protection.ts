@@ -1,6 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { Standings } from '../monitor/job-standing';
-import { dayOf, fitted, LiveClock, longMoment, plural, stampOf } from './format';
+import { dayOf, fitted, footerOf, LiveClock, longMoment, plural } from './format';
 
 /**
  * "What is not actually protected right now."
@@ -135,7 +135,7 @@ const compareRisk = (a: ProtectionRisk, b: ProtectionRisk): number => {
  * ------------------------------------------------------------------ */
 
 export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock): string => {
-  const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
+  const footer = footerOf(clock);
 
   if (snapshot.unavailable) {
     return [

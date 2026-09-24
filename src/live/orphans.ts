@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, fitted, LiveClock, plural, stampOf } from './format';
+import { dayOf, fitted, footerOf, LiveClock, plural } from './format';
 
 /**
  * Backup chains no live job owns any more.
@@ -34,7 +34,7 @@ export interface OrphansSnapshot {
 }
 
 export const renderOrphans = (snapshot: OrphansSnapshot, clock: LiveClock): string => {
-  const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
+  const footer = footerOf(clock);
 
   if (snapshot.unavailable) {
     return [

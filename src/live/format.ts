@@ -180,7 +180,7 @@ export const renderHealth = (health: LiveHealth, clock: LiveClock): string => {
     health.reachable && health.serverTime
       ? ` · часы сервера ${escapeHtml(moment(health.serverTime, clock))}`
       : '';
-  lines.push(`<i>Обновлено ${stampOf(clock.now, clock)}${serverClock}</i>`);
+  lines.push(footerOf(clock, serverClock));
 
   return truncate(lines.join('\n'));
 };
@@ -203,7 +203,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       '',
       escapeHtml(running.unavailable),
       '',
-      `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
+      footerOf(clock),
     );
     return truncate(lines.join('\n'));
   }
@@ -218,7 +218,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       // repeating one line of it in two places invites the two to disagree.
       `<b>Ближайший запуск:</b> ${nextRunLabel(running.next, clock)}`,
       '',
-      `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
+      footerOf(clock),
     );
     return truncate(lines.join('\n'));
   }
@@ -239,7 +239,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
       body.push(
         `<b>Заданий всего:</b> ${running.totalJobs}`,
         '',
-        `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
+        footerOf(clock),
       );
       return body.join('\n');
     }),
@@ -258,14 +258,14 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
         '',
         escapeHtml(schedule.unavailable),
         '',
-        `<i>Обновлено ${stampOf(clock.now, clock)}</i>`,
+        footerOf(clock),
       ].join('\n'),
     );
   }
 
   const today = dayKey(clock.now, clock);
   const runs = schedule.upcoming.filter((run) => dayKey(new Date(run.at), clock) === today);
-  const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
+  const footer = footerOf(clock);
 
   if (runs.length === 0) {
     const later = schedule.next ?? schedule.upcoming[0];
@@ -401,6 +401,26 @@ export const longMoment = (at: number, clock: LiveClock): string =>
     minute: '2-digit',
     second: '2-digit',
   });
+
+const UPDATED = '<i>Обновлено';
+
+/**
+ * The last line of every live slot: when it was written.
+ *
+ * Written here and nowhere else, because it is read here too — `isFooter` is
+ * how the live module leaves it out when deciding whether a slot changed. Two
+ * renderers used to spell it themselves, with their own date formatter, and
+ * the comparison worked only because both spellings happened to match the
+ * string the live module was looking for.
+ *
+ * `extra` stays inside the line, and so inside what the comparison ignores:
+ * it is for things that move every poll, like Veeam's own clock.
+ */
+export const footerOf = (clock: LiveClock, extra = ''): string =>
+  `${UPDATED} ${stampOf(clock.now, clock)}${extra}</i>`;
+
+/** Whether this line is the one `footerOf` writes. */
+export const isFooter = (line: string): boolean => line.startsWith(UPDATED);
 
 export const stampOf = (value: Date, clock: LiveClock): string =>
   parts(value, clock, {
