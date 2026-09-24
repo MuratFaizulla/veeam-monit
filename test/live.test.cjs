@@ -951,3 +951,76 @@ test('every live slot ends on the footer the live module leaves out of the compa
     assert.ok(isFooter(text.split('\n').at(-1)), `last line is not the footer:\n${text.split('\n').at(-1)}`);
   }
 });
+
+/* The live slots, asked directly: a cycle in, the text the room would see out. */
+
+const snapshotsOf = (routes, env = {}) => {
+  const { world: makeWorld, veeamFake: fakeVeeam, BackupEvidenceService: Evidence,
+    LiveSnapshotsService: Snapshots, VeeamInventoryService: Inventory } = require('./world.cjs');
+  const { JobQueryService } = require('../dist/monitor/job-query.service');
+  const w = makeWorld({ TELEGRAM_LIVE: 'true', ...env });
+  const veeam = fakeVeeam({
+    '/api/v1/jobs': { data: [] },
+    '/api/v1/backups': { data: [] },
+    '/api/v1/restorePoints': { data: [] },
+    ...routes,
+  });
+  const auth = { configured: true, getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const evidence = new Evidence(w.config, veeam, auth);
+  const query = new JobQueryService(w.config, veeam, auth, evidence, new Inventory());
+  return new Snapshots(w.config, veeam, auth, evidence, query);
+};
+
+const liveHealth = (over = {}) => ({
+  reachable: true, authenticated: true, serverUrl: 'https://veeam.test:9419',
+  error: null, trackedJobs: 3, intervalMs: 60_000, ...over,
+});
+
+const pageOf = (pages, slot) => pages.find((page) => page.slot === slot)?.content;
+
+test('▶️ counts a job running by status and one running by session as two', async () => {
+  // The count the summary and this slot once disagreed on: status alone saw
+  // one, sessions alone saw three (one of them Malware Detection, no job of
+  // ours), and the truth was two.
+  const snapshots = snapshotsOf({
+    '/api/v1/sessions': (req) => req.params?.stateFilter === 'Working' && req.params?.limit === 100
+      ? { data: [
+        { id: 's2', jobId: '2', state: 'Working', progressPercent: 40, creationTime: '2026-09-14T10:00:00Z' },
+        { id: 's9', jobId: 'malware', state: 'Working' },
+      ] }
+      : { data: [] },
+  });
+  const jobs = [
+    { id: '1', name: 'By status', status: 'Working', lastResult: 'Success' },
+    { id: '2', name: 'By session', status: 'Stopped', lastResult: 'Success' },
+    { id: '3', name: 'Idle', status: 'Stopped', lastResult: 'Success' },
+  ];
+  const pages = await snapshots.pages({ jobs, accessToken: 'tok', health: liveHealth() });
+  const running = pageOf(pages, 'running');
+  assert.match(running, /выполняются: 2 задания/);
+  assert.match(running, /By status/);
+  assert.match(running, /By session<\/b> — 40%/);
+  assert.doesNotMatch(running, /Idle|malware/);
+});
+
+test('a cycle Veeam did not answer says so in every slot instead of "nothing"', async () => {
+  const snapshots = snapshotsOf({});
+  const pages = await snapshots.pages({
+    jobs: undefined, accessToken: null, health: liveHealth({ reachable: false }),
+  });
+  assert.deepEqual(
+    pages.map((page) => page.slot),
+    ['health', 'running', 'schedule', 'performance', 'repositories', 'protection', 'restorePoints'],
+  );
+  assert.match(pageOf(pages, 'health'), /сервер недоступен/);
+  assert.match(pageOf(pages, 'running'), /Сервер Veeam не отвечает/);
+  assert.doesNotMatch(pageOf(pages, 'running'), /не выполняется ни одно/);
+  assert.match(pageOf(pages, 'schedule'), /Расписание недоступно/);
+  assert.match(pageOf(pages, 'performance'), /не авторизована/);
+});
+
+test('🧹 is only among the pages while it is switched on', async () => {
+  const on = await snapshotsOf({}, { TELEGRAM_LIVE_ORPHANS: 'true' })
+    .pages({ jobs: undefined, accessToken: null, health: liveHealth() });
+  assert.equal(on.at(-1).slot, 'orphans');
+});

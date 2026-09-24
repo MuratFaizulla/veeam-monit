@@ -269,6 +269,41 @@ export class JobQueryService {
     }
   }
 
+  /**
+   * Newest Working session per job.
+   *
+   * Best effort, and the failure is the safe direction: an empty map makes a
+   * running count fall back to the job status alone, which is what it used to
+   * be, and never invents a run that is not happening.
+   */
+  async runningSessions(accessToken: string): Promise<Map<string, VeeamSession>> {
+    const byJob = new Map<string, VeeamSession>();
+    try {
+      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
+        method: 'GET',
+        path: SESSIONS,
+        params: {
+          skip: 0,
+          limit: 100,
+          orderColumn: 'CreationTime',
+          orderAsc: false,
+          stateFilter: 'Working',
+        },
+      });
+      for (const session of response.data ?? []) {
+        if (session.jobId && !byJob.has(session.jobId)) byJob.set(session.jobId, session);
+      }
+    } catch (error) {
+      this.logger.debug(`No running session detail: ${(error as Error).message}`);
+    }
+    return byJob;
+  }
+
+  /** Job ids Veeam has a Working session for; see `runningSessions`. */
+  async workingJobs(accessToken: string): Promise<ReadonlySet<string>> {
+    return new Set((await this.runningSessions(accessToken)).keys());
+  }
+
   private clock(): LiveClock {
     return { now: new Date(), timezone: this.config.timezone };
   }
