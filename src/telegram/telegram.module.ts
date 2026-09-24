@@ -8,6 +8,7 @@ import { BackupEvidenceService } from '../monitor/backup-evidence.service';
 import { MonitorService } from '../monitor/monitor.service';
 import { JobQueryService } from '../monitor/job-query.service';
 import { TelegramLiveService } from '../live/live.service';
+import { LiveSnapshotsService } from '../live/snapshots.service';
 import {
   TelegramAdminGuard,
   TelegramEnabledGuard,
@@ -63,6 +64,7 @@ import { TelegramUpdatesService } from './updates.service';
 
     // live/ — the always-current status messages
     TelegramLiveService,
+    LiveSnapshotsService,
 
     // monitor/ and veeam/ — what is being watched
     MonitorService,

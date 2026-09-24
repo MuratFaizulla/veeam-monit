@@ -3,44 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/http.service';
 import { allPages, authorized } from '../veeam/pages';
-import {
-  VeeamCollection,
-  VeeamJobState,
-  VeeamRepositoryState,
-  VeeamSession,
-  VeeamTaskSession,
-} from '../veeam/types';
+import { VeeamCollection, VeeamJobState, VeeamRepositoryState } from '../veeam/types';
 import { DeliveryOutcome, DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
-import {
-  LiveClock,
-  LiveRunning,
-  LiveSchedule,
-  ScheduledRun,
-  renderHealth,
-  renderRunning,
-  renderSchedule,
-} from '../live/format';
+import { LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
-import {
-  ACTIVE_SESSION_STATES,
-  PerformanceJob,
-  PerformanceSnapshot,
-  aggregatePerformance,
-  renderPerformance,
-} from '../live/performance';
-import { renderRepositories } from '../live/repositories';
 import { capacities, RepositoryCapacity } from './repository-capacity';
-import { ProtectionSnapshot, assessProtection, renderProtection } from '../live/protection';
-import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from '../live/restore-points';
-import { OrphansSnapshot, renderOrphans } from '../live/orphans';
-import { BackupEvidenceService, Evidence } from './backup-evidence.service';
-import { Standings, standingsOf } from './job-standing';
-import { todayRuns } from './schedule-planner';
+import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, digestEvent, summarise } from './digest';
-import { isBadResult, isDisabled, isRunningNow, rememberedResult, resultOf } from './job-state';
+import { isBadResult, rememberedResult, resultOf } from './job-state';
 import { attemptOf, retriesAllowed, retryWindowOf } from './retries';
 import { JobRun } from './job-card';
 import { renderEvent } from '../telegram/format';
@@ -49,17 +22,8 @@ import { JobQueryService } from './job-query.service';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
-const SESSIONS = '/api/v1/sessions';
 const JOB_STATES = '/api/v1/jobs/states';
 
-/**
- * What a slot says when Veeam answered nothing this cycle. The evidence module
- * owns the other reasons; this one is about the job list, which it never sees.
- */
-const NOT_ANSWERED = 'Veeam не ответил на этот цикл.';
-
-const orphanPoints = (chains: { points: number }[]): number =>
-  chains.reduce((sum, chain) => sum + chain.points, 0);
 export type { MonitorAnswer } from './answer';
 
 export interface MonitorHealth {
@@ -115,6 +79,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     private readonly live: TelegramLiveService,
     private readonly evidence: BackupEvidenceService,
     private readonly jobQuery: JobQueryService,
+    private readonly snapshots: LiveSnapshotsService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -184,7 +149,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
   async summary(): Promise<MonitorAnswer> {
     const read = await this.jobQuery.jobsNow();
     if (!read.ok) return { text: read.message };
-    const summary = summarise(read.jobs, await this.workingJobs(read.accessToken));
+    const summary = summarise(read.jobs, await this.jobQuery.workingJobs(read.accessToken));
     return {
       // The very same event the daily message sends, rendered instead of
       // routed. Two renderings of one set of figures began to differ within a
@@ -205,9 +170,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     return this.jobQuery.describeJobById(id);
   }
 
-  /** Now, in the timezone the operator reads in. */
-  private clock(): LiveClock {
-    return { now: new Date(), timezone: this.config.timezone };
+  /** What `allPages` needs from this module to read a Veeam collection. */
+  private reader(accessToken: string) {
+    return { veeam: this.veeam, auth: this.monitorAuth, accessToken };
   }
 
   private async step<T>(name: string, run: () => Promise<T>): Promise<T | undefined> {
@@ -346,379 +311,34 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
    * ---------------------------------------------------------------- */
 
   /**
-   * Refreshes the two always-current messages: is the monitor working, and
-   * what is running right now. Both are state rather than events, so they are
+   * Refreshes every live slot. They are state rather than events, so they are
    * edited in place and never queue up behind the alert pipeline.
+   *
+   * What each slot says is decided by the snapshots module; the monitor adds
+   * the one input only it has — its own health — and sends the result.
    */
   private async publishLive(
     jobs: VeeamJobState[] | undefined,
     repositories: RepositoryCapacity[] | undefined,
     accessToken: string | null,
   ): Promise<void> {
-    const clock = this.clock();
-
-    // Once, before anything reads. Three slots answer from this and they used
-    // to take turns paying for it, which made the order they were published in
-    // load-bearing: rendering depth before protection showed the previous
-    // cycle's numbers and nothing failed.
-    await this.evidence.refresh(accessToken, jobs);
-    const evidence = this.evidence.evidence;
-    // Worked out once and read by both slots below, so they cannot disagree
-    // about which jobs are in scope or how many were left out.
-    const standings =
-      jobs && evidence.status === 'ready' ? standingsOf(jobs, evidence) : undefined;
-
-    await this.live.publish(
-      'health',
-      renderHealth(
-        {
-          reachable: this.health.reachable === true,
-          authenticated: this.health.authenticated,
-          serverUrl: this.veeam.baseUrl,
-          serverTime: this.lastServerTime,
-          error: this.health.lastError,
-          trackedJobs: this.store.trackedJobs(),
-          intervalMs: this.config.monitorIntervalMs,
-        },
-        clock,
-      ),
-    );
-
-    await this.live.publish(
-      'running',
-      renderRunning(await this.runningState(jobs, accessToken), clock),
-    );
-
-    await this.live.publish('schedule', renderSchedule(this.scheduleState(jobs, evidence, clock), clock));
-
-    await this.live.publish(
-      'performance',
-      renderPerformance(await this.performanceState(accessToken), clock),
-    );
-
-    await this.live.publish('repositories', renderRepositories(repositories, clock));
-
-    await this.live.publish(
-      'protection',
-      renderProtection(this.protectionState(jobs, standings, evidence), clock),
-    );
-
-    await this.live.publish(
-      'restorePoints',
-      renderRestorePoints(this.depthState(standings, evidence), clock),
-    );
-
-    // Off by request until the chains have been gone through by hand; the slot
-    // and its renderer stay, so turning it back on is one setting.
-    if (this.config.liveOrphans) {
-      await this.live.publish('orphans', renderOrphans(this.orphansState(jobs, evidence), clock));
-    }
+    const pages = await this.snapshots.pages({
+      jobs,
+      repositories,
+      accessToken,
+      health: {
+        reachable: this.health.reachable === true,
+        authenticated: this.health.authenticated,
+        serverUrl: this.veeam.baseUrl,
+        serverTime: this.lastServerTime,
+        error: this.health.lastError,
+        trackedJobs: this.store.trackedJobs(),
+        intervalMs: this.config.monitorIntervalMs,
+      },
+    });
+    for (const { slot, content } of pages) await this.live.publish(slot, content);
   }
 
-  /** Builds the Performance live slot from active sessions and their tasks. */
-  private async performanceState(accessToken: string | null): Promise<PerformanceSnapshot> {
-    if (!accessToken) {
-      return {
-        jobs: [],
-        activeCount: 0,
-        statisticsAvailable: false,
-        unavailable: 'Служебная учётная запись Veeam не авторизована.',
-      };
-    }
-
-    let sessions: VeeamSession[];
-    try {
-      sessions = (await allPages<VeeamSession>(this.reader(accessToken), SESSIONS, {
-        stateFilter: 'Working',
-        orderColumn: 'CreationTime',
-        orderAsc: false,
-      })).filter((session) => ACTIVE_SESSION_STATES.has((session.state ?? '').toLowerCase()));
-    } catch (error) {
-      this.logger.error(`Performance sessions unavailable: ${(error as Error).message}`);
-      return {
-        jobs: [],
-        activeCount: 0,
-        statisticsAvailable: false,
-        unavailable: (error as Error).message,
-      };
-    }
-
-    if (!sessions.length) return { jobs: [], activeCount: 0, statisticsAvailable: true };
-
-    const jobs: PerformanceJob[] = [];
-    let next = 0;
-    const worker = async (): Promise<void> => {
-      while (next < sessions.length) {
-        const session = sessions[next++];
-        if (!session.id) continue;
-        try {
-          const tasks = await allPages<VeeamTaskSession>(
-            this.reader(accessToken),
-            `/api/v1/sessions/${encodeURIComponent(session.id)}/taskSessions`,
-          );
-          jobs.push(aggregatePerformance(session, tasks));
-        } catch (error) {
-          // One inaccessible session must not hide all other performance data.
-          this.logger.warn(`Performance task sessions ${session.id} skipped: ${(error as Error).message}`);
-          jobs.push(aggregatePerformance(session, []));
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(5, sessions.length) }, () => worker()));
-
-    const statisticsAvailable = jobs.some((job) =>
-      [job.rateBps, job.processedSize, job.readSize, job.transferredSize].some(
-        (value) => value !== undefined,
-      ),
-    );
-    this.logger.debug(
-      `Performance refreshed: active=${sessions.length} detailed=${jobs.filter((job) => job.rateBps !== undefined).length}`,
-    );
-    return { jobs, activeCount: sessions.length, statisticsAvailable };
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Protection: what is actually recoverable
-   * ---------------------------------------------------------------- */
-
-  /**
-   * Builds the Protection slot.
-   *
-   * The scan reads every restore point in the estate, which costs ~20 requests
-   * and a good few seconds, so it runs on its own slow cadence rather than
-   * every minute. What it caches is the raw evidence, not the verdict: the
-   * verdict is recomputed each cycle against the current clock, so the ages
-   * shown stay right between scans.
-   */
-  private protectionState(
-    jobs: VeeamJobState[] | undefined,
-    standings: Standings | undefined,
-    evidence: Evidence,
-  ): ProtectionSnapshot {
-    const thresholds = {
-      staleDays: this.config.protectionStaleDays,
-      overdueFactor: this.config.protectionOverdueFactor,
-      minStreak: this.config.protectionFailureStreak,
-    };
-
-    if (!standings) {
-      return {
-        risks: [],
-        totalJobs: jobs?.length ?? 0,
-        protectedJobs: 0,
-        excludedDisabled: 0,
-        excludedUnscheduled: 0,
-        ...thresholds,
-        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
-      };
-    }
-
-    return assessProtection({ standings, now: Date.now(), ...thresholds });
-  }
-
-  /**
-   * Where each job stands against its own schedule, from the same scan
-   * 🛡 Protection uses.
-   *
-   * Jobs with no restore point at all are counted but not listed: they have
-   * nothing to date, and Protection already names them.
-   */
-  private depthState(
-    standings: Standings | undefined,
-    evidence: Evidence,
-  ): RestorePointsSnapshot {
-    if (!standings || evidence.status === 'pending') {
-      return {
-        jobs: [],
-        without: 0,
-        excludedDisabled: 0,
-        excludedUnscheduled: 0,
-        failedPoints: 0,
-        orphanBackups: 0,
-        orphanPoints: 0,
-        crossLink: this.config.liveOrphans,
-        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
-      };
-    }
-
-    const listed: JobDepth[] = [];
-    let without = 0;
-    // Which jobs are in scope, and how many were left out, is decided once and
-    // shared with 🛡 Protection; the two messages state the same numbers because
-    // they are the same numbers.
-    for (const job of standings.judged) {
-      if (!job.depth) {
-        without += 1;
-        continue;
-      }
-      listed.push({ name: job.name, ...job.depth, intervalDays: job.cadenceDays });
-    }
-
-    const newest = listed.reduce<{ name: string; at: number } | undefined>(
-      (best, job) =>
-        job.newest !== undefined && (!best || job.newest > best.at)
-          ? { name: job.name, at: job.newest }
-          : best,
-      undefined,
-    );
-
-    return {
-      jobs: listed,
-      without,
-      excludedDisabled: standings.excludedDisabled,
-      excludedUnscheduled: standings.excludedUnscheduled,
-      failedPoints: evidence.failedPoints,
-      orphanBackups: evidence.orphanChains.length,
-      orphanPoints: orphanPoints(evidence.orphanChains),
-      // Only mentioned while there is a 🧹 topic to send the reader to. A
-      // pointer to a topic that does not exist is worse than no pointer.
-      crossLink: this.config.liveOrphans,
-      newest,
-    };
-  }
-
-  /** Backup chains left behind by jobs that no longer exist. */
-  private orphansState(jobs: VeeamJobState[] | undefined, evidence: Evidence): OrphansSnapshot {
-    if (!jobs || evidence.status === 'pending') {
-      return {
-        backups: [],
-        points: 0,
-        totalPoints: 0,
-        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
-      };
-    }
-    return {
-      backups: evidence.orphanChains,
-      points: orphanPoints(evidence.orphanChains),
-      totalPoints: evidence.totalPoints,
-    };
-  }
-
-  /** What `allPages` needs from this module to read a Veeam collection. */
-  private reader(accessToken: string) {
-    return { veeam: this.veeam, auth: this.monitorAuth, accessToken };
-  }
-
-  private scheduleState(
-    jobs: VeeamJobState[] | undefined,
-    evidence: Evidence,
-    clock: LiveClock,
-  ): LiveSchedule {
-    if (!jobs) {
-      return {
-        upcoming: [],
-        unavailable: 'Расписание не удалось прочитать: Veeam не ответил на этот цикл.',
-      };
-    }
-    const next = this.upcomingRuns(jobs)[0] ?? null;
-    return {
-      upcoming: evidence.status === 'ready'
-        ? todayRuns(jobs, evidence.schedulesByJob, clock.now, clock.timezone)
-        : this.upcomingRuns(jobs),
-      next,
-    };
-  }
-
-  private async runningState(
-    jobs: VeeamJobState[] | undefined,
-    accessToken: string | null,
-  ): Promise<LiveRunning> {
-    if (!jobs || !accessToken) {
-      // Saying "nothing is running" when we simply could not ask would be a
-      // lie, and this message is the one an operator trusts at a glance.
-      return {
-        jobs: [],
-        totalJobs: this.store.trackedJobs(),
-        unavailable:
-          this.health.reachable === false
-            ? 'Сервер Veeam не отвечает, поэтому список заданий не обновляется.'
-            : 'Служебная учётная запись Veeam не авторизована, поэтому список заданий не обновляется.',
-      };
-    }
-
-    // Both sources, united by isRunningNow — sessions with no job of ours
-    // behind them, Malware Detection among them, are not jobs and never enter
-    // the list, because it is the jobs that are walked and not the sessions.
-    const sessions = await this.runningSessions(accessToken);
-    const working = new Set(sessions.keys());
-
-    return {
-      jobs: jobs
-        .filter((job) => isRunningNow(job, working))
-        .map((job) => {
-          const session = job.id ? sessions.get(job.id) : undefined;
-          return {
-            name: job.name ?? job.id ?? 'без имени',
-            type: job.type,
-            percent: session?.progressPercent,
-            startedAt: session?.creationTime ?? job.lastRun,
-            disabled: isDisabled(job),
-          };
-        })
-        // The renderer prints them in the order it is given, and an operator
-        // rereads this message every few minutes: a stable order is what makes
-        // "is my job still there" answerable at a glance.
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      totalJobs: jobs.length,
-      next: this.upcomingRuns(jobs)[0] ?? null,
-    };
-  }
-
-  /**
-   * Job ids Veeam has a Working session for.
-   *
-   * Best effort, and the failure is the safe direction: an empty set makes the
-   * count fall back to the job status alone, which is what it used to be, and
-   * never invents a run that is not happening.
-   */
-  private async workingJobs(accessToken: string): Promise<ReadonlySet<string>> {
-    return new Set((await this.runningSessions(accessToken)).keys());
-  }
-
-  /** Newest working session per job. Best effort: progress is a nicety. */
-  private async runningSessions(accessToken: string): Promise<Map<string, VeeamSession>> {
-    const byJob = new Map<string, VeeamSession>();
-    try {
-      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
-        method: 'GET',
-        path: SESSIONS,
-        params: {
-          skip: 0,
-          limit: 100,
-          orderColumn: 'CreationTime',
-          orderAsc: false,
-          stateFilter: 'Working',
-        },
-      });
-      for (const session of response.data ?? []) {
-        if (session.jobId && !byJob.has(session.jobId)) byJob.set(session.jobId, session);
-      }
-    } catch (error) {
-      this.logger.debug(`No running session detail: ${(error as Error).message}`);
-    }
-    return byJob;
-  }
-
-  /**
-   * Every scheduled run still in the future, soonest first. The formatter
-   * decides which of them fall on today, because "today" depends on the
-   * display timezone rather than on the server's.
-   */
-  private upcomingRuns(jobs: VeeamJobState[]): ScheduledRun[] {
-    const now = Date.now();
-    const runs: Array<ScheduledRun & { ms: number }> = [];
-
-    for (const job of jobs) {
-      if (!job.nextRun) continue;
-      const ms = Date.parse(job.nextRun);
-      if (!Number.isFinite(ms) || ms <= now) continue;
-      runs.push({ name: job.name ?? job.id ?? 'без имени', at: job.nextRun, ms });
-    }
-
-    return runs
-      .sort((a, b) => a.ms - b.ms)
-      .map(({ name, at }) => ({ name, at }));
-  }
 
   /** Null means the transition is not worth a message (e.g. into "running"). */
   private severityOf(result: string, previous: string | undefined): NotificationSeverity | null {
@@ -789,35 +409,6 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     return allowed ? `${attempt} из ${allowed}` : String(attempt);
   }
 
-  /**
-   * The job state carries no reason for a failure, so the newest session for
-   * that job is fetched for its message. Best effort: an alert without the
-   * detail is far better than no alert.
-   */
-  private async lastSessionMessage(
-    job: VeeamJobState,
-    accessToken: string,
-  ): Promise<string | undefined> {
-    if (!job.id) return undefined;
-    try {
-      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
-        method: 'GET',
-        path: SESSIONS,
-        params: {
-          skip: 0,
-          limit: 1,
-          orderColumn: 'CreationTime',
-          orderAsc: false,
-          jobIdFilter: job.id,
-        },
-      });
-      return response.data?.[0]?.result?.message?.trim() || undefined;
-    } catch (error) {
-      this.logger.debug(`No session detail for job ${job.id}: ${(error as Error).message}`);
-      return undefined;
-    }
-  }
-
   private async checkRepositories(accessToken: string): Promise<RepositoryCapacity[]> {
     let repositories: RepositoryCapacity[];
     try {
@@ -870,7 +461,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       method: 'GET',
       path: JOB_STATES,
     });
-    const summary = summarise(response.data ?? [], await this.workingJobs(accessToken));
+    const summary = summarise(response.data ?? [], await this.jobQuery.workingJobs(accessToken));
     const report = await this.emit(digestEvent(summary));
 
     // Arming before the fetch, as this used to, lost the whole digest for 23

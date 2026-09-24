@@ -117,6 +117,13 @@ line out when deciding whether a slot changed, so a renderer that spelled the
 footer itself would rewrite its message every cycle. Fitting a slot under
 Telegram's limit is `fitted` or `paged`, never a loop of the renderer's own.
 
+What every slot says after a cycle is decided in one place,
+`src/live/snapshots.service.ts`: a cycle's jobs, repositories, token and the
+monitor's own health go in, one page per slot comes out, in publishing order.
+The monitor adds the health — the one input only it has — and sends the pages.
+It used to build each slot's input itself, in private methods no test could
+reach without running a whole cycle.
+
 A slot outlives its message. Telegram stops letting a bot edit or delete its own
 message about two days after it was *sent*, however recently it was last
 written, so the message is retired and replaced after 36 hours — while deleting

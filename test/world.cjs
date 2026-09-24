@@ -18,6 +18,7 @@ const {
 } = require('../dist/telegram/types');
 const { MonitorService } = require('../dist/monitor/monitor.service');
 const { JobQueryService } = require('../dist/monitor/job-query.service');
+const { LiveSnapshotsService } = require('../dist/live/snapshots.service');
 const { TelegramLiveService } = require('../dist/live/live.service');
 const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/http.service');
@@ -137,9 +138,10 @@ function veeamFake(routes) {
 function monitorOf(w, veeam, auth, evidence) {
   const scan = evidence ?? new BackupEvidenceService(w.config, veeam, auth);
   const query = new JobQueryService(w.config, veeam, auth, scan, new VeeamInventoryService());
+  const snapshots = new LiveSnapshotsService(w.config, veeam, auth, scan, query);
   return new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
-    scan, query,
+    scan, query, snapshots,
   );
 }
 
@@ -205,7 +207,7 @@ module.exports = {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, monitorOf,
+  MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };
