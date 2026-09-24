@@ -205,9 +205,7 @@ export class TelegramLiveService {
       });
       return true;
     } catch (error) {
-      if (!(error instanceof TelegramApiError)) return true;
-      if (/not modified/i.test(error.description)) return true;
-      return !/message to edit not found/i.test(error.description);
+      return !(error instanceof TelegramApiError && error.isMessageGone);
     }
   }
 
@@ -237,7 +235,7 @@ export class TelegramLiveService {
     } catch (error) {
       // Telegram refuses a no-op edit. The message already says what we wanted
       // it to say, so the slot is current either way.
-      if (error instanceof TelegramApiError && /not modified/i.test(error.description)) return true;
+      if (error instanceof TelegramApiError && error.isUnchanged) return true;
       return false;
     }
   }
