@@ -4,7 +4,7 @@ import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/http.service';
 import { allPages, authorized } from '../veeam/pages';
 import { VeeamCollection, VeeamJobState, VeeamRepositoryState } from '../veeam/types';
-import { DeliveryOutcome, DeliveryReport, TelegramService } from '../telegram/telegram.service';
+import { DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
 import { LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
@@ -18,27 +18,14 @@ import { attemptOf, retriesAllowed, retryWindowOf } from './retries';
 import { JobRun } from './job-card';
 import { renderEvent } from '../telegram/format';
 import { MonitorAnswer } from './answer';
+import { Monitor, MonitorHealth } from './monitor';
 import { JobQueryService } from './job-query.service';
 
 const HOUR = 3_600_000;
 const REPOSITORIES = '/api/v1/backupInfrastructure/repositories/states';
 const JOB_STATES = '/api/v1/jobs/states';
 
-export type { MonitorAnswer } from './answer';
-
-export interface MonitorHealth {
-  lastCheckAt: string | null;
-  reachable: boolean | null;
-  authenticated: boolean | null;
-  lastError: string | null;
-  trackedJobs: number;
-  /** Events that reached at least one chat since start. */
-  delivered: number;
-  /** Events that were attempted and reached nobody — the number to alarm on. */
-  undelivered: number;
-  /** Outcome of the most recent event, for answering "where did my alert go?". */
-  lastOutcome: DeliveryOutcome | null;
-}
+export type { MonitorAnswer, MonitorHealth } from './monitor';
 
 /**
  * Polls Veeam and turns what changed into notification events.
@@ -50,7 +37,7 @@ export interface MonitorHealth {
  * looked exactly like a healthy server with no failing jobs.
  */
 @Injectable()
-export class MonitorService implements OnModuleInit, OnModuleDestroy {
+export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MonitorService.name);
   private readonly config: AppConfig['telegram'];
   private timer?: NodeJS.Timeout;

@@ -155,6 +155,13 @@ by whether `TELEGRAM_WEBHOOK_URL` is set, and nothing downstream knows which.
 Hearing and sending are separate modules. They share the transport and the chat
 registry and nothing else, and no caller of one ever wants the other.
 
+What a command needs from the monitor — its health, a pass on demand, the
+**Summary** and a **Job card** — it asks through `Monitor` in
+`src/monitor/monitor.ts`, not through the monitor class. The HTTP surface does
+the same. Two adapters sit behind that seam: `MonitorService`, and the idle
+monitor the tests use for a world with no Veeam, which a test keeps in step
+with the real one.
+
 Owned by `src/telegram/updates.service.ts`.
 
 ## Attempt

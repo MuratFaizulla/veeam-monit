@@ -98,20 +98,28 @@ function world(env = {}, handlers = {}, stateFile) {
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
-  // /check needs a monitor. Tests that have no monitor get one that says it
-  // ran and reports nothing; monitorWorld swaps in the real one below.
-  const idleMonitor = {
-    check: async () => 'ran',
-    summary: async () => ({ text: 'сводка' }),
-    describeJob: async (query) => ({ text: `карточка ${query}` }),
-    describeJobById: async (id) => ({ text: `карточка ${id}`, jobId: id }),
-    status: { reachable: null, authenticated: null, trackedJobs: 0, lastCheckAt: null, lastError: null },
-  };
-  const updates = new TelegramUpdatesService(config, transport, topics, store, idleMonitor);
+  // The second adapter of the Monitor seam (src/monitor/monitor.ts), for tests
+  // with no Veeam: it says it ran and reports nothing. monitorWorld swaps in
+  // the real one below.
+  const updates = new TelegramUpdatesService(config, transport, topics, store, idleMonitor());
   const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
   return { file, config, store, api, transport, topics, routing, service, updates, live, telegram };
+}
+
+/** A Monitor with nothing behind it. Kept in step with MonitorService by a test. */
+function idleMonitor() {
+  return {
+    check: async () => 'ran',
+    summary: async () => ({ text: 'сводка' }),
+    describeJob: async (query) => ({ text: `карточка ${query}` }),
+    describeJobById: async (id) => ({ text: `карточка ${id}`, jobId: id }),
+    status: {
+      lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
+      trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
+    },
+  };
 }
 
 function veeamFake(routes) {
@@ -204,7 +212,7 @@ const exchange = (env = {}) =>
   });
 
 module.exports = {
-  CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
+  CHAT, telegramConfig, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,

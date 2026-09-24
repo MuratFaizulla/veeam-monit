@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Inject, Post, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ApiBadRequestResponse,
@@ -10,7 +10,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AppConfig } from '../config/configuration';
-import { MonitorService } from '../monitor/monitor.service';
+import { MONITOR, Monitor } from '../monitor/monitor';
 import { TelegramRoutingService } from './routing.service';
 import { DELIVERY_OUTCOMES, DeliveryReport, TelegramService } from './telegram.service';
 import { TelegramUpdatesService } from './updates.service';
@@ -55,7 +55,7 @@ export class TelegramController {
     private readonly telegram: TelegramService,
     private readonly updates: TelegramUpdatesService,
     private readonly routing: TelegramRoutingService,
-    private readonly monitor: MonitorService,
+    @Inject(MONITOR) private readonly monitor: Monitor,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { escapeHtml, truncate } from './format';
@@ -13,7 +13,7 @@ import {
   TelegramMessage,
   TelegramUpdate,
 } from './types';
-import { MonitorAnswer, MonitorService } from '../monitor/monitor.service';
+import { MONITOR, Monitor, MonitorAnswer } from '../monitor/monitor';
 import { plural, stampOf } from '../live/format';
 import {
   Action,
@@ -112,7 +112,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     private readonly transport: TelegramTransportService,
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
-    private readonly monitor: MonitorService,
+    @Inject(MONITOR) private readonly monitor: Monitor,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }

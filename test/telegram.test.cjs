@@ -635,3 +635,18 @@ test('dropping a chat takes its live slots with it', () => {
   assert.equal(store.liveMessages.of('-1001', 'health'), undefined);
   assert.equal(store.snapshot().liveMessages['-1001'], undefined);
 });
+
+test('the idle monitor the tests use offers exactly what the real one does', async () => {
+  // Two adapters of one seam drift apart silently: a command reads a field the
+  // real monitor has and the stub lacks, and every test built on the stub
+  // passes against a shape production never sees.
+  const { idleMonitor, monitorWorld, job } = require('./world.cjs');
+  const idle = idleMonitor();
+  const real = monitorWorld({}, [job('1', 'A', 'Success')]).monitor;
+
+  for (const member of ['check', 'summary', 'describeJob', 'describeJobById']) {
+    assert.equal(typeof real[member], 'function', `MonitorService.${member}`);
+    assert.equal(typeof idle[member], 'function', `idle monitor ${member}`);
+  }
+  assert.deepEqual(Object.keys(idle.status).sort(), Object.keys(real.status).sort());
+});
