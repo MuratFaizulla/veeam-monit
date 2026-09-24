@@ -42,6 +42,20 @@ export class TelegramApiError extends Error {
   get isRateLimited(): boolean {
     return this.code === 429;
   }
+
+  /**
+   * An edit that would leave the message exactly as it is. Telegram refuses
+   * it, but the message already says what was wanted — for a caller that
+   * asked for a state rather than a change, this is success.
+   */
+  get isUnchanged(): boolean {
+    return /message is not modified/i.test(this.description);
+  }
+
+  /** The message this call addressed no longer exists — deleted by somebody. */
+  get isMessageGone(): boolean {
+    return /message to (edit|delete) not found/i.test(this.description);
+  }
 }
 
 interface QueuedMessage {

@@ -562,3 +562,26 @@ test('invalid operator settings fail before the monitor starts', () => {
     TELEGRAM_WEBHOOK_SECRET: 'secret',
   }));
 });
+
+test('a Telegram error says what it means, so nobody else reads its text', () => {
+  // The exact wording Telegram sends. Matching it is this class's job alone:
+  // a caller that parses `description` itself is a second place to update the
+  // day Telegram rewords one of them.
+  const { TelegramApiError } = require('../dist/telegram/transport.service');
+  const error = (code, description) => new TelegramApiError('editMessageText', code, description);
+
+  const unchanged = error(400, 'Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message');
+  assert.equal(unchanged.isUnchanged, true);
+  assert.equal(unchanged.isMessageGone, false);
+
+  for (const text of ['Bad Request: message to edit not found', 'Bad Request: message to delete not found']) {
+    assert.equal(error(400, text).isMessageGone, true, text);
+    assert.equal(error(400, text).isUnchanged, false, text);
+    assert.equal(error(400, text).isChatGone, false, text);
+  }
+
+  // Too old to delete is not gone: the message is still in the chat, which is
+  // exactly why a person has to remove it.
+  assert.equal(error(400, "Bad Request: message can't be deleted").isMessageGone, false);
+  assert.equal(error(400, 'Bad Request: message thread not found').isMessageGone, false);
+});
