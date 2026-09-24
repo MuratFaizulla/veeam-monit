@@ -169,4 +169,26 @@ npm run lint   # проверка типов TypeScript
 npm test       # сборка и тесты node:test
 ```
 
-Исходники расположены в `src/telegram`, `src/monitor`, `src/live` и `src/veeam`. Файл [docs/veeam-openapi.json](docs/veeam-openapi.json) описывает API самого Veeam; `/api/docs` описывает API этого сервиса.
+Исходники расположены в `src/telegram`, `src/monitor`, `src/live` и `src/veeam`.
+
+### Модули
+
+Один Nest-модуль на предмет; все импорты направлены в одну сторону:
+
+```
+VeeamModule ← EstateModule ← LiveModule ← MonitorModule ← TelegramUpdatesModule
+TelegramModule (доставка) ← LiveModule, MonitorModule, TelegramUpdatesModule
+```
+
+| Модуль | Файл | Что в нём |
+|---|---|---|
+| `VeeamModule` | `src/veeam/veeam.module.ts` | HTTP-клиент Veeam, токен служебной учётки, имена репозиториев и прокси |
+| `TelegramModule` | `src/telegram/telegram.module.ts` | доставка: чаты, темы, маршрутизация, файл состояния |
+| `EstateModule` | `src/monitor/estate.module.ts` | чтение Veeam: сканирование точек восстановления, карточка задания, сессии |
+| `LiveModule` | `src/live/live.module.ts` | live-слоты: что в них написано и поддержание одного сообщения |
+| `MonitorModule` | `src/monitor/monitor.module.ts` | цикл опроса и алерты; наружу отдаёт только `MONITOR` |
+| `TelegramUpdatesModule` | `src/telegram/updates.module.ts` | команды, кнопки, webhook, HTTP-эндпоинты |
+
+`test/architecture.test.cjs` падает, если импорт укажет в обратную сторону или приложение перестанет собираться.
+
+Файл [docs/veeam-openapi.json](docs/veeam-openapi.json) описывает API самого Veeam; `/api/docs` описывает API этого сервиса.
