@@ -1,5 +1,5 @@
-import { escapeHtml, MAX_LENGTH } from '../telegram/format';
-import { LiveClock } from './format';
+import { escapeHtml, truncate } from '../telegram/format';
+import { fitted, footerOf, LiveClock } from './format';
 import { VeeamSession, VeeamTaskSession } from '../veeam/types';
 
 export const ACTIVE_SESSION_STATES = new Set([
@@ -117,31 +117,35 @@ export const sortPerformanceJobs = (jobs: PerformanceJob[]): PerformanceJob[] =>
   });
 
 export const renderPerformance = (snapshot: PerformanceSnapshot, clock: LiveClock): string => {
-  const footer = `Обновлено ${stamp(clock.now, clock.timezone)}`;
-  if (snapshot.unavailable) return limit([
+  const footer = footerOf(clock);
+  if (snapshot.unavailable) return truncate([
     '📈 <b>VEEAM PERFORMANCE</b>', '', '⚠️ Данные производительности временно недоступны.',
-    escapeHtml(snapshot.unavailable), '', `<i>${footer}</i>`,
-  ]);
-  if (!snapshot.activeCount) return limit([
-    '📈 <b>VEEAM PERFORMANCE</b>', '', '✅ Сейчас активных заданий нет.', '', `<i>${footer}</i>`,
-  ]);
-  if (!snapshot.statisticsAvailable) return limit([
+    escapeHtml(snapshot.unavailable), '', footer,
+  ].join('\n'));
+  if (!snapshot.activeCount) return truncate([
+    '📈 <b>VEEAM PERFORMANCE</b>', '', '✅ Сейчас активных заданий нет.', '', footer,
+  ].join('\n'));
+  if (!snapshot.statisticsAvailable) return truncate([
     '📈 <b>VEEAM PERFORMANCE</b>', '', `⚠️ Активных заданий: ${snapshot.activeCount}`,
-    'Данные производительности временно недоступны.', '', `<i>${footer}</i>`,
-  ]);
+    'Данные производительности временно недоступны.', '', footer,
+  ].join('\n'));
 
   const sorted = sortPerformanceJobs(snapshot.jobs);
-  for (let shown = Math.min(10, sorted.length); shown >= 0; shown -= 1) {
-    const lines = ['📈 <b>VEEAM PERFORMANCE</b>', '', '🐢 <b>Самые медленные активные задания</b>', ''];
-    for (const job of sorted.slice(0, shown)) lines.push(...jobLines(job, clock), '');
-    lines.push(`Активных заданий: ${snapshot.activeCount}`, `Показано самых медленных: ${shown}`);
-    const summary = bottleneckSummary(sorted);
-    if (summary) lines.push('', `Узкие места: ${escapeHtml(summary)}`);
-    lines.push('', `<i>${footer}</i>`);
-    if (lines.join('\n').length <= MAX_LENGTH) return lines.join('\n');
-  }
-  return limit(['📈 <b>VEEAM PERFORMANCE</b>', '', `Активных заданий: ${snapshot.activeCount}`, '', `<i>${footer}</i>`]);
+  const summary = bottleneckSummary(sorted);
+  return truncate(
+    fitted(Math.min(SLOWEST_SHOWN, sorted.length), (shown) => {
+      const lines = ['📈 <b>VEEAM PERFORMANCE</b>', '', '🐢 <b>Самые медленные активные задания</b>', ''];
+      for (const job of sorted.slice(0, shown)) lines.push(...jobLines(job, clock), '');
+      lines.push(`Активных заданий: ${snapshot.activeCount}`, `Показано самых медленных: ${shown}`);
+      if (summary) lines.push('', `Узкие места: ${escapeHtml(summary)}`);
+      lines.push('', footer);
+      return lines.join('\n');
+    }),
+  );
 };
+
+/** The slowest few are the point of the slot; the rest is noise beside them. */
+const SLOWEST_SHOWN = 10;
 
 const jobLines = (job: PerformanceJob, clock: LiveClock): string[] => {
   const mbps = job.rateBps === undefined ? undefined : job.rateBps / 1024 ** 2;
@@ -167,10 +171,4 @@ const bottleneckSummary = (jobs: PerformanceJob[]): string => {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => `${name} ${count}`).join(' · ');
 };
 const trim = (value: number): string => value.toFixed(value >= 100 ? 0 : 1).replace(/\.0$/, '');
-const stamp = (date: Date, timezone: string): string => new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date);
 const shortDate = (iso: string, timezone: string): string => new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
-const limit = (lines: string[]): string => {
-  let text = lines.join('\n');
-  while (text.length > MAX_LENGTH && lines.length > 1) { lines.splice(-2, 1); text = lines.join('\n'); }
-  return text.slice(0, MAX_LENGTH);
-};

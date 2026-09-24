@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, LiveClock, longMoment, paged, plural, stampOf } from './format';
+import { dayOf, footerOf, LiveClock, longMoment, paged, plural } from './format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
@@ -94,7 +94,7 @@ export const renderRestorePoints = (
   snapshot: RestorePointsSnapshot,
   clock: LiveClock,
 ): string[] => {
-  const footer = `<i>Обновлено ${stampOf(clock.now, clock)}</i>`;
+  const footer = footerOf(clock);
 
   if (snapshot.unavailable) {
     return [

@@ -6,6 +6,7 @@ import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
 import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat } from '../telegram/types';
+import { isFooter } from './format';
 import { LiveSlot, specOf } from './slots';
 import { LiveMessageRef } from '../telegram/state.store';
 
@@ -296,12 +297,13 @@ export class TelegramLiveService {
 
   /**
    * The "обновлено" line moves every cycle by design, so it is excluded from
-   * the comparison; otherwise nothing would ever count as unchanged.
+   * the comparison; otherwise nothing would ever count as unchanged. Which
+   * line that is, is asked of the module that writes it.
    */
   private hash(text: string): string {
     const meaningful = text
       .split('\n')
-      .filter((line) => !line.startsWith('<i>Обновлено'))
+      .filter((line) => !isFooter(line))
       .join('\n');
     return createHash('sha1').update(meaningful).digest('hex');
   }

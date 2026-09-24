@@ -1,5 +1,5 @@
-import { escapeHtml, MAX_LENGTH } from '../telegram/format';
-import { bar, LiveClock } from './format';
+import { escapeHtml, truncate } from '../telegram/format';
+import { bar, fitted, footerOf, LiveClock } from './format';
 import { RepositoryCapacity } from '../monitor/repository-capacity';
 
 /**
@@ -17,7 +17,7 @@ export const renderRepositories = (
   repositories: RepositoryCapacity[] | undefined,
   clock: LiveClock,
 ): string => {
-  const footer = `<i>Обновлено ${stamp(clock.now, clock.timezone)}</i>`;
+  const footer = footerOf(clock);
   if (!repositories) {
     return ['💾 <b>VEEAM REPOSITORIES</b>', '', '⚠️ Данные репозиториев временно недоступны.', '', footer].join('\n');
   }
@@ -25,18 +25,18 @@ export const renderRepositories = (
     return ['💾 <b>VEEAM REPOSITORIES</b>', '', 'Репозитории не найдены.', '', footer].join('\n');
   }
 
-  for (let shown = repositories.length; shown >= 0; shown -= 1) {
-    const lines = ['💾 <b>VEEAM REPOSITORIES</b>', ''];
-    repositories.slice(0, shown).forEach((repository, index) => {
-      lines.push(...repositoryLines(repository, index + 1));
-      if (index < shown - 1) lines.push('', '────────────────────', '');
-    });
-    if (shown < repositories.length) lines.push(`…и ещё ${repositories.length - shown}`, '');
-    lines.push(`<b>Всего:</b> ${repositories.length}`, '', footer);
-    const text = lines.join('\n');
-    if (text.length <= MAX_LENGTH) return text;
-  }
-  return ['💾 <b>VEEAM REPOSITORIES</b>', '', `<b>Всего:</b> ${repositories.length}`, '', footer].join('\n');
+  return truncate(
+    fitted(repositories.length, (shown) => {
+      const lines = ['💾 <b>VEEAM REPOSITORIES</b>', ''];
+      repositories.slice(0, shown).forEach((repository, index) => {
+        lines.push(...repositoryLines(repository, index + 1));
+        if (index < shown - 1) lines.push('', '────────────────────', '');
+      });
+      if (shown < repositories.length) lines.push(`…и ещё ${repositories.length - shown}`, '');
+      lines.push(`<b>Всего:</b> ${repositories.length}`, '', footer);
+      return lines.join('\n');
+    }),
+  );
 };
 
 const repositoryLines = (repository: RepositoryCapacity, index: number): string[] => {
@@ -61,7 +61,3 @@ const formatGb = (gb: number | undefined): string => {
   return `${trim(gb)} GB`;
 };
 const trim = (value: number): string => value.toFixed(value >= 100 ? 0 : 1).replace(/\.0$/, '');
-const stamp = (date: Date, timezone: string): string => new Intl.DateTimeFormat('ru-RU', {
-  timeZone: timezone || undefined,
-  day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-}).format(date);
