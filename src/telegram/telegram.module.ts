@@ -1,41 +1,24 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpModule } from '../veeam/http.module';
-import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
-import { VeeamInventoryService } from '../veeam/inventory.service';
-import { BackupEvidenceService } from '../monitor/backup-evidence.service';
-import { MONITOR } from '../monitor/monitor';
-import { MonitorService } from '../monitor/monitor.service';
-import { JobQueryService } from '../monitor/job-query.service';
-import { TelegramLiveService } from '../live/live.service';
-import { LiveSnapshotsService } from '../live/snapshots.service';
-import {
-  TelegramAdminGuard,
-  TelegramEnabledGuard,
-  TelegramWebhookGuard,
-} from './access.guard';
 import { TelegramRoutingService } from './routing.service';
 import { TelegramStateStore } from './state.store';
-import { TelegramController } from './telegram.controller';
 import { TelegramService } from './telegram.service';
 import { TelegramTopicsService } from './topics.service';
 import { TelegramTransportService } from './transport.service';
-import { TelegramUpdatesService } from './updates.service';
 
 /**
- * One Nest module across four folders, on purpose.
+ * Delivery: getting a message into the right chat and topic, and remembering
+ * what that took — the chat registry, the topics, the state file.
  *
- * The folders separate subjects; this separates nothing, it wires. And the
- * graph it wires is genuinely mutual: the monitor sends through the Telegram
- * delivery module, and the Telegram controller drives the monitor. Splitting it
- * along the folders would not untangle that — it would express it as a pair of
- * modules referring to each other through forwardRef, which is the same cycle
- * with a ceremony around it.
+ * Depends on nothing of ours, and asks nobody anything. It used to be the one
+ * module the whole service was wired in, because the ear that drives the
+ * monitor lived here too and the monitor sends through here: splitting along
+ * the folders would have been a cycle. The ear now asks the monitor through
+ * `MONITOR` and lives in `TelegramUpdatesModule`, so this is a leaf that the
+ * live slots, the monitor and the ear all import.
  */
 @Module({
-  imports: [VeeamHttpModule],
-  controllers: [TelegramController],
   providers: [
     {
       provide: TelegramStateStore,
@@ -53,28 +36,16 @@ import { TelegramUpdatesService } from './updates.service';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => new TelegramTransportService(config),
     },
-
-    // telegram/ — delivery and the bot's connection
     TelegramTopicsService,
     TelegramRoutingService,
     TelegramService,
-    TelegramUpdatesService,
-    TelegramAdminGuard,
-    TelegramWebhookGuard,
-    TelegramEnabledGuard,
-
-    // live/ — the always-current status messages
-    TelegramLiveService,
-    LiveSnapshotsService,
-
-    // monitor/ and veeam/ — what is being watched
-    MonitorService,
-    // What the ear and the HTTP surface depend on instead of the whole class.
-    { provide: MONITOR, useExisting: MonitorService },
-    JobQueryService,
-    BackupEvidenceService,
-    VeeamMonitorAuthService,
-    VeeamInventoryService,
+  ],
+  exports: [
+    TelegramStateStore,
+    TelegramTransportService,
+    TelegramTopicsService,
+    TelegramRoutingService,
+    TelegramService,
   ],
 })
 export class TelegramModule {}

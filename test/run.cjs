@@ -7,3 +7,4 @@ require('./live.test.cjs');
 require('./live-performance.test.cjs');
 require('./live-repositories.test.cjs');
 require('./veeam.test.cjs');
+require('./architecture.test.cjs');
