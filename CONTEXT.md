@@ -267,8 +267,14 @@ reach rather than excluded by a rule somebody has to remember.
 Scoped by thread: clearing one topic must not reach into the next, where
 somebody may be mid-conversation.
 
-Kept in the state store, newest 500 per chat, entries older than 48 hours
-dropped on read.
+Newest 500 per chat, entries older than 48 hours dropped on read.
+
+Owned by `src/telegram/answer-log.ts`. It is persisted in the state file
+like everything else, but the state store only hands it its part of the file
+and a way to save; the rules above live in the answer log. Job results,
+cooldowns and live messages are split out the same way — `store.jobResults`,
+`store.cooldowns`, `store.liveMessages` — and the store itself keeps only the
+file, the chats and the forum topics.
 
 ## Button
 

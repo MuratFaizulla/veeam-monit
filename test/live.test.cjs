@@ -881,14 +881,14 @@ test('a pinned slot notices its message was deleted, and posts a new one', async
   });
 
   await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
-  const first = w.store.liveMessage(CHAT, 'repositories').messageId;
+  const first = w.store.liveMessages.of(CHAT, 'repositories').messageId;
 
   // Unchanged content while the message is still there: asked about, not
   // rewritten, so the pinned message keeps its timestamp.
   w.api.reset();
   await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
   assert.deepEqual(w.api.sent(), [], 'ничего не отправлено заново');
-  assert.equal(w.store.liveMessage(CHAT, 'repositories').messageId, first);
+  assert.equal(w.store.liveMessages.of(CHAT, 'repositories').messageId, first);
 
   // Now it is gone.
   present = false;
@@ -896,7 +896,7 @@ test('a pinned slot notices its message was deleted, and posts a new one', async
   await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
 
   assert.equal(w.api.sent().length, 1, 'слот восстановился сам');
-  assert.notEqual(w.store.liveMessage(CHAT, 'repositories').messageId, first);
+  assert.notEqual(w.store.liveMessages.of(CHAT, 'repositories').messageId, first);
 });
 
 test('a slot returns to the topic it was in, not to the one now configured', async () => {
@@ -911,7 +911,7 @@ test('a slot returns to the topic it was in, not to the one now configured', asy
   });
   w.store.rememberTopic(CHAT, '📅 Upcoming runs', 86);
   await w.live.publish('schedule', '📅 первый');
-  const thread = w.store.liveMessage(CHAT, 'schedule').threadId;
+  const thread = w.store.liveMessages.of(CHAT, 'schedule').threadId;
   assert.equal(thread, 86, 'тема запомнена вместе с сообщением');
 
   w.store.forgetTopic(CHAT, '📅 Upcoming runs');

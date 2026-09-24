@@ -8,7 +8,7 @@ import { TelegramApiError, TelegramTransportService } from '../telegram/transpor
 import { TelegramChat } from '../telegram/types';
 import { isFooter } from './format';
 import { LiveSlot, specOf } from './slots';
-import { LiveMessageRef } from '../telegram/state.store';
+import { LiveMessageRef } from './live-messages';
 
 /**
  * How long a live slot keeps one message before posting a fresh one.
@@ -89,9 +89,9 @@ export class TelegramLiveService {
   private async prune(chatId: string, slot: LiveSlot, pages: number): Promise<void> {
     for (let index = Math.max(pages, 1); ; index += 1) {
       const key = this.key(slot, index);
-      const ref = this.store.liveMessage(chatId, key);
+      const ref = this.store.liveMessages.of(chatId, key);
       if (!ref) return;
-      this.store.forgetLiveMessage(chatId, key);
+      this.store.liveMessages.forget(chatId, key);
       await this.remove(chatId, ref.messageId);
     }
   }
@@ -105,7 +105,7 @@ export class TelegramLiveService {
   ): Promise<void> {
     const key = this.key(slot, index);
     const hash = this.hash(text);
-    const held = this.store.liveMessage(chatId, key);
+    const held = this.store.liveMessages.of(chatId, key);
 
     // Retired while Telegram still answers for it. A slot's message is edited
     // for as long as the slot exists, but the right to edit or delete one's own
@@ -116,7 +116,7 @@ export class TelegramLiveService {
     // is what the ▶️ topic did: two messages, one stuck a day behind.
     const previous = held && !this.expired(held) ? held : undefined;
     if (held && !previous) {
-      this.store.forgetLiveMessage(chatId, key);
+      this.store.liveMessages.forget(chatId, key);
       await this.remove(chatId, held.messageId);
     }
 
@@ -136,17 +136,17 @@ export class TelegramLiveService {
       // whether the message is there.
       if (!spec.heartbeat) {
         if (await this.present(chatId, current.messageId)) {
-          this.store.rememberLiveMessage(chatId, key, { ...current, at: Date.now() });
+          this.store.liveMessages.remember(chatId, key, { ...current, at: Date.now() });
           return;
         }
         this.logger.warn(`Live "${slot}" message ${current.messageId} is gone from chat ${chatId}, posting a new one`);
-        this.store.forgetLiveMessage(chatId, key);
+        this.store.liveMessages.forget(chatId, key);
         current = undefined;
       }
     }
 
     if (current && (await this.edit(chatId, current.messageId, text))) {
-      this.store.rememberLiveMessage(chatId, key, {
+      this.store.liveMessages.remember(chatId, key, {
         messageId: current.messageId,
         hash,
         at: Date.now(),
@@ -157,7 +157,7 @@ export class TelegramLiveService {
     }
 
     if (current) {
-      this.store.forgetLiveMessage(chatId, key);
+      this.store.liveMessages.forget(chatId, key);
       // An edit that failed on a message too old to delete leaves it in the
       // chat for good, and only a person can clear it. Said out loud rather
       // than swallowed, because the alternative is somebody reading a stale
@@ -178,7 +178,7 @@ export class TelegramLiveService {
     // new message was needed. That is how this chat ended up with both
     // "📅 Ближайшие запуски" and "📅 Upcoming runs", one of them empty.
     const posted = await this.send(chat, slot, text, held?.threadId ?? previous?.threadId);
-    this.store.rememberLiveMessage(chatId, key, {
+    this.store.liveMessages.remember(chatId, key, {
       messageId: posted.messageId,
       hash,
       at: now,
