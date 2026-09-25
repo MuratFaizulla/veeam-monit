@@ -144,13 +144,13 @@ export class TelegramCommandsService implements Answers {
   }
 
   status(asked: Asked): Reply {
-    const reply = this.whereAnswered(asked);
+    const where = this.whereAnswered(asked);
     return {
       lines: [
         '<b>Veeam Monitor</b>',
         `<b>Chat ID:</b> <code>${escapeHtml(asked.chat.id)}</code>`,
         `<b>Форум:</b> ${asked.chat.is_forum ? 'да' : 'нет'}`,
-        `<b>Топик:</b> <code>${escapeHtml(reply.threadId ?? 'General')}</code>`,
+        `<b>Топик:</b> <code>${escapeHtml(where.threadId ?? 'General')}</code>`,
         `<b>Маршрутизация:</b> ${escapeHtml(this.config.routingMode)}`,
         '',
         ...this.healthLines(),
@@ -208,13 +208,13 @@ export class TelegramCommandsService implements Answers {
    * would be a worse problem than a long chat.
    */
   async clear(asked: Asked): Promise<Reply> {
-    const reply = this.whereAnswered(asked);
+    const where = this.whereAnswered(asked);
     // The "/clear" somebody typed is clutter of the same kind, but it is their
     // message: deleting it needs administrator rights the bot may not have, so
     // it is attempted and never depended on.
-    if (asked.messageId !== undefined) await this.removeOne(reply.chatId, asked.messageId);
+    if (asked.messageId !== undefined) await this.removeOne(where.chatId, asked.messageId);
 
-    const ids = this.store.answerLog.inTopic(reply.chatId, reply.threadId);
+    const ids = this.store.answerLog.inTopic(where.chatId, where.threadId);
     if (ids.length === 0) {
       return {
         lines: [
@@ -227,8 +227,8 @@ export class TelegramCommandsService implements Answers {
       };
     }
 
-    const removed = await this.removeAll(reply.chatId, ids);
-    this.store.answerLog.forget(reply.chatId, ids);
+    const removed = await this.removeAll(where.chatId, ids);
+    this.store.answerLog.forget(where.chatId, ids);
     const stuck = ids.length - removed;
     return {
       lines: [
