@@ -1,6 +1,6 @@
-import { escapeHtml } from './format';
+import { escapeHtml } from '../telegram/format';
 import { Action, mainKeyboard } from './keyboard';
-import { TelegramBotCommand, TelegramChat, TelegramKeyboard } from './types';
+import { TelegramBotCommand, TelegramChat, TelegramKeyboard } from '../telegram/types';
 
 /**
  * The bot's commands, declared once.

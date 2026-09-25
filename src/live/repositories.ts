@@ -1,6 +1,6 @@
 import { escapeHtml, truncate } from '../telegram/format';
 import { bar, fitted, footerOf, LiveClock } from './format';
-import { RepositoryCapacity } from '../monitor/repository-capacity';
+import { RepositoryCapacity } from '../estate/repository-capacity';
 
 /**
  * The 💾 slot: how full every repository is.

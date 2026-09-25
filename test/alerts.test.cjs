@@ -84,7 +84,7 @@ test('with the threshold off, no repository raises or clears anything', () => {
 });
 
 test('the daily summary goes out at the configured hour of the configured zone, not the server\'s', () => {
-  const { digestDue } = require('../dist/monitor/digest');
+  const { digestDue } = require('../dist/estate/digest');
   // 08:30 in Qyzylorda (UTC+5) is 03:30 UTC.
   assert.equal(digestDue(new Date('2026-09-25T03:30:00Z'), 8, 'Asia/Qyzylorda'), true);
   assert.equal(digestDue(new Date('2026-09-25T08:30:00Z'), 8, 'Asia/Qyzylorda'), false, 'не сейчас');

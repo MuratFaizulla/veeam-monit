@@ -3,7 +3,7 @@ import { MonitorModule } from '../monitor/monitor.module';
 import { TelegramAdminGuard, TelegramEnabledGuard, TelegramWebhookGuard } from './access.guard';
 import { TelegramCommandsService } from './commands.service';
 import { TelegramController } from './telegram.controller';
-import { TelegramModule } from './telegram.module';
+import { TelegramModule } from '../telegram/telegram.module';
 import { TelegramUpdatesService } from './updates.service';
 
 /**

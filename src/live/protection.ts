@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { Standings } from '../monitor/job-standing';
+import { Standings } from '../estate/job-standing';
 import { dayOf, fitted, footerOf, LiveClock, longMoment, plural } from './format';
 
 /**

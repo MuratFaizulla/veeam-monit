@@ -198,7 +198,7 @@ test('the oldest run of a read that stopped at its limit is left out, not shown 
  * The rule itself, with no Veeam behind it
  * ------------------------------------------------------------------ */
 
-const { runsOf, failureStreakOf, attemptOf, retryWindowOf } = require('../dist/monitor/runs');
+const { runsOf, failureStreakOf, attemptOf, retryWindowOf } = require('../dist/estate/runs');
 const at = (text) => `2026-09-17T${text}:00+05:00`;
 const attempt = (start, end, result) => ({ startedAt: at(start), endedAt: at(end), result });
 const WINDOW = retryWindowOf(RETRY_POLICY);

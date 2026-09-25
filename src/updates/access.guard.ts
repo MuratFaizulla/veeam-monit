@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { TelegramService } from './telegram.service';
+import { TelegramService } from '../telegram/telegram.service';
 
 /**
  * Who may call the Telegram endpoints, and when.

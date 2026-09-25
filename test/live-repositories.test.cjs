@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { renderRepositories } = require('../dist/live/repositories.js');
-const { capacities } = require('../dist/monitor/repository-capacity.js');
+const { capacities } = require('../dist/estate/repository-capacity.js');
 
 // The slot is the pair: what Veeam reports is turned into capacities once, and
 // the formatter renders those. Feeding the wire shape straight to the renderer

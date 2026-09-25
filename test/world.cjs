@@ -10,23 +10,23 @@ const { TelegramTransportService } = require('../dist/telegram/transport.service
 const { TelegramTopicsService } = require('../dist/telegram/topics.service');
 const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
-const { TelegramUpdatesService } = require('../dist/telegram/updates.service');
-const { TelegramCommandsService } = require('../dist/telegram/commands.service');
-const { announcement, probe } = require('../dist/telegram/manual-event');
+const { TelegramUpdatesService } = require('../dist/updates/updates.service');
+const { TelegramCommandsService } = require('../dist/updates/commands.service');
+const { announcement, probe } = require('../dist/updates/manual-event');
 const {
   NOTIFICATION_KINDS,
   NOTIFICATION_SEVERITIES,
 } = require('../dist/telegram/types');
 const { MonitorService } = require('../dist/monitor/monitor.service');
-const { JobQueryService } = require('../dist/monitor/job-query.service');
+const { JobQueryService } = require('../dist/estate/job-query.service');
 const { LiveSnapshotsService } = require('../dist/live/snapshots.service');
 const { TelegramLiveService } = require('../dist/live/live.service');
-const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
+const { BackupEvidenceService } = require('../dist/estate/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/http.service');
 const { VeeamInventoryService } = require('../dist/veeam/inventory.service');
 const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
 const { workingOf } = require('../dist/veeam/estate');
-const { capacities, capacityOf } = require('../dist/monitor/repository-capacity');
+const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
 
 const CHAT = '-1001234567890';
 

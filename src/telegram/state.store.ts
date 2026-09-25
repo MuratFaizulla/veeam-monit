@@ -1,8 +1,8 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import { LiveMessageRef, LiveMessages } from '../live/live-messages';
-import { JobResults } from '../monitor/job-results';
+import { LiveMessageRef, LiveMessages } from './live-messages';
+import { JobResults } from './job-results';
 import { AnswerLog, AnswerRef } from './answer-log';
 import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';

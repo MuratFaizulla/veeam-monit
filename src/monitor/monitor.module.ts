@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { LiveModule } from '../live/live.module';
 import { TelegramModule } from '../telegram/telegram.module';
 import { VeeamModule } from '../veeam/veeam.module';
-import { EstateModule } from './estate.module';
+import { EstateModule } from '../estate/estate.module';
 import { MONITOR } from './monitor';
 import { MonitorService } from './monitor.service';
 

@@ -1,7 +1,15 @@
 import { Job } from '../veeam/estate';
 import { VeeamSchedule } from '../veeam/types';
-import { ScheduledRun } from '../live/format';
 import { isDisabled } from './job-state';
+
+/** One upcoming start of one job, as the 📅 and ▶️ slots list them. */
+export interface ScheduledRun {
+  name: string;
+  /** ISO instant of the next scheduled start. */
+  at: string;
+  /** "ежедневно", "по рабочим дням" — how the schedule is set, not a Cadence. */
+  scheduleKind?: string;
+}
 
 /** Veeam names weekdays in English; an operator reads them in two letters. */
 const DAY_NAMES: Record<string, string> = {

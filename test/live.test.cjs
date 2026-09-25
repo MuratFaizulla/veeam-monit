@@ -324,7 +324,7 @@ test('the schedule slot lists only what is still due today', async () => {
 });
 
 test('the planner keeps only today and excludes manual or disabled jobs', () => {
-  const { todayRuns } = require('../dist/monitor/schedule-planner');
+  const { todayRuns } = require('../dist/estate/schedule-planner');
   const now = new Date('2026-09-15T10:00:00Z');
   const jobs = [
     { id: 'daily', name: 'Daily', nextRun: '2026-09-15T17:00:00Z' },
@@ -418,8 +418,8 @@ const points = (now, ageDays, everyDays, count = 8) =>
  * back into that shape and the real module decides.
  */
 const standings = (jobs, pointsByJob, streakByJob, now) => {
-  const { standingsOf } = require('../dist/monitor/job-standing');
-  const { cadenceOf } = require('../dist/monitor/backup-evidence.service');
+  const { standingsOf } = require('../dist/estate/job-standing');
+  const { cadenceOf } = require('../dist/estate/backup-evidence.service');
   const newestFirst = new Map(
     [...pointsByJob].map(([id, stamps]) => [id, [...stamps].sort((a, b) => b - a)]),
   );

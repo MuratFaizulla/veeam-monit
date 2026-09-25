@@ -1,5 +1,5 @@
 import { NotificationEvent } from '../telegram/types';
-import { RepositoryCapacity } from './repository-capacity';
+import { RepositoryCapacity } from '../estate/repository-capacity';
 
 /**
  * Which repositories are short of space, as the alerts they are owed.

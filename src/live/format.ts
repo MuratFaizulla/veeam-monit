@@ -1,4 +1,10 @@
 import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
+import { dayKey, dayOf, duration, LiveClock, moment, plural, stampOf, timeOnly } from '../telegram/time';
+import { ScheduledRun } from '../estate/schedule-planner';
+
+// Re-exported so the slot renderers keep one place to import their helpers from.
+export { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../telegram/time';
+export { ScheduledRun } from '../estate/schedule-planner';
 
 /**
  * Renders the two always-current status messages.
@@ -107,13 +113,6 @@ export interface RunningJob {
   disabled?: boolean;
 }
 
-export interface ScheduledRun {
-  name: string;
-  /** ISO instant of the next scheduled start. */
-  at: string;
-  scheduleKind?: string;
-}
-
 export interface LiveRunning {
   jobs: RunningJob[];
   totalJobs: number;
@@ -129,13 +128,6 @@ export interface LiveSchedule {
   /** First known run, including one beyond today. */
   next?: ScheduledRun | null;
   unavailable?: string;
-}
-
-/** Formatting options shared by both renderers. */
-export interface LiveClock {
-  now: Date;
-  /** IANA zone, or empty for the server's own. */
-  timezone: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -346,62 +338,6 @@ const nextRunLabel = (
   return `${escapeHtml(next.name)} — ${when}${relative}`;
 };
 
-/* ------------------------------------------------------------------ *
- * Time and language
- * ------------------------------------------------------------------ */
-
-/**
- * Constructing an Intl.DateTimeFormat is the expensive half of formatting a
- * date; `.format()` on an existing one is cheap. A message listing a hundred
- * jobs asks for hundreds of them, so the handful of shapes actually used are
- * built once and kept.
- */
-const formatters = new Map<string, Intl.DateTimeFormat>();
-
-const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOptions): string => {
-  const key = `${clock.timezone}|${Object.entries(options).join(',')}`;
-  let formatter = formatters.get(key);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat('ru-RU', {
-      timeZone: clock.timezone || undefined,
-      ...options,
-    });
-    formatters.set(key, formatter);
-  }
-  return formatter.format(value);
-};
-
-/** An ISO instant as "14.09.2026, 14:27:39", or the raw string if unparsable. */
-const moment = (iso: string, clock: LiveClock): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return parts(date, clock, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-};
-
-/**
- * A moment written out in full: "17 июня 2026 г., 21:32:09".
- *
- * Used where the reader is about to go and look the point up in Veeam. A
- * relative age ("5 дней назад") has to be turned back into a date before it can
- * be matched against anything on screen, so it is the wrong shape there.
- */
-export const longMoment = (at: number, clock: LiveClock): string =>
-  parts(new Date(at), clock, {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
 const UPDATED = '<i>Обновлено';
 
 /**
@@ -422,66 +358,3 @@ export const footerOf = (clock: LiveClock, extra = ''): string =>
 /** Whether this line is the one `footerOf` writes. */
 export const isFooter = (line: string): boolean => line.startsWith(UPDATED);
 
-export const stampOf = (value: Date, clock: LiveClock): string =>
-  parts(value, clock, {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-
-const timeOnly = (iso: string, clock: LiveClock): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return escapeHtml(iso);
-  return parts(date, clock, { hour: '2-digit', minute: '2-digit' });
-};
-
-/**
- * Which calendar day an instant falls on, in the display timezone. "Today" is
- * a question about the operator's clock, not about UTC, so every comparison
- * goes through this rather than through Date's own local-time methods.
- */
-const dayKey = (value: Date, clock: LiveClock): string =>
-  parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
-
-/** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
-export const dayOf = (iso: string, clock: LiveClock): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return escapeHtml(iso);
-  const time = timeOnly(iso, clock);
-
-  const today = dayKey(clock.now, clock);
-  const tomorrow = dayKey(new Date(clock.now.getTime() + 86_400_000), clock);
-  const target = dayKey(date, clock);
-
-  if (target === today) return `сегодня в ${time}`;
-  if (target === tomorrow) return `завтра в ${time}`;
-  return `${parts(date, clock, { day: '2-digit', month: '2-digit' })} в ${time}`;
-};
-
-/** "45 с", "22 мин", "3 ч 33 мин", "2 д 4 ч" — never more than two units. */
-export const duration = (ms: number): string => {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds} с`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} мин`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    const rest = minutes % 60;
-    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
-  }
-  const days = Math.floor(hours / 24);
-  const rest = hours % 24;
-  return rest ? `${days} д ${rest} ч` : `${days} д`;
-};
-
-/** Russian needs three forms; "1 задание, 2 задания, 5 заданий". */
-export const plural = (count: number, one: string, few: string, many: string): string => {
-  const mod100 = Math.abs(count) % 100;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  const mod10 = mod100 % 10;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
-};

@@ -4,7 +4,7 @@ import {
   NotificationEvent,
   NotificationKind,
   NotificationSeverity,
-} from './types';
+} from '../telegram/types';
 // Type-only: the builders accept whatever the HTTP layer may send, and that
 // list is declared once, where it is documented.
 import type { ProbeBody } from './dto';
