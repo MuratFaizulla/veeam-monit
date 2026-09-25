@@ -8,6 +8,7 @@ require('./live.test.cjs');
 require('./live-performance.test.cjs');
 require('./live-repositories.test.cjs');
 require('./veeam.test.cjs');
+require('./reader.test.cjs');
 require('./runs.test.cjs');
 require('./topics.test.cjs');
 require('./alerts.test.cjs');

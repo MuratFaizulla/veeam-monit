@@ -1,12 +1,10 @@
 import { escapeHtml, truncate } from '../telegram/format';
 import { fitted, footerOf, LiveClock } from './format';
+import { ACTIVE_SESSION_STATES } from '../veeam/estate';
 import { VeeamSession, VeeamTaskSession } from '../veeam/types';
 
-export const ACTIVE_SESSION_STATES = new Set([
-  'starting', 'working', 'postprocessing', 'waitingrepository', 'waitingslot',
-  'waitingtape', 'pausing', 'resuming',
-]);
-const ACTIVE_TASK_STATES = new Set(ACTIVE_SESSION_STATES);
+/** A task is active in the same states its session is. */
+const ACTIVE_TASK_STATES = ACTIVE_SESSION_STATES;
 const TASK_TYPES = new Set(['backup', 'replica']);
 
 export interface PerformanceJob {

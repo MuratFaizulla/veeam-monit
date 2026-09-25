@@ -1,4 +1,4 @@
-import { VeeamJobState } from '../veeam/types';
+import { Job } from '../veeam/estate';
 import { RetainedHistory, ScannedEvidence } from './backup-evidence.service';
 import { isDisabled } from './job-state';
 
@@ -56,19 +56,18 @@ export interface Standings {
  * be read is judged: an unknown schedule is treated as a real one, because the
  * failure mode of the other choice is silently dropping a job from every check.
  */
-const excuseFor = (job: VeeamJobState, evidence: ScannedEvidence): Excuse | null => {
+const excuseFor = (job: Job, evidence: ScannedEvidence): Excuse | null => {
   if (isDisabled(job)) return 'disabled';
-  if (job.id && evidence.unscheduled.has(job.id)) return 'unscheduled';
+  if (evidence.unscheduled.has(job.id)) return 'unscheduled';
   return null;
 };
 
-export const standingsOf = (jobs: VeeamJobState[], evidence: ScannedEvidence): Standings => {
+export const standingsOf = (jobs: Job[], evidence: ScannedEvidence): Standings => {
   const judged: JobStanding[] = [];
   let excludedDisabled = 0;
   let excludedUnscheduled = 0;
 
   for (const job of jobs) {
-    if (!job.id) continue;
     const excuse = excuseFor(job, evidence);
     if (excuse === 'disabled') {
       excludedDisabled += 1;
@@ -80,7 +79,7 @@ export const standingsOf = (jobs: VeeamJobState[], evidence: ScannedEvidence): S
     }
     judged.push({
       id: job.id,
-      name: job.name ?? job.id,
+      name: job.name,
       type: job.type,
       lastRun: job.lastRun,
       runs: evidence.runsByJob.get(job.id) ?? [],

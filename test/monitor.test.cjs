@@ -10,7 +10,7 @@ const {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -116,7 +116,7 @@ test('job state survives a restart, so a failure is announced once', async () =>
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
     '/api/v1/sessions': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
   await monitor.check();
 
@@ -134,14 +134,12 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = {
-    configured: true,
-    username: 'svc@example.com',
+  const auth = monitorAccount({
     getAccessToken: async () => {
       if (broken) throw new Error('Veeam API 401: Authentication failed');
       return 'tok';
     },
-  };
+  });
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -171,7 +169,7 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
     },
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -198,7 +196,7 @@ test('a repository below the free-space threshold is reported once per cooldown'
       ],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -223,7 +221,7 @@ test('a repository that does not report free space raises nothing', async () => 
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, usedSpaceGB: 120 }],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -269,7 +267,7 @@ test('repositories are listed by name with the default ones last', () => {
 
 test('the evidence attributes each point to the run that was on the clock', async () => {
   const w = exchange();
-  await w.evidence.refresh('tok', [job('1', 'OPS_Exchange', 'Failed')]);
+  await w.evidence.refresh(true, [job('1', 'OPS_Exchange', 'Failed')]);
   const evidence = w.evidence.evidence;
 
   assert.equal(evidence.status, 'ready');
@@ -289,7 +287,7 @@ test('evidence nothing has read yet says why, instead of an empty estate', async
   });
 
   // A cycle Veeam did not answer must not be reported as "no restore points".
-  await w.evidence.refresh(null, undefined);
+  await w.evidence.refresh(false, undefined);
   assert.equal(w.evidence.evidence.status, 'pending');
   assert.match(w.evidence.evidence.reason, /не ответил/);
 });
@@ -301,7 +299,7 @@ test('a scan that throws leaves the previous evidence standing', async () => {
   // on the config itself rather than through TELEGRAM_PROTECTION_INTERVAL_MIN.
   const w = exchange({ protectionIntervalMs: 0 });
   const jobs = [job('1', 'OPS_Exchange', 'Failed')];
-  await w.evidence.refresh('tok', jobs);
+  await w.evidence.refresh(true, jobs);
   const first = w.evidence.evidence;
   assert.equal(first.status, 'ready');
 
@@ -310,7 +308,7 @@ test('a scan that throws leaves the previous evidence standing', async () => {
     attempted = true;
     throw new Error('Veeam fell over mid-scan');
   };
-  await w.evidence.refresh('tok', jobs);
+  await w.evidence.refresh(true, jobs);
 
   assert.ok(attempted, 'the scan was re-run');
   assert.equal(w.evidence.evidence.status, 'ready', 'stale evidence beats no evidence');
@@ -804,11 +802,12 @@ test('a job that disappeared between the message and the press says so', async (
 
 test('a running job Veeam still calls disabled is counted as running', async () => {
   const { summarise } = require('../dist/monitor/digest');
+  const { jobOf } = require('../dist/veeam/estate');
   const jobs = [
     { id: '1', name: 'Kingston EM', status: 'Disabled', lastResult: 'Success' },
     { id: '2', name: 'Kingston DB', status: 'Disabled', lastResult: 'Success' },
     { id: '3', name: 'Queued', status: 'Working', lastResult: 'Success' },
-  ];
+  ].map(jobOf);
 
   // Two of these are transferring right now under a session Veeam opened by
   // hand; their own status keeps saying "disabled" the whole time. Counting

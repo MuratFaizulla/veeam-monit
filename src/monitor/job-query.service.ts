@@ -3,22 +3,28 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { LiveClock } from '../live/format';
 import { escapeHtml } from '../telegram/format';
-import { VeeamHttpService } from '../veeam/http.service';
+import { Job } from '../veeam/estate';
+import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
-import { allPages, authorized } from '../veeam/pages';
-import { VeeamCollection, VeeamJob, VeeamJobState, VeeamSession, VeeamTaskSession } from '../veeam/types';
+import { VeeamJob } from '../veeam/types';
 import { MonitorAnswer } from './answer';
 import { retryWindowOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
-import { isBadResult, isDisabled, resultOf } from './job-state';
+import { isBadResult, isDisabled } from './job-state';
 import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 
-const JOB_STATES = '/api/v1/jobs/states';
-const JOBS = '/api/v1/jobs';
-const SESSIONS = '/api/v1/sessions';
-const CARD_SESSIONS = 6;
+/**
+ * Sessions read for one job — by its card and by its alert, which counts the
+ * attempt from the same read.
+ *
+ * Sessions are attempts and the card lists Runs: five of them at Veeam's
+ * default four attempts is twenty sessions. Six used to be read, which was
+ * one night and half of the one before it. Thirty leaves room for a job that
+ * retries more, and for the Run the limit cuts short, which the card leaves out.
+ */
+const RECENT_SESSIONS = 30;
 
 /** Reads one job on demand without changing the background monitor's health. */
 @Injectable()
@@ -28,7 +34,7 @@ export class JobQueryService {
 
   constructor(
     config: ConfigService,
-    private readonly veeam: VeeamHttpService,
+    private readonly reader: VeeamEstateReader,
     private readonly monitorAuth: VeeamMonitorAuthService,
     private readonly evidence: BackupEvidenceService,
     private readonly inventory: VeeamInventoryService,
@@ -80,12 +86,10 @@ export class JobQueryService {
     if (match.found === 'many') {
       return {
         text: renderChoices(match.jobs, query),
-        jobs: match.jobs
-          .filter((job): job is VeeamJobState & { id: string } => Boolean(job.id))
-          .map((job) => ({ id: job.id, name: job.name ?? job.id })),
+        jobs: match.jobs.map(({ id, name }) => ({ id, name })),
       };
     }
-    return this.cardAnswer(match.job, read.accessToken);
+    return this.cardAnswer(match.job);
   }
 
   /**
@@ -105,12 +109,12 @@ export class JobQueryService {
         text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.',
       };
     }
-    return this.cardAnswer(job, read.accessToken);
+    return this.cardAnswer(job);
   }
 
-  private async cardAnswer(job: VeeamJobState, accessToken: string): Promise<MonitorAnswer> {
+  private async cardAnswer(job: Job): Promise<MonitorAnswer> {
     return {
-      text: renderJobCard(await this.cardFor(job, accessToken), this.clock()),
+      text: renderJobCard(await this.cardFor(job), this.clock()),
       jobId: job.id,
     };
   }
@@ -123,19 +127,12 @@ export class JobQueryService {
    * knows, and a command asking a question of its own must not overwrite that
    * with its own luck.
    */
-  async jobsNow(): Promise<
-    { ok: true; jobs: VeeamJobState[]; accessToken: string } | { ok: false; message: string }
-  > {
+  async jobsNow(): Promise<{ ok: true; jobs: Job[] } | { ok: false; message: string }> {
     if (!this.monitorAuth.configured) {
       return { ok: false, message: '⚠️ Служебная учётная запись Veeam не настроена.' };
     }
     try {
-      const accessToken = await this.monitorAuth.getAccessToken();
-      const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
-        method: 'GET',
-        path: JOB_STATES,
-      });
-      return { ok: true, jobs: response.data ?? [], accessToken };
+      return { ok: true, jobs: await this.reader.jobStates() };
     } catch (error) {
       return {
         ok: false,
@@ -145,17 +142,16 @@ export class JobQueryService {
   }
 
   /** Everything known about one job, from the five places that know it. */
-  private async cardFor(job: VeeamJobState, accessToken: string): Promise<JobCard> {
+  private async cardFor(job: Job): Promise<JobCard> {
     const evidence = this.evidence.evidence;
     const scanned = evidence.status === 'ready' ? evidence : undefined;
-    const id = job.id;
 
     // In parallel: the three reads are independent, and a card that took three
     // round trips in sequence is a card nobody waits for.
-    const [runs, configured, names] = await Promise.all([
-      this.recentRuns(job, accessToken),
-      this.jobConfig(job, accessToken),
-      this.inventory.names(this.reader(accessToken)),
+    const [sessions, configured, names] = await Promise.all([
+      this.recentSessions(job),
+      this.jobConfig(job),
+      this.inventory.names(),
     ]);
 
     const { machines, excluded } = machinesOf(configured);
@@ -165,22 +161,21 @@ export class JobQueryService {
       excluded,
       // Only while the job is actually broken: a recovered job's failures are
       // already visible in its run list, and this costs another request.
-      failedObjects: isBadResult(resultOf(job))
-        ? await this.failedObjects(runs, accessToken)
-        : [],
-      runs,
+      failedObjects: isBadResult(job.result) ? await this.failedObjects(sessions) : [],
+      sessions,
+      sessionsCut: sessions.length >= RECENT_SESSIONS,
       retryWindowMs: retryWindowOf(configured?.schedule),
-      name: job.name ?? id ?? 'без имени',
+      name: job.name,
       type: job.type,
       status: job.status,
       disabled: isDisabled(job),
-      lastResult: resultOf(job),
+      lastResult: job.result,
       lastRun: job.lastRun,
       nextRun: job.nextRun,
       objects: job.objectsCount,
-      failures: scanned && id ? scanned.streakByJob.get(id) : undefined,
-      depth: scanned && id ? scanned.depthByJob.get(id) : undefined,
-      cadenceDays: scanned && id ? scanned.cadenceByJob.get(id) ?? null : undefined,
+      failures: scanned?.streakByJob.get(job.id),
+      depth: scanned?.depthByJob.get(job.id),
+      cadenceDays: scanned ? scanned.cadenceByJob.get(job.id) ?? null : undefined,
       pointsUnavailable: evidence.status === 'ready' ? undefined : evidence.reason,
     };
   }
@@ -192,21 +187,9 @@ export class JobQueryService {
    * run failed, and enough history around it to say which attempt this is.
    * Reading it twice would be two requests to answer one question.
    */
-  async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobSession[]> {
-    if (!job.id) return [];
+  async recentSessions(job: Job): Promise<JobSession[]> {
     try {
-      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
-        method: 'GET',
-        path: SESSIONS,
-        params: {
-          skip: 0,
-          limit: CARD_SESSIONS,
-          orderColumn: 'CreationTime',
-          orderAsc: false,
-          jobIdFilter: job.id,
-        },
-      });
-      return (response.data ?? []).map((session) => ({
+      return (await this.reader.recentSessions(job.id, RECENT_SESSIONS)).map((session) => ({
         id: session.id,
         startedAt: session.creationTime,
         endedAt: session.endTime,
@@ -227,16 +210,9 @@ export class JobQueryService {
    * only the schedules of all 112 jobs, and holding every job's full storage
    * settings in memory to answer a question nobody may ask is the wrong trade.
    */
-  private async jobConfig(
-    job: VeeamJobState,
-    accessToken: string,
-  ): Promise<VeeamJob | undefined> {
-    if (!job.id) return undefined;
+  private async jobConfig(job: Job): Promise<VeeamJob | undefined> {
     try {
-      return await authorized<VeeamJob>(this.reader(accessToken), {
-        method: 'GET',
-        path: `${JOBS}/${encodeURIComponent(job.id)}`,
-      });
+      return await this.reader.jobConfiguration(job.id);
     } catch (error) {
       this.logger.debug(`No configuration for job ${job.id}: ${(error as Error).message}`);
       return undefined;
@@ -244,22 +220,19 @@ export class JobQueryService {
   }
 
   /**
-   * Which objects of the newest bad run failed, and why.
+   * Which objects of the newest bad session failed, and why.
    *
    * An empty answer is not a failure of this method: a run that could not
    * reach the machine at all — "Virtual Machine … is unavailable" — never
    * starts a task for it, and then the session message is the whole story.
    */
-  private async failedObjects(runs: JobSession[], accessToken: string): Promise<FailedObject[]> {
-    const bad = runs.find((run) => isBadResult((run.result ?? '').toLowerCase()));
+  private async failedObjects(sessions: JobSession[]): Promise<FailedObject[]> {
+    const bad = sessions.find((session) => isBadResult(session.result ?? ''));
     if (!bad?.id) return [];
     try {
-      const tasks = await allPages<VeeamTaskSession>(
-        this.reader(accessToken),
-        `/api/v1/sessions/${encodeURIComponent(bad.id)}/taskSessions`,
-      );
+      const tasks = await this.reader.taskSessions(bad.id);
       return tasks
-        .filter((task) => isBadResult((task.result?.result ?? '').toLowerCase()))
+        .filter((task) => isBadResult(task.result?.result ?? ''))
         .map((task) => ({
           name: task.name ?? 'без имени',
           result: task.result?.result,
@@ -271,46 +244,7 @@ export class JobQueryService {
     }
   }
 
-  /**
-   * Newest Working session per job.
-   *
-   * Best effort, and the failure is the safe direction: an empty map makes a
-   * running count fall back to the job status alone, which is what it used to
-   * be, and never invents a run that is not happening.
-   */
-  async runningSessions(accessToken: string): Promise<Map<string, VeeamSession>> {
-    const byJob = new Map<string, VeeamSession>();
-    try {
-      const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
-        method: 'GET',
-        path: SESSIONS,
-        params: {
-          skip: 0,
-          limit: 100,
-          orderColumn: 'CreationTime',
-          orderAsc: false,
-          stateFilter: 'Working',
-        },
-      });
-      for (const session of response.data ?? []) {
-        if (session.jobId && !byJob.has(session.jobId)) byJob.set(session.jobId, session);
-      }
-    } catch (error) {
-      this.logger.debug(`No running session detail: ${(error as Error).message}`);
-    }
-    return byJob;
-  }
-
-  /** Job ids Veeam has a Working session for; see `runningSessions`. */
-  async workingJobs(accessToken: string): Promise<ReadonlySet<string>> {
-    return new Set((await this.runningSessions(accessToken)).keys());
-  }
-
   private clock(): LiveClock {
     return { now: new Date(), timezone: this.config.timezone };
-  }
-
-  private reader(accessToken: string) {
-    return { veeam: this.veeam, auth: this.monitorAuth, accessToken };
   }
 }

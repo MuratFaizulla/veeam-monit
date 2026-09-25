@@ -10,7 +10,7 @@ const {
   CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -459,7 +459,7 @@ test('a failing job step does not abort the repository check', async () => {
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -480,7 +480,7 @@ test('the digest cooldown is armed only once the digest was delivered', async ()
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();

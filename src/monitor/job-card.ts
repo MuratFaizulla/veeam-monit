@@ -1,8 +1,9 @@
 import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../live/format';
-import { VeeamJob, VeeamJobState, VeeamJobStorage } from '../veeam/types';
+import { Job } from '../veeam/estate';
+import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
-import { iconOf, isBadResult, resultOf } from './job-state';
+import { iconOf, isBadResult } from './job-state';
 import { runsOf } from './runs';
 import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
 
@@ -31,8 +32,9 @@ export interface JobSession {
   /** The session id, which is how its per-object detail is reached. */
   id?: string;
   startedAt?: string;
-  /** Absent while the run is still going. */
+  /** Absent while the session is still going. */
   endedAt?: string;
+  /** Lower-cased, as the estate reader hands every session result out. */
   result?: string;
   message?: string;
   /** 0-100, only while running and only once Veeam reports any. */
@@ -67,6 +69,7 @@ export interface ProtectedObject {
 /** One object of a run that went wrong, and what went wrong with it. */
 export interface FailedObject {
   name: string;
+  /** Lower-cased. */
   result?: string;
   message?: string;
 }
@@ -83,7 +86,12 @@ export interface JobCard {
   nextRun?: string;
   objects?: number;
   /** Newest sessions first. Empty when the sessions could not be read. */
-  runs: JobSession[];
+  sessions: JobSession[];
+  /**
+   * The read of `sessions` stopped at its limit, so Veeam holds older ones and
+   * the oldest Run among these may be missing attempts.
+   */
+  sessionsCut: boolean;
   /**
    * How far apart two sessions may be and still be one run, from the job's own
    * retry policy (see runs.ts). The run list folds its sessions by it.
@@ -116,10 +124,10 @@ export interface JobCard {
  * ------------------------------------------------------------------ */
 
 export type JobMatch =
-  | { found: 'one'; job: VeeamJobState }
+  | { found: 'one'; job: Job }
   // The jobs themselves, not their names: whatever offers the choice needs to
   // be able to address what was chosen, and a name is not an address.
-  | { found: 'many'; jobs: VeeamJobState[] }
+  | { found: 'many'; jobs: Job[] }
   | { found: 'none' };
 
 /**
@@ -128,23 +136,23 @@ export type JobMatch =
  * Three passes, narrowest first: the whole name, then the name containing what
  * was typed, then every word of it appearing somewhere in the name. The last
  * one is what makes `kingston db` find `OPS_Veeam_DB_Kingston`, where the words are
- * in the other order and separated by underscores nobody types.
+ * in the other order and separated by underscores nobody types. A job Veeam
+ * gave no name is found by its id, which is what it is called everywhere else.
  *
  * Several hits are never resolved by guessing. An operator who asked about the
  * wrong job and was answered confidently is worse off than one who was shown
  * the list.
  */
-export const matchJob = (jobs: VeeamJobState[], query: string): JobMatch => {
+export const matchJob = (jobs: Job[], query: string): JobMatch => {
   const wanted = query.trim().toLowerCase();
   if (!wanted) return { found: 'none' };
 
-  const named = jobs.filter((job): job is VeeamJobState & { name: string } => Boolean(job.name));
-  const exact = named.filter((job) => job.name.toLowerCase() === wanted);
+  const exact = jobs.filter((job) => job.name.toLowerCase() === wanted);
   if (exact.length === 1) return { found: 'one', job: exact[0] };
 
   const words = wanted.split(/\s+/);
-  const contained = named.filter((job) => job.name.toLowerCase().includes(wanted));
-  const scattered = named.filter((job) => {
+  const contained = jobs.filter((job) => job.name.toLowerCase().includes(wanted));
+  const scattered = jobs.filter((job) => {
     const name = job.name.toLowerCase();
     return words.every((word) => name.includes(word));
   });
@@ -156,12 +164,12 @@ export const matchJob = (jobs: VeeamJobState[], query: string): JobMatch => {
 };
 
 /** What to say when the name fits several jobs. */
-export const renderChoices = (jobs: VeeamJobState[], query: string): string => {
+export const renderChoices = (jobs: Job[], query: string): string => {
   const shown = jobs.slice(0, 20);
   const lines = [
     `🔎 <b>Под «${escapeHtml(query)}» подходит ${jobs.length} ${plural(jobs.length, 'задание', 'задания', 'заданий')}:</b>`,
     '',
-    ...shown.map((job) => `${iconOf(resultOf(job))} <code>${escapeHtml(job.name ?? '')}</code>`),
+    ...shown.map((job) => `${iconOf(job.result)} <code>${escapeHtml(job.name)}</code>`),
   ];
   if (shown.length < jobs.length) lines.push(`<i>…и ещё ${jobs.length - shown.length}</i>`);
   lines.push('', 'Выберите кнопкой ниже или уточните запрос.');
@@ -258,11 +266,11 @@ export const machinesOf = (
  * Saying what is known
  * ------------------------------------------------------------------ */
 
-/** "32 мин", or nothing when the run has not ended. */
-const spanOf = (run: JobSession): string | undefined => {
-  if (!run.startedAt || !run.endedAt) return undefined;
-  const from = Date.parse(run.startedAt);
-  const to = Date.parse(run.endedAt);
+/** "32 мин", or nothing when it has not ended. */
+const spanOf = ({ startedAt, endedAt }: { startedAt?: string; endedAt?: string }): string | undefined => {
+  if (!startedAt || !endedAt) return undefined;
+  const from = Date.parse(startedAt);
+  const to = Date.parse(endedAt);
   if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return undefined;
   return duration(to - from);
 };
@@ -341,7 +349,7 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
   if (subtitle.length > 0) lines.push(`<i>${escapeHtml(subtitle.join(' · '))}</i>`);
   lines.push('');
 
-  const newest = card.runs[0];
+  const newest = card.sessions[0];
   const inFlight = newest && !newest.endedAt;
   if (inFlight) {
     const started = agoOf(newest.startedAt, clock.now);
@@ -384,7 +392,7 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
       const why = object.message
         ? ` — ${escapeHtml(clip(oneLine(object.message), MESSAGE_SHOWN))}`
         : '';
-      lines.push(`${iconOf((object.result ?? '').toLowerCase())} ${escapeHtml(object.name)}${why}`);
+      lines.push(`${iconOf(object.result ?? '')} ${escapeHtml(object.name)}${why}`);
     }
     lines.push(...more(card.failedObjects.length, FAILURES_SHOWN));
   }
@@ -427,7 +435,10 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
 
   // Runs, not sessions: four twenty-second retries and the attempt that worked
   // are one night, and listed a line each they read as a disaster.
-  const finished = runsOf(card.runs.filter((run) => run.endedAt), card.retryWindowMs);
+  const runs = runsOf(card.sessions.filter((session) => session.endedAt), card.retryWindowMs);
+  // A Run the read cut short would be listed with fewer attempts than it had,
+  // so it is left out — unless it is the only one there is.
+  const finished = card.sessionsCut && runs.length > 1 ? runs.slice(0, -1) : runs;
   if (finished.length > 0) {
     lines.push('', '<b>Последние запуски</b>');
     for (const run of finished.slice(0, RUNS_SHOWN)) {
