@@ -11,6 +11,7 @@ const { TelegramTopicsService } = require('../dist/telegram/topics.service');
 const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramUpdatesService } = require('../dist/telegram/updates.service');
+const { TelegramCommandsService } = require('../dist/telegram/commands.service');
 const { announcement, probe } = require('../dist/telegram/manual-event');
 const {
   NOTIFICATION_KINDS,
@@ -101,11 +102,24 @@ function world(env = {}, handlers = {}, stateFile) {
   // The second adapter of the Monitor seam (src/monitor/monitor.ts), for tests
   // with no Veeam: it says it ran and reports nothing. monitorWorld swaps in
   // the real one below.
-  const updates = new TelegramUpdatesService(config, transport, topics, store, idleMonitor());
+  const { commands, updates } = ear({ config, transport, topics, store }, idleMonitor());
   const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
-  return { file, config, store, api, transport, topics, routing, service, updates, live, telegram };
+  return {
+    file, config, store, api, transport, topics, routing, service, commands, updates, live, telegram,
+  };
+}
+
+/**
+ * Intake and the commands it hands Updates to, asking `monitor`. Tests reach
+ * both through `updates.handleUpdate`, as Telegram does; `commands` is there
+ * for a test of interpretation with no intake at all.
+ */
+function ear(w, monitor) {
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor);
+  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands);
+  return { commands, updates };
 }
 
 /** A Monitor with nothing behind it. Kept in step with MonitorService by a test. */
@@ -175,8 +189,8 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   const evidence = new BackupEvidenceService(w.config, veeam, auth);
   const monitor = monitorOf(w, veeam, auth, evidence);
   // The real monitor, so /check in these tests drives a real cycle.
-  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, monitor);
-  return { ...w, updates, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
+  const { commands, updates } = ear(w, monitor);
+  return { ...w, commands, updates, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });
@@ -214,8 +228,8 @@ const exchange = (env = {}) =>
 module.exports = {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
-  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,
+  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService,
+  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

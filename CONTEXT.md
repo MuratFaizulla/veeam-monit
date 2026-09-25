@@ -155,6 +155,15 @@ by whether `TELEGRAM_WEBHOOK_URL` is set, and nothing downstream knows which.
 Hearing and sending are separate modules. They share the transport and the chat
 registry and nothing else, and no caller of one ever wants the other.
 
+Hearing an Update and interpreting it are separate too. **Intake** registers
+the chat and any topic a message mentions, publishes the command menu and sets
+up the webhook or the polling loop at startup. Both transports end in its
+`handleUpdate`: the webhook endpoint in the controller and the polling loop are
+two adapters of that one seam. What the Update *means* — a command or a
+**Button** in General, answered — is decided after it, by a module with no
+lifecycle, so a test of a command never constructs the polling loop. One that
+did once hung the whole test run.
+
 What a command needs from the monitor — its health, a pass on demand, the
 **Summary** and a **Job card** — it asks through `Monitor` in
 `src/monitor/monitor.ts`, not through the monitor class. The HTTP surface does
@@ -162,7 +171,8 @@ the same. Two adapters sit behind that seam: `MonitorService`, and the idle
 monitor the tests use for a world with no Veeam, which a test keeps in step
 with the real one.
 
-Owned by `src/telegram/updates.service.ts`.
+Intake is owned by `src/telegram/updates.service.ts`; commands and Buttons by
+`src/telegram/commands.service.ts`, declared in `src/telegram/commands.ts`.
 
 ## Attempt
 
@@ -267,7 +277,7 @@ The message ids of **Answers** the bot has sent, per chat and topic, so
 It exists because the Bot API offers no way to clear a chat: a bot can delete a
 message only by id, cannot enumerate history, and loses the right after 48
 hours. The set it can ever remove is therefore exactly the set it wrote down as
-it sent — which is why only `TelegramUpdatesService.send` records, and alerts
+it sent — which is why only `TelegramCommandsService.send` records, and alerts
 and **Live slot** messages, sent by other modules, are structurally out of
 reach rather than excluded by a rule somebody has to remember.
 
@@ -299,6 +309,15 @@ rather than answered by guess.
 The **command menu** is the neighbouring idea: the list registered with
 `setMyCommands` at startup, which Telegram shows beside the input field. It is
 the only place the bot's commands are discoverable without reading `/help`.
+
+Each command is declared once, in `src/telegram/commands.ts`: its name, the
+hidden spellings (`/start`, `/chatid`), its menu line, its `/help` paragraph,
+the Answer it gives and the Button that stands for it. The menu and `/help`
+are derived from that list and the dispatch reads it. They were four lists
+once, and drifted: the menu said `/clear` worked "в этой теме" while `/help`
+said General — the only place any command is answered. A Button kind no
+command claims fails the build; a job's own Button carries an id and is the
+one that is not a command.
 
 ## Orphaned chain
 
