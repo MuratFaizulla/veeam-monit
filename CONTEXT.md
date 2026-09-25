@@ -27,6 +27,11 @@ to be refreshed by the live step, which runs last, so the alerts read the
 previous cycle's evidence; after a cycle Veeam did not answer that was
 pending, and the first alert after the outage lost the job's retry policy.
 
+Two readers are outside any cycle and take the current value from
+`evidence` instead: a **Job card** asked for between cycles, and an alert
+whose Evidence is still pending, which reads the job's own configuration for
+its retry policy rather than going without "из 4" until a scan succeeds.
+
 ## Run
 
 One execution of a Veeam job, *including its automatic retries*. Not a session.
@@ -37,7 +42,10 @@ Run. Everything the bot counts — failure streaks, missed backups, retained
 history — counts Runs.
 
 A Run **succeeded** if the attempt that finished it succeeded, whatever the
-earlier attempts did. One that ended in a warning did not succeed.
+earlier attempts did. One that ended in a warning did not succeed — it
+continues a failure streak — but the restore points it wrote still count:
+Veeam finished the backup, with complaints. Only a session that *failed* has
+its points set aside (see **Restore point**). Two questions, two answers.
 
 Which sessions are one Run is decided in one place, `src/monitor/runs.ts`,
 and read by all three things that need it: the alert's **Attempt** label, the
@@ -415,7 +423,8 @@ the service would have read fine, and passed `1e3` that it then read as 1.
 Harmless variants are read as meant — any case for a fixed choice, surrounding
 spaces, an empty item in a list — and a blank variable means its default.
 Anything else stops startup, every wrong variable named at once. An integer is
-digits and nothing else.
+digits with an optional leading minus and nothing else — `TELEGRAM_DIGEST_HOUR=-1`
+is how the daily summary is switched off; `1e3`, `12abc` and `1.0` are refused.
 
 The declaration is `src/config/configuration.ts`; the kinds of setting are
 `src/config/settings.ts`. The monitor's Veeam account is a Veeam setting and

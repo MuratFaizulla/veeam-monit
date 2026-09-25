@@ -237,3 +237,25 @@ test('the streak counts runs that did not succeed, a warning among them, back to
   assert.equal(failureStreakOf(sessions, WINDOW), 2, 'warning and one retried failure; the success stops it');
   assert.equal(failureStreakOf([], WINDOW), 0);
 });
+
+test('an alert before any scan has finished still knows the job\'s retry policy', async () => {
+  // After a restart the evidence is pending until the first scan finishes, and
+  // a scan can fail outright. The alert used to lose "из 4" for as long as it
+  // did; the job's own configuration answers the same question in one request.
+  let sessions = [];
+  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Success')], {
+    '/api/v1/backups': () => { throw new Error('backups unavailable'); },
+    '/api/v1/jobs/1': { id: '1', name: 'REMS_DBS03', schedule: RETRY_POLICY },
+    '/api/v1/sessions': () => ({ data: sessions }),
+  });
+  await w.monitor.check();
+  assert.equal(w.evidence.evidence.status, 'pending', 'скан так и не прошёл');
+  w.api.reset();
+
+  sessions = oneRetriedRun(Date.now() - HOUR).slice(1);
+  w.setJobs([job('1', 'REMS_DBS03', 'Failed')]);
+  await w.monitor.check();
+
+  const alert = w.api.sent().find((message) => /REMS_DBS03/.test(message.text));
+  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+});
