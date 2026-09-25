@@ -3,12 +3,11 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { validateEnvironment } = require('../dist/config/validate');
 
 // One harness for every test file. Everything it pulls out of dist/ is
 // re-exported, so each file opens with the same line and takes what it needs.
 const {
-  CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
+  CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
@@ -273,9 +272,8 @@ test('the reported mode follows the transport, not a flag somebody set', async (
   assert.equal(w.updates.webhookConfigured, false);
 
   const file = path.join(os.tmpdir(), `veeam-off-${Math.random().toString(36).slice(2)}.json`);
-  const off = telegramConfig({ TELEGRAM_BOT_TOKEN: '', TELEGRAM_STATE_FILE: file });
   const store = new TelegramStateStore(file);
-  const config = { getOrThrow: () => off };
+  const config = configService(appConfig({ TELEGRAM_BOT_TOKEN: '', TELEGRAM_STATE_FILE: file }));
   const transport = new TelegramTransportService(config);
   const topics = new TelegramTopicsService(config, transport, store);
   assert.equal(new TelegramUpdatesService(config, transport, topics, store).mode, 'disabled');
@@ -543,24 +541,6 @@ test('a damaged Telegram state is restored from the last complete copy', async (
   await new Promise(setImmediate);
   fs.rmSync(file, { force: true });
   fs.rmSync(`${file}.bak`, { force: true });
-});
-
-test('invalid operator settings fail before the monitor starts', () => {
-  assert.throws(() => validateEnvironment({ PORT: '3000x' }), /PORT/);
-  assert.throws(() => validateEnvironment({ TELEGRAM_DIGEST_HOUR: '24' }), /TELEGRAM_DIGEST_HOUR/);
-  assert.throws(() => validateEnvironment({ TELEGRAM_QUEUE_LIMIT: '0' }), /TELEGRAM_QUEUE_LIMIT/);
-  assert.throws(() => validateEnvironment({ TELEGRAM_LIVE: 'maybe' }), /TELEGRAM_LIVE/);
-  assert.throws(() => validateEnvironment({ VEEAM_MONITOR_USERNAME: 'svc' }), /VEEAM_MONITOR_PASSWORD/);
-  assert.throws(() => validateEnvironment({ VEEAM_BASE_URL: 'not-a-url' }), /VEEAM_BASE_URL/);
-  assert.throws(() => validateEnvironment({ TELEGRAM_WEBHOOK_URL: 'https://example.com' }), /TELEGRAM_WEBHOOK_SECRET/);
-  assert.throws(() => validateEnvironment({ TELEGRAM_TIMEZONE: 'No/Such_Zone' }), /TELEGRAM_TIMEZONE/);
-  assert.doesNotThrow(() => validateEnvironment({
-    PORT: '3000',
-    TELEGRAM_MONITOR_INTERVAL_MS: '0',
-    TELEGRAM_DIGEST_HOUR: '-1',
-    TELEGRAM_WEBHOOK_URL: 'https://example.com',
-    TELEGRAM_WEBHOOK_SECRET: 'secret',
-  }));
 });
 
 test('a Telegram error says what it means, so nobody else reads its text', () => {

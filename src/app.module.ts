@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { configuration } from './config/configuration';
-import { validateEnvironment } from './config/validate';
+import { configuration, validateEnvironment } from './config/configuration';
 import { HealthController } from './http/health.controller';
 import { EstateModule } from './monitor/estate.module';
 import { LiveModule } from './live/live.module';
