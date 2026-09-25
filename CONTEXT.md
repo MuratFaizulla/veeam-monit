@@ -197,6 +197,22 @@ next failure look like a new one. `none` is not a result — see
 
 Owned by `src/monitor/runs.ts`, with the **Run** it is an attempt at.
 
+## Transition
+
+A job's result changing from what the monitor remembers, and the alert that
+change is worth: into `failed` is critical, into `warning` is a warning, and
+into `success` is worth a message only as a recovery from something bad. A
+running retry reports `none`, which is not a result and changes nothing.
+
+Deciding is separate from sending. `src/monitor/transitions.ts` says what is
+owed and what to remember; the monitor sends it and records the result only
+once the alert was delivered — a delivery that reached nobody has not dealt
+with anything, so the transition stays pending and is tried again next cycle.
+
+Repositories have the same split in `src/monitor/repository-alarms.ts`: below
+the threshold warns, below half of it is critical, back above it re-arms. The
+hour the daily **Summary** goes out is `digestDue`, in `TELEGRAM_TIMEZONE`.
+
 ## Summary
 
 Where every job stands, counted in one pass over the job list: how many
