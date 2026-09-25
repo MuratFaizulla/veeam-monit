@@ -1,4 +1,5 @@
-import { VeeamJobState, VeeamSchedule } from '../veeam/types';
+import { Job } from '../veeam/estate';
+import { VeeamSchedule } from '../veeam/types';
 import { ScheduledRun } from '../live/format';
 import { isDisabled } from './job-state';
 
@@ -112,7 +113,7 @@ const scheduleKind = (schedule: VeeamSchedule | undefined): string | undefined =
 
 /** Today's authoritative nextRun values, checked against each job's config. */
 export const todayRuns = (
-  jobs: VeeamJobState[],
+  jobs: Job[],
   schedules: ReadonlyMap<string, VeeamSchedule>,
   now: Date,
   timezone: string,
@@ -124,10 +125,10 @@ export const todayRuns = (
       const at = Date.parse(job.nextRun);
       if (!Number.isFinite(at) || at <= now.getTime()) return [];
       if (localDay(new Date(at), timezone) !== today) return [];
-      const schedule = job.id ? schedules.get(job.id) : undefined;
+      const schedule = schedules.get(job.id);
       if (schedule?.runAutomatically === false) return [];
       return [{
-        name: job.name ?? job.id ?? 'без имени',
+        name: job.name,
         at: new Date(at).toISOString(),
         scheduleKind: scheduleKind(schedule),
       }];

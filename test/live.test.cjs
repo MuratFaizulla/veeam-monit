@@ -10,7 +10,7 @@ const {
   CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
-  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf,
+  MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
@@ -210,7 +210,7 @@ test('the live message survives a restart instead of starting a second one', asy
     '/api/v1/serverTime': { serverTime: '2026-09-14T11:00:00+05:00' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Success')] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
   await monitor.check();
 
@@ -226,7 +226,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -260,7 +260,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
     }),
     '/api/v1/jobs/states': { data: [] },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -357,7 +357,7 @@ test('a cycle Veeam did not answer leaves the schedule honest about it', async (
       throw new Error('connect ECONNREFUSED');
     },
   });
-  const auth = { configured: true, username: 'svc', getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
+  const auth = monitorAccount();
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -955,20 +955,10 @@ test('every live slot ends on the footer the live module leaves out of the compa
 /* The live slots, asked directly: a cycle in, the text the room would see out. */
 
 const snapshotsOf = (routes, env = {}) => {
-  const { world: makeWorld, veeamFake: fakeVeeam, BackupEvidenceService: Evidence,
-    LiveSnapshotsService: Snapshots, VeeamInventoryService: Inventory } = require('./world.cjs');
-  const { JobQueryService } = require('../dist/monitor/job-query.service');
+  const { world: makeWorld, veeamFake: fakeVeeam, LiveSnapshotsService: Snapshots,
+    VeeamEstateReader: Reader } = require('./world.cjs');
   const w = makeWorld({ TELEGRAM_LIVE: 'true', ...env });
-  const veeam = fakeVeeam({
-    '/api/v1/jobs': { data: [] },
-    '/api/v1/backups': { data: [] },
-    '/api/v1/restorePoints': { data: [] },
-    ...routes,
-  });
-  const auth = { configured: true, getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  const evidence = new Evidence(w.config, veeam, auth);
-  const query = new JobQueryService(w.config, veeam, auth, evidence, new Inventory());
-  return new Snapshots(w.config, veeam, auth, query);
+  return new Snapshots(w.config, new Reader(fakeVeeam(routes), monitorAccount()));
 };
 
 const liveHealth = (over = {}) => ({
@@ -985,20 +975,21 @@ test('▶️ counts a job running by status and one running by session as two', 
   // The count the summary and this slot once disagreed on: status alone saw
   // one, sessions alone saw three (one of them Malware Detection, no job of
   // ours), and the truth was two.
+  const { workingOf } = require('./world.cjs');
   const snapshots = snapshotsOf({
-    '/api/v1/sessions': (req) => req.params?.stateFilter === 'Working' && req.params?.limit === 100
-      ? { data: [
-        { id: 's2', jobId: '2', state: 'Working', progressPercent: 40, creationTime: '2026-09-14T10:00:00Z' },
-        { id: 's9', jobId: 'malware', state: 'Working' },
-      ] }
-      : { data: [] },
+    '/api/v1/sessions/s2/taskSessions': { data: [] },
+    '/api/v1/sessions/s9/taskSessions': { data: [] },
   });
+  const working = workingOf([
+    { id: 's2', jobId: '2', state: 'Working', progressPercent: 40, creationTime: '2026-09-14T10:00:00Z' },
+    { id: 's9', jobId: 'malware', state: 'Working' },
+  ]);
   const jobs = [
     { id: '1', name: 'By status', status: 'Working', lastResult: 'Success' },
     { id: '2', name: 'By session', status: 'Stopped', lastResult: 'Success' },
     { id: '3', name: 'Idle', status: 'Stopped', lastResult: 'Success' },
   ];
-  const pages = await snapshots.pages({ jobs, accessToken: 'tok', evidence: PENDING, health: liveHealth() });
+  const pages = await snapshots.pages({ jobs, working, authenticated: true, evidence: PENDING, health: liveHealth() });
   const running = pageOf(pages, 'running');
   assert.match(running, /выполняются: 2 задания/);
   assert.match(running, /By status/);
@@ -1009,7 +1000,7 @@ test('▶️ counts a job running by status and one running by session as two', 
 test('a cycle Veeam did not answer says so in every slot instead of "nothing"', async () => {
   const snapshots = snapshotsOf({});
   const pages = await snapshots.pages({
-    jobs: undefined, accessToken: null, evidence: PENDING, health: liveHealth({ reachable: false }),
+    jobs: undefined, authenticated: false, evidence: PENDING, health: liveHealth({ reachable: false }),
   });
   assert.deepEqual(
     pages.map((page) => page.slot),
@@ -1024,6 +1015,6 @@ test('a cycle Veeam did not answer says so in every slot instead of "nothing"', 
 
 test('🧹 is only among the pages while it is switched on', async () => {
   const on = await snapshotsOf({}, { TELEGRAM_LIVE_ORPHANS: 'true' })
-    .pages({ jobs: undefined, accessToken: null, evidence: PENDING, health: liveHealth() });
+    .pages({ jobs: undefined, authenticated: false, evidence: PENDING, health: liveHealth() });
   assert.equal(on.at(-1).slot, 'orphans');
 });

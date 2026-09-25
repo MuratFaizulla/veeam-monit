@@ -1,6 +1,6 @@
 import { NotificationSeverity } from '../telegram/types';
-import { VeeamJobState } from '../veeam/types';
-import { isBadResult, rememberedResult, resultOf } from './job-state';
+import { Job } from '../veeam/estate';
+import { isBadResult, rememberedResult } from './job-state';
 
 /**
  * Which job alerts a cycle owes, and what to remember afterwards.
@@ -16,7 +16,7 @@ import { isBadResult, rememberedResult, resultOf } from './job-state';
 
 /** What one job's new state means. */
 export interface Transition {
-  job: VeeamJobState & { id: string };
+  job: Job;
   /** Lower-cased result Veeam reports now; `none` while a run is going. */
   result: string;
   /** The result remembered from before, if any. */
@@ -31,25 +31,23 @@ export interface Transition {
 }
 
 /**
- * One transition per job with an id, in the order given.
+ * One transition per job, in the order given.
  *
  * `seeding` is an installation that has never been observed: everything is
  * noted and nothing is announced, because announcing history as if it had just
  * happened is worse than a quiet first cycle.
  */
 export const jobTransitions = (
-  jobs: VeeamJobState[],
+  jobs: Job[],
   remembered: (jobId: string) => string | undefined,
   seeding: boolean,
 ): Transition[] =>
-  jobs
-    .filter((job): job is VeeamJobState & { id: string } => Boolean(job.id))
-    .map((job) => {
-      const result = resultOf(job);
-      const previous = remembered(job.id);
-      const severity = seeding || previous === result ? null : severityOf(result, previous);
-      return { job, result, previous, severity, remember: rememberedResult(result, previous) };
-    });
+  jobs.map((job) => {
+    const { result } = job;
+    const previous = remembered(job.id);
+    const severity = seeding || previous === result ? null : severityOf(result, previous);
+    return { job, result, previous, severity, remember: rememberedResult(result, previous) };
+  });
 
 /** Null means the change is not worth a message (e.g. into "running"). */
 const severityOf = (result: string, previous: string | undefined): NotificationSeverity | null => {

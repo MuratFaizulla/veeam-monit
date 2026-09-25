@@ -1,17 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpService } from '../veeam/http.service';
-import { allPages, VeeamReader } from '../veeam/pages';
-import {
-  VeeamBackup,
-  VeeamJob,
-  VeeamSchedule,
-  VeeamJobState,
-  VeeamRestorePoint,
-  VeeamSession,
-} from '../veeam/types';
-import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
+import { Job } from '../veeam/estate';
+import { VeeamEstateReader } from '../veeam/estate-reader.service';
+import { VeeamJob, VeeamSchedule, VeeamSession } from '../veeam/types';
 import { failureStreakOf, retryWindowOf } from './runs';
 
 /**
@@ -31,17 +23,6 @@ import { failureStreakOf, retryWindowOf } from './runs';
  * written in comments. This module has one interface instead: ask for the
  * evidence, and either it is there or it says why not.
  */
-
-const JOB_CONFIGS = '/api/v1/jobs';
-const BACKUPS = '/api/v1/backups';
-const RESTORE_POINTS = '/api/v1/restorePoints';
-const SESSIONS = '/api/v1/sessions';
-
-/**
- * Restore points are read a page of this size at a time. The default of 100
- * would turn a nine-thousand-point estate into ninety requests.
- */
-const SCAN_PAGE = 500;
 
 /** How far back sessions are read when counting consecutive failures. */
 const STREAK_WINDOW_DAYS = 7;
@@ -129,8 +110,7 @@ export class BackupEvidenceService {
 
   constructor(
     config: ConfigService,
-    private readonly veeam: VeeamHttpService,
-    private readonly auth: VeeamMonitorAuthService,
+    private readonly reader: VeeamEstateReader,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -152,31 +132,27 @@ export class BackupEvidenceService {
    * a cycle with nothing to read from says so rather than claiming an estate
    * with no restore points.
    */
-  async refresh(accessToken: string | null, jobs: VeeamJobState[] | undefined): Promise<void> {
-    if (!accessToken || !jobs) {
+  async refresh(authenticated: boolean, jobs: Job[] | undefined): Promise<void> {
+    if (!authenticated || !jobs) {
       this.current = { status: 'pending', reason: NO_ANSWER };
       return;
     }
     if (Date.now() - (this.scanned?.scannedAt ?? 0) >= this.config.protectionIntervalMs) {
-      const fresh = await this.scan(accessToken, jobs);
+      const fresh = await this.scan(jobs);
       if (fresh) this.scanned = fresh;
     }
     this.current = this.scanned ?? { status: 'pending', reason: NOT_READ };
   }
 
   /** Reads the estate. Returns undefined when the read did not finish. */
-  private async scan(
-    accessToken: string,
-    jobs: VeeamJobState[],
-  ): Promise<ScannedEvidence | undefined> {
+  private async scan(jobs: Job[]): Promise<ScannedEvidence | undefined> {
     const startedAt = Date.now();
-    const reader: VeeamReader = { veeam: this.veeam, auth: this.auth, accessToken };
-    const liveJobIds = new Set(jobs.map((job) => job.id).filter(Boolean) as string[]);
+    const liveJobIds = new Set(jobs.map((job) => job.id));
 
     try {
       // The runtime state says whether a job is disabled; only the job
       // configuration says whether it has a schedule at all.
-      const configured = await allPages<VeeamJob>(reader, JOB_CONFIGS, {}, SCAN_PAGE);
+      const configured = await this.reader.jobConfigurations();
       const unscheduled = new Set(
         configured
           .filter((job) => job.id && job.schedule?.runAutomatically === false)
@@ -192,7 +168,7 @@ export class BackupEvidenceService {
 
       // Backups whose job no longer exists. Every other check starts from the
       // job list, so nothing else can see them at all.
-      const backups = await allPages<VeeamBackup>(reader, BACKUPS, {}, SCAN_PAGE);
+      const backups = await this.reader.backups();
       const jobOfBackup = new Map<string, string>();
       const orphanNames = new Map<string, string>();
       for (const backup of backups) {
@@ -204,12 +180,7 @@ export class BackupEvidenceService {
         }
       }
 
-      const points = await allPages<VeeamRestorePoint>(
-        reader,
-        RESTORE_POINTS,
-        { orderColumn: 'CreationTime', orderAsc: false },
-        SCAN_PAGE,
-      );
+      const points = await this.reader.restorePoints();
 
       // A restore point object says nothing about whether the run that made it
       // worked: it carries a creation time and a session id, and that is all.
@@ -217,17 +188,12 @@ export class BackupEvidenceService {
       // September having transferred 6.8 GB of 22.4, and the point it left made
       // the job look backed up that night when its last good copy was from 23
       // August. The verdict lives only in the sessions.
-      const sessions = await allPages<VeeamSession>(
-        reader,
-        SESSIONS,
-        { orderColumn: 'CreationTime', orderAsc: false },
-        SCAN_PAGE,
-      );
+      const sessions = await this.reader.sessions();
       const runsOfJob = runWindows(sessions);
       const resultOfSession = new Map(
         sessions
           .filter((session): session is VeeamSession & { id: string } => Boolean(session.id))
-          .map((session) => [session.id, (session.result?.result ?? '').toLowerCase()]),
+          .map((session) => [session.id, session.result?.result ?? '']),
       );
 
       // One restore point is created per protected machine, so a job covering
@@ -376,7 +342,7 @@ const runWindows = (sessions: VeeamSession[]): Map<string, RunWindow[]> => {
       from,
       // A session still running has no end; it owns everything since it began.
       to: session.endTime ? Date.parse(session.endTime) : Number.POSITIVE_INFINITY,
-      failed: (session.result?.result ?? '').toLowerCase() === 'failed',
+      failed: session.result?.result === 'failed',
     });
     windows.set(session.jobId, list);
   }

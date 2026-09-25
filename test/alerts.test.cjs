@@ -12,9 +12,11 @@ const { monitorWorld, job, capacities } = require('./world.cjs');
  * the hour the daily summary goes out.
  * ------------------------------------------------------------------ */
 
-const owed = (jobs, remembered, seeding = false) => {
+/** Veeam's job states, translated as the estate reader translates them, and what they owe. */
+const owed = (states, remembered, seeding = false) => {
   const { jobTransitions } = require('../dist/monitor/transitions');
-  return jobTransitions(jobs, (id) => remembered[id], seeding);
+  const { jobOf } = require('../dist/veeam/estate');
+  return jobTransitions(states.map(jobOf), (id) => remembered[id], seeding);
 };
 const severities = (transitions) =>
   Object.fromEntries(transitions.map((t) => [t.job.id, t.severity]));

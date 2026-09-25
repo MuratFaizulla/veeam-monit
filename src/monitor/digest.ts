@@ -1,6 +1,6 @@
 import { NotificationEvent } from '../telegram/types';
-import { VeeamJobState } from '../veeam/types';
-import { isRunningNow, resultOf } from './job-state';
+import { Job } from '../veeam/estate';
+import { isRunningNow, WorkingJobs } from './job-state';
 
 /**
  * Where every job stands, counted once.
@@ -18,8 +18,7 @@ import { isRunningNow, resultOf } from './job-state';
  */
 
 export interface FailingJob {
-  /** Absent only where Veeam reported a job with no id at all. */
-  id?: string;
+  id: string;
   name: string;
   /** Lower-cased Veeam result: `failed` or `warning`. */
   result: string;
@@ -37,12 +36,11 @@ export interface DigestSummary {
 
 /** Jobs from a digest that can be opened by a Telegram button. */
 export const addressable = (summary: DigestSummary): Array<{ id: string; name: string }> =>
-  summary.failing
-    .filter((job): job is FailingJob & { id: string } => Boolean(job.id))
-    .map(({ id, name }) => ({ id, name }));
+  summary.failing.map(({ id, name }) => ({ id, name }));
 
 /**
- * `working` is the set of job ids Veeam has a Working session for.
+ * `working` says which job ids Veeam has a Working session for — the cycle's
+ * `WorkingSessions.byJob`, the same read ▶️ counts from.
  *
  * Required rather than optional: counting from the job status alone undercounts
  * every run started by hand on a job that is switched off, because Veeam keeps
@@ -51,8 +49,8 @@ export const addressable = (summary: DigestSummary): Array<{ id: string; name: s
  * being able to disagree about how many jobs are running.
  */
 export const summarise = (
-  jobs: VeeamJobState[],
-  working: ReadonlySet<string>,
+  jobs: Job[],
+  working: WorkingJobs,
 ): DigestSummary => {
   const summary: DigestSummary = {
     total: jobs.length,
@@ -64,7 +62,7 @@ export const summarise = (
   };
 
   for (const job of jobs) {
-    const result = resultOf(job);
+    const { result } = job;
     if (result === 'success') summary.success += 1;
     else if (result === 'warning') summary.warning += 1;
     else if (result === 'failed') summary.failed += 1;
@@ -74,7 +72,7 @@ export const summarise = (
     if (isRunningNow(job, working)) summary.running += 1;
 
     if (result === 'failed' || result === 'warning') {
-      summary.failing.push({ id: job.id, name: job.name ?? job.id ?? 'без имени', result });
+      summary.failing.push({ id: job.id, name: job.name, result });
     }
   }
 

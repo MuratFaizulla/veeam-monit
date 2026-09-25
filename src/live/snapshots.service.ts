@@ -1,12 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { VeeamHttpService } from '../veeam/http.service';
-import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
-import { allPages } from '../veeam/pages';
-import { VeeamJobState, VeeamSession, VeeamTaskSession } from '../veeam/types';
+import { Job, WorkingSessions } from '../veeam/estate';
+import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { Evidence } from '../monitor/backup-evidence.service';
-import { JobQueryService } from '../monitor/job-query.service';
 import { Standings, standingsOf } from '../monitor/job-standing';
 import { isDisabled, isRunningNow } from '../monitor/job-state';
 import { RepositoryCapacity } from '../monitor/repository-capacity';
@@ -23,7 +20,6 @@ import {
 } from './format';
 import { OrphansSnapshot, renderOrphans } from './orphans';
 import {
-  ACTIVE_SESSION_STATES,
   PerformanceJob,
   PerformanceSnapshot,
   aggregatePerformance,
@@ -34,8 +30,6 @@ import { renderRepositories } from './repositories';
 import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './restore-points';
 import { LiveSlot } from './slots';
 
-const SESSIONS = '/api/v1/sessions';
-
 /**
  * What a slot says when Veeam answered nothing this cycle. The evidence module
  * owns the other reasons; this one is about the job list, which it never sees.
@@ -45,10 +39,15 @@ const NOT_ANSWERED = 'Veeam не ответил на этот цикл.';
 /** What one monitor cycle found, as the live slots need to hear it. */
 export interface LiveCycle {
   /** Undefined when Veeam did not answer the job list this cycle. */
-  jobs?: VeeamJobState[];
+  jobs?: Job[];
+  /**
+   * What Veeam is running, read once this cycle and shared by ▶️ and 📈 — and
+   * by the Summary, when one goes out. Absent when nobody could sign in.
+   */
+  working?: WorkingSessions;
   repositories?: RepositoryCapacity[];
-  /** Null when the monitor account could not log in, or was never configured. */
-  accessToken: string | null;
+  /** Whether the monitor account signed in this cycle; false when it could not, or was never configured. */
+  authenticated: boolean;
   /** This cycle's Evidence, already refreshed by the monitor before anything read it. */
   evidence: Evidence;
   /** The monitor's own view of itself, which only the monitor has. */
@@ -80,15 +79,13 @@ export class LiveSnapshotsService {
 
   constructor(
     config: ConfigService,
-    private readonly veeam: VeeamHttpService,
-    private readonly monitorAuth: VeeamMonitorAuthService,
-    private readonly jobQuery: JobQueryService,
+    private readonly reader: VeeamEstateReader,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
 
   async pages(cycle: LiveCycle, clock: LiveClock = this.clock()): Promise<LivePage[]> {
-    const { jobs, repositories, accessToken, evidence } = cycle;
+    const { jobs, repositories, evidence } = cycle;
     // Worked out once and read by both slots below, so they cannot disagree
     // about which jobs are in scope or how many were left out.
     const standings =
@@ -96,9 +93,9 @@ export class LiveSnapshotsService {
 
     const pages: LivePage[] = [
       { slot: 'health', content: renderHealth(cycle.health, clock) },
-      { slot: 'running', content: renderRunning(await this.runningState(cycle), clock) },
+      { slot: 'running', content: renderRunning(this.runningState(cycle), clock) },
       { slot: 'schedule', content: renderSchedule(this.scheduleState(jobs, evidence, clock), clock) },
-      { slot: 'performance', content: renderPerformance(await this.performanceState(accessToken), clock) },
+      { slot: 'performance', content: renderPerformance(await this.performanceState(cycle), clock) },
       { slot: 'repositories', content: renderRepositories(repositories, clock) },
       {
         slot: 'protection',
@@ -120,9 +117,9 @@ export class LiveSnapshotsService {
     return { now: new Date(), timezone: this.config.timezone };
   }
 
-  private async runningState(cycle: LiveCycle): Promise<LiveRunning> {
-    const { jobs, accessToken } = cycle;
-    if (!jobs || !accessToken) {
+  private runningState(cycle: LiveCycle): LiveRunning {
+    const { jobs, authenticated } = cycle;
+    if (!jobs || !authenticated) {
       // Saying "nothing is running" when we simply could not ask would be a
       // lie, and this message is the one an operator trusts at a glance.
       return {
@@ -137,16 +134,15 @@ export class LiveSnapshotsService {
     // Both sources, united by isRunningNow — sessions with no job of ours
     // behind them, Malware Detection among them, are not jobs and never enter
     // the list, because it is the jobs that are walked and not the sessions.
-    const sessions = await this.jobQuery.runningSessions(accessToken);
-    const working = new Set(sessions.keys());
+    const sessions = cycle.working?.byJob ?? new Map();
 
     return {
       jobs: jobs
-        .filter((job) => isRunningNow(job, working))
+        .filter((job) => isRunningNow(job, sessions))
         .map((job) => {
-          const session = job.id ? sessions.get(job.id) : undefined;
+          const session = sessions.get(job.id);
           return {
-            name: job.name ?? job.id ?? 'без имени',
+            name: job.name,
             type: job.type,
             percent: session?.progressPercent,
             startedAt: session?.creationTime ?? job.lastRun,
@@ -163,7 +159,7 @@ export class LiveSnapshotsService {
   }
 
   private scheduleState(
-    jobs: VeeamJobState[] | undefined,
+    jobs: Job[] | undefined,
     evidence: Evidence,
     clock: LiveClock,
   ): LiveSchedule {
@@ -181,9 +177,9 @@ export class LiveSnapshotsService {
     };
   }
 
-  /** Builds the Performance live slot from active sessions and their tasks. */
-  private async performanceState(accessToken: string | null): Promise<PerformanceSnapshot> {
-    if (!accessToken) {
+  /** Builds the Performance live slot from this cycle's Working sessions and their tasks. */
+  private async performanceState(cycle: LiveCycle): Promise<PerformanceSnapshot> {
+    if (!cycle.authenticated) {
       return {
         jobs: [],
         activeCount: 0,
@@ -192,23 +188,15 @@ export class LiveSnapshotsService {
       };
     }
 
-    const reader = { veeam: this.veeam, auth: this.monitorAuth, accessToken };
-    let sessions: VeeamSession[];
-    try {
-      sessions = (await allPages<VeeamSession>(reader, SESSIONS, {
-        stateFilter: 'Working',
-        orderColumn: 'CreationTime',
-        orderAsc: false,
-      })).filter((session) => ACTIVE_SESSION_STATES.has((session.state ?? '').toLowerCase()));
-    } catch (error) {
-      this.logger.error(`Performance sessions unavailable: ${(error as Error).message}`);
+    if (cycle.working?.unavailable) {
       return {
         jobs: [],
         activeCount: 0,
         statisticsAvailable: false,
-        unavailable: (error as Error).message,
+        unavailable: cycle.working.unavailable,
       };
     }
+    const sessions = cycle.working?.sessions ?? [];
 
     if (!sessions.length) return { jobs: [], activeCount: 0, statisticsAvailable: true };
 
@@ -219,10 +207,7 @@ export class LiveSnapshotsService {
         const session = sessions[next++];
         if (!session.id) continue;
         try {
-          const tasks = await allPages<VeeamTaskSession>(
-            reader,
-            `/api/v1/sessions/${encodeURIComponent(session.id)}/taskSessions`,
-          );
+          const tasks = await this.reader.taskSessions(session.id);
           jobs.push(aggregatePerformance(session, tasks));
         } catch (error) {
           // One inaccessible session must not hide all other performance data.
@@ -254,7 +239,7 @@ export class LiveSnapshotsService {
    * shown stay right between scans.
    */
   private protectionState(
-    jobs: VeeamJobState[] | undefined,
+    jobs: Job[] | undefined,
     standings: Standings | undefined,
     evidence: Evidence,
   ): ProtectionSnapshot {
@@ -341,7 +326,7 @@ export class LiveSnapshotsService {
   }
 
   /** Backup chains left behind by jobs that no longer exist. */
-  private orphansState(jobs: VeeamJobState[] | undefined, evidence: Evidence): OrphansSnapshot {
+  private orphansState(jobs: Job[] | undefined, evidence: Evidence): OrphansSnapshot {
     if (!jobs || evidence.status === 'pending') {
       return {
         backups: [],
@@ -366,7 +351,7 @@ const orphanPoints = (chains: { points: number }[]): number =>
  * decides which of them fall on today, because "today" depends on the
  * display timezone rather than on the server's.
  */
-const upcomingRuns = (jobs: VeeamJobState[]): ScheduledRun[] => {
+const upcomingRuns = (jobs: Job[]): ScheduledRun[] => {
   const now = Date.now();
   const runs: Array<ScheduledRun & { ms: number }> = [];
 
@@ -374,7 +359,7 @@ const upcomingRuns = (jobs: VeeamJobState[]): ScheduledRun[] => {
     if (!job.nextRun) continue;
     const ms = Date.parse(job.nextRun);
     if (!Number.isFinite(ms) || ms <= now) continue;
-    runs.push({ name: job.name ?? job.id ?? 'без имени', at: job.nextRun, ms });
+    runs.push({ name: job.name, at: job.nextRun, ms });
   }
 
   return runs

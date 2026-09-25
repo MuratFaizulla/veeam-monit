@@ -133,8 +133,9 @@ footer itself would rewrite its message every cycle. Fitting a slot under
 Telegram's limit is `fitted` or `paged`, never a loop of the renderer's own.
 
 What every slot says after a cycle is decided in one place,
-`src/live/snapshots.service.ts`: a cycle's jobs, repositories, token and the
-monitor's own health go in, one page per slot comes out, in publishing order.
+`src/live/snapshots.service.ts`: a cycle's jobs, Working sessions,
+repositories, whether the account signed in and the monitor's own health go
+in, one page per slot comes out, in publishing order.
 The monitor adds the health — the one input only it has — and sends the pages.
 It used to build each slot's input itself, in private methods no test could
 reach without running a whole cycle.
@@ -243,7 +244,10 @@ to differ within a day; there is now nothing that can differ.
 The running count comes from the union of job status and Working sessions, not
 from the status alone — see `isRunningNow`. Counting it separately here is what
 let the ▶️ slot and the summary report different numbers of running jobs on the
-same estate at the same moment.
+same estate at the same moment. The Working sessions are one read a cycle,
+`workingSessions` on the **Estate reader** — every page, then the active-state
+check — shared by ▶️, 📈 and the daily Summary; `/digest` makes the same read.
+They used to be read twice a cycle with two ideas of "Working".
 
 Owned by `src/monitor/digest.ts`.
 
@@ -266,6 +270,12 @@ The **Settings** are strings by the time they reach the card: deciding that
 reading of Veeam's schedule model and lives with the module that models
 schedules.
 
+Its Runs come from the job's newest thirty sessions — the alert counts its
+**Attempt** from the same read. When the read stops at that limit, the oldest
+Run in it may be cut short, and is left out rather than listed with fewer
+attempts than it had. Six sessions used to be read: one night of a job that
+retries, and half of the night before.
+
 Every live slot is an aggregate; this is the only thing in the service that
 answers about a single job. The name is matched approximately — whole name,
 then containment, then every word of the query appearing somewhere — because
@@ -284,7 +294,50 @@ Read once and kept for half an hour, because this is the part of the estate
 that does not change. A failed read keeps the previous names rather than
 clearing them: last month's name is far closer to the truth than a GUID.
 
-Owned by `src/veeam/inventory.service.ts`.
+Owned by `src/veeam/inventory.service.ts`, which keeps what the **Estate
+reader**'s `inventoryNames` reads.
+
+## Estate reader
+
+Everything the service reads from Veeam, by name: the job states, one job's
+recent sessions, the Working sessions, a session's tasks, one job's
+configuration and all of them, repository states, backups, restore points,
+every session (the **Evidence**'s), and the **Inventory** names. The paths, the
+parameters, paging and the monitor account's token are inside; no caller builds
+a path or holds a token. What it hands out is translated once — a **Job**, and
+every session's result lower-cased.
+
+Every request asks the auth service for its token, which is cached. The token
+used to be a string fetched at the start of a cycle and passed from reader to
+reader: a refused call was retried with a fresh one, but everything after it
+still carried the refused string, and the login-storm guard (one forced sign-in
+a minute) then declined to fetch another. One 403 cost the rest of the cycle.
+
+When Veeam refuses a token: if the auth service already holds a different one,
+that is used and the guard is not spent; otherwise the guard is asked, and a
+request refused alongside one that got there first uses the token that one is
+fetching. Exactly one retry. The monitor still decides, once a cycle, whether
+the account signs in at all, and passes that on as a yes or no.
+
+Owned by `src/veeam/estate-reader.service.ts`; what it hands out is
+`src/veeam/estate.ts`.
+
+## Job
+
+One Veeam job as the service reads it: always an id, one name, one spelling of
+its result. A job Veeam gave no name is called by its id — in the alert and the
+topic it is routed to, the **Summary**, every **Live slot**, the **Job card**
+and its **Button**. `result` is lower-cased, and `none` while a run is going or
+before the first; `none` is not a result (see **Attempt**). A job with no id is
+left out at the read: nothing could address it, remember it or match a session
+to it.
+
+Every reader of Veeam's job state used to decide these for itself: seven
+decisions of a name with three answers — "неизвестное задание", "без имени",
+the bare id — and `!job.id` guarded against in seven places.
+
+Translated by `jobOf` in `src/veeam/estate.ts`, once, when the **Estate
+reader** reads the job states.
 
 ## Answer
 

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { world, veeamFake, monitorWorld, job, BackupEvidenceService } = require('./world.cjs');
+const { world, veeamFake, monitorWorld, job, evidenceOf } = require('./world.cjs');
 
 /* ------------------------------------------------------------------ *
  * Runs: one rule for which sessions are one run
@@ -36,13 +36,12 @@ const evidenceOver = (sessions) => {
     '/api/v1/restorePoints': { data: [] },
     '/api/v1/sessions': { data: sessions },
   });
-  const auth = { configured: true, getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
-  return new BackupEvidenceService(w.config, veeam, auth);
+  return evidenceOf(w, veeam);
 };
 
 test('one run that Veeam retried twice is one failed run in the streak, not three', async () => {
   const evidence = evidenceOver(oneRetriedRun(Date.now() - HOUR));
-  await evidence.refresh('tok', [job('1', 'REMS_DBS03', 'Failed')]);
+  await evidence.refresh(true, [job('1', 'REMS_DBS03', 'Failed')]);
 
   assert.equal(evidence.evidence.status, 'ready');
   // The alert for the same night says "3 из 4"; the streak must agree that it
@@ -61,7 +60,7 @@ test('the streak counts separate failed runs back to the last success', async ()
     { id: 'old', jobId: '1', sessionType: 'BackupJob', creationTime: iso(now - 73 * HOUR),
       endTime: iso(now - 72 * HOUR), result: { result: 'Failed' } },
   ]);
-  await evidence.refresh('tok', [job('1', 'REMS_DBS03', 'Failed')]);
+  await evidence.refresh(true, [job('1', 'REMS_DBS03', 'Failed')]);
 
   assert.equal(evidence.evidence.streakByJob.get('1'), 2, 'два неудачных запуска после последнего успешного');
 });
@@ -132,6 +131,67 @@ test('a job card lists one retried run as one line, with its attempts counted', 
   assert.match(lines[0], /попыток: 3/);
   assert.match(list, /attempt 3/, 'причина — от последней попытки');
   assert.doesNotMatch(lines[1], /попыток/, 'у запуска с одной попыткой счётчика нет');
+});
+
+/**
+ * `nights` nightly Runs of one job, newest first, each `attempts` long: every
+ * attempt but the last fails, and Veeam retries ten minutes after it ended.
+ * Veeam answers with only as many as asked for, newest first.
+ */
+const nightlyRuns = (nights, attempts) => {
+  const sessions = [];
+  const midnight = Date.now() - 12 * HOUR;
+  for (let night = 0; night < nights; night += 1) {
+    for (let attempt = attempts - 1; attempt >= 0; attempt -= 1) {
+      const start = midnight - night * 24 * HOUR + attempt * 15 * MINUTE;
+      const last = attempt === attempts - 1;
+      sessions.push({
+        id: `n${night}a${attempt}`, jobId: '1', sessionType: 'BackupJob',
+        creationTime: iso(start), endTime: iso(start + 5 * MINUTE),
+        result: { result: last ? 'Success' : 'Failed', message: last ? 'ok' : `attempt ${attempt + 1}` },
+      });
+    }
+  }
+  return (req) =>
+    req.params?.stateFilter === 'Working'
+      ? { data: [] }
+      : { data: sessions.slice(req.params?.skip ?? 0, (req.params?.skip ?? 0) + (req.params?.limit ?? sessions.length)) };
+};
+
+const cardRuns = async (sessions, retryCount) => {
+  const { CHAT } = require('./world.cjs');
+  const policy = { runAutomatically: true, retry: { isEnabled: true, retryCount, awaitMinutes: 10 } };
+  const w = monitorWorld({}, [job('1', 'TTC_Nightly', 'Success')], {
+    '/api/v1/jobs/1': { id: '1', name: 'TTC_Nightly', schedule: policy },
+    '/api/v1/backupInfrastructure/repositories': { data: [] },
+    '/api/v1/backupInfrastructure/proxies': { data: [] },
+    '/api/v1/sessions': sessions,
+  });
+  await w.updates.handleUpdate({
+    update_id: 1,
+    message: { message_id: 1, text: '/job TTC_Nightly', chat: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
+  });
+  const card = w.api.sent().at(-1).text;
+  const list = card.slice(card.indexOf('Последние запуски'));
+  return list.split('\n').filter((line) => /^[🟢🟡🔴⚪]/u.test(line));
+};
+
+test('a job card shows five whole runs of a job that retries three times, not two', async () => {
+  // Six sessions used to be read and folded: one whole night and half of the
+  // one before it, presented as a run of two attempts.
+  const lines = await cardRuns(nightlyRuns(8, 4), 3);
+
+  assert.equal(lines.length, 5, lines.join('\n'));
+  for (const line of lines) assert.match(line, /^🟢.*попыток: 4$/u);
+});
+
+test('the oldest run of a read that stopped at its limit is left out, not shown cut', async () => {
+  // Seven attempts a night: thirty sessions are four whole nights and two
+  // attempts of a fifth, which would read as a night that took two.
+  const lines = await cardRuns(nightlyRuns(6, 7), 6);
+
+  assert.equal(lines.length, 4, lines.join('\n'));
+  for (const line of lines) assert.match(line, /попыток: 7$/u);
 });
 
 /* ------------------------------------------------------------------ *

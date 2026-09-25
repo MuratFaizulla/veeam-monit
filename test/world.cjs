@@ -24,6 +24,8 @@ const { TelegramLiveService } = require('../dist/live/live.service');
 const { BackupEvidenceService } = require('../dist/monitor/backup-evidence.service');
 const { VeeamHttpService } = require('../dist/veeam/http.service');
 const { VeeamInventoryService } = require('../dist/veeam/inventory.service');
+const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
+const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/monitor/repository-capacity');
 
 const CHAT = '-1001234567890';
@@ -171,16 +173,38 @@ function veeamFake(routes) {
 }
 
 /**
+ * The monitor account as every service but the auth service's own tests sees
+ * it: configured, signed in as `tok`, and willing to fetch another token when
+ * Veeam refuses one. It was written out by hand eleven times.
+ */
+function monitorAccount(over = {}) {
+  return {
+    configured: true,
+    username: 'svc@example.com',
+    getAccessToken: async () => 'tok',
+    invalidateAccessToken: () => {},
+    rejectToken: () => true,
+    ...over,
+  };
+}
+
+/** The Evidence of a world, reading `veeam` as `auth`. */
+function evidenceOf(w, veeam, auth = monitorAccount()) {
+  return new BackupEvidenceService(w.config, new VeeamEstateReader(veeam, auth));
+}
+
+/**
  * A monitor wired to a world. The argument list was written out at twelve call
  * sites and every new dependency had to be added to all of them; the twelfth
  * time it was added, eleven tests stopped compiling at once.
  */
-function monitorOf(w, veeam, auth, evidence) {
-  const scan = evidence ?? new BackupEvidenceService(w.config, veeam, auth);
-  const query = new JobQueryService(w.config, veeam, auth, scan, new VeeamInventoryService());
-  const snapshots = new LiveSnapshotsService(w.config, veeam, auth, query);
+function monitorOf(w, veeam, auth = monitorAccount(), evidence) {
+  const reader = new VeeamEstateReader(veeam, auth);
+  const scan = evidence ?? new BackupEvidenceService(w.config, reader);
+  const query = new JobQueryService(w.config, reader, auth, scan, new VeeamInventoryService(reader));
+  const snapshots = new LiveSnapshotsService(w.config, reader);
   return new MonitorService(
-    w.config, veeam, w.service, auth, w.store, w.live,
+    w.config, veeam, w.service, auth, reader, w.store, w.live,
     scan, query, snapshots,
   );
 }
@@ -197,14 +221,8 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
     '/api/v1/restorePoints': { data: [] },
     ...extraRoutes,
   });
-  const auth = {
-    configured: true,
-    username: 'svc@example.com',
-    getAccessToken: async () => 'tok',
-    invalidateAccessToken: () => {},
-    rejectToken: () => true,
-  };
-  const evidence = new BackupEvidenceService(w.config, veeam, auth);
+  const auth = monitorAccount();
+  const evidence = evidenceOf(w, veeam, auth);
   const monitor = monitorOf(w, veeam, auth, evidence);
   // The real monitor, so /check in these tests drives a real cycle.
   const { commands, updates } = ear(w, monitor);
@@ -245,6 +263,7 @@ const exchange = (env = {}) =>
 
 module.exports = {
   CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
+  monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService,
   TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,
