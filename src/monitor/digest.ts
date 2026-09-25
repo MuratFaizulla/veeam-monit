@@ -129,3 +129,20 @@ export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
   ],
   body: bodyOf(summary),
 });
+
+/**
+ * Whether the daily summary is due in this hour.
+ *
+ * The hour is the operator's, in TELEGRAM_TIMEZONE like every other time the
+ * bot writes. It used to be the server process's own clock, which agreed only
+ * where the container's TZ happened to be set to the same zone.
+ */
+export const digestDue = (now: Date, hour: number, timezone: string): boolean => {
+  if (hour < 0) return false;
+  const local = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone || undefined,
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).format(now);
+  return Number(local) === hour;
+};

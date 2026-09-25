@@ -12,8 +12,9 @@ import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
 import { capacities, RepositoryCapacity } from './repository-capacity';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
-import { addressable, digestEvent, summarise } from './digest';
-import { isBadResult, rememberedResult, resultOf } from './job-state';
+import { addressable, digestDue, digestEvent, summarise } from './digest';
+import { repositoryAlarms } from './repository-alarms';
+import { jobTransitions } from './transitions';
 import { attemptOf, retriesAllowed, retryWindowOf } from './runs';
 import { JobSession } from './job-card';
 import { renderEvent } from '../telegram/format';
@@ -124,7 +125,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         const read = jobs;
         if (read) await this.step('alerts', () => this.checkJobs(read, evidence, token));
         repositories = await this.step('repositories', () => this.checkRepositories(token));
-        await this.step('digest', () => this.maybeSendDigest(token));
+        if (read) await this.step('digest', () => this.maybeSendDigest(read, token));
       }
       this.health.lastCheckAt = new Date().toISOString();
       // Last, so it reports what this cycle actually found — including the
@@ -278,18 +279,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     evidence: Evidence,
     accessToken: string,
   ): Promise<void> {
-
-    // An empty store means this installation has never been observed. Seeding
-    // silently avoids announcing history as if it just happened; every later
-    // start compares against the persisted results instead.
+    // An empty store means this installation has never been observed.
     const seeding = !this.store.jobResults.seeded();
+    const transitions = jobTransitions(jobs, (id) => this.store.jobResults.of(id), seeding);
 
-    for (const job of jobs) {
-      if (!job.id) continue;
-      const result = resultOf(job);
-      const previous = this.store.jobResults.of(job.id);
-      const severity = seeding || previous === result ? null : this.severityOf(result, previous);
-
+    for (const { job, result, previous, severity, remember } of transitions) {
       if (severity) {
         const report = await this.emit(
           await this.jobEvent(job, result, previous, severity, evidence, accessToken),
@@ -299,9 +293,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         // anything, so the transition stays pending and is retried next tick.
         if (report.outcome === 'failed') continue;
       }
-      // Never `none` over something known: that is what lost every recovery
-      // and re-announced every retry. See rememberedResult.
-      this.store.jobResults.record(job.id, rememberedResult(result, previous));
+      this.store.jobResults.record(job.id, remember);
     }
 
     this.store.jobResults.keepOnly(new Set(jobs.map((job) => job.id)));
@@ -346,16 +338,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     for (const { slot, content } of pages) await this.live.publish(slot, content);
   }
 
-
-  /** Null means the transition is not worth a message (e.g. into "running"). */
-  private severityOf(result: string, previous: string | undefined): NotificationSeverity | null {
-    if (result === 'failed') return 'critical';
-    if (result === 'warning') return 'warning';
-    // Success is only interesting as a recovery: reporting every scheduled
-    // success would bury the failures it is supposed to make visible.
-    if (result === 'success' && previous && isBadResult(previous)) return 'success';
-    return null;
-  }
 
   private async jobEvent(
     job: VeeamJobState,
@@ -431,48 +413,23 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       throw error;
     }
 
-    if (this.config.repositoryFreePercent <= 0) return repositories;
-    for (const repository of repositories) {
-      // A repository whose free space Veeam did not report is left alone. It
-      // used to be treated as zero free, which raised a critical alert about a
-      // repository nobody could say anything about.
-      const { freePercent, freeGB, capacityGB } = repository;
-      if (freePercent === undefined) continue;
-      const key = `repo:${repository.key}`;
-      if (freePercent >= this.config.repositoryFreePercent) {
-        this.store.cooldowns.clear(key);
-        continue;
-      }
-      await this.emit({
-        kind: 'repository',
-        severity: freePercent < this.config.repositoryFreePercent / 2 ? 'critical' : 'warning',
-        subject: repository.subject,
-        title: `Репозиторий ${repository.name}: мало свободного места`,
-        fields: [
-          ['Свободно', `${(freeGB ?? 0).toFixed(1)} ГБ (${freePercent.toFixed(1)}%)`],
-          ['Ёмкость', `${(capacityGB ?? 0).toFixed(1)} ГБ`],
-          ['Порог', `${this.config.repositoryFreePercent}%`],
-          ['Сервер', repository.hostName],
-          ['Путь', repository.path],
-        ],
-        dedupeKey: key,
-        cooldownMs: this.config.repositoryAlertCooldownMs,
-      });
-    }
+    const { events, cleared } = repositoryAlarms(repositories, {
+      thresholdPercent: this.config.repositoryFreePercent,
+      cooldownMs: this.config.repositoryAlertCooldownMs,
+    });
+    for (const key of cleared) this.store.cooldowns.clear(key);
+    for (const event of events) await this.emit(event);
     return repositories;
   }
 
   /** Once-a-day roll-up, so a quiet channel still proves the monitor is alive. */
-  private async maybeSendDigest(accessToken: string): Promise<void> {
-    const hour = this.config.digestHour;
-    if (hour < 0 || new Date().getHours() !== hour) return;
+  private async maybeSendDigest(jobs: VeeamJobState[], accessToken: string): Promise<void> {
+    if (!digestDue(new Date(), this.config.digestHour, this.config.timezone)) return;
     if (this.store.cooldowns.isSuppressed('digest')) return;
 
-    const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
-      method: 'GET',
-      path: JOB_STATES,
-    });
-    const summary = summarise(response.data ?? [], await this.jobQuery.workingJobs(accessToken));
+    // The job list this cycle already read. It used to be read a second time
+    // here, on the one cycle a day that most wanted to be quick.
+    const summary = summarise(jobs, await this.jobQuery.workingJobs(accessToken));
     const report = await this.emit(digestEvent(summary));
 
     // Arming before the fetch, as this used to, lost the whole digest for 23

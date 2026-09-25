@@ -1,0 +1,54 @@
+import { NotificationEvent } from '../telegram/types';
+import { RepositoryCapacity } from './repository-capacity';
+
+/**
+ * Which repositories are short of space, as the alerts they are owed.
+ *
+ * Reads Repository capacity and nothing else: `freePercent` exists only when
+ * Veeam reported free space, and a repository nobody can say anything about is
+ * left alone — it used to be treated as zero free and raised a critical alert.
+ *
+ * `cleared` lists the alarms of repositories that are back above the
+ * threshold, so the next shortage is announced at once rather than waiting out
+ * the cooldown of the previous one.
+ */
+export interface RepositoryAlarms {
+  events: NotificationEvent[];
+  cleared: string[];
+}
+
+export const repositoryAlarms = (
+  repositories: RepositoryCapacity[],
+  policy: { thresholdPercent: number; cooldownMs: number },
+): RepositoryAlarms => {
+  const { thresholdPercent, cooldownMs } = policy;
+  const alarms: RepositoryAlarms = { events: [], cleared: [] };
+  if (thresholdPercent <= 0) return alarms;
+
+  for (const repository of repositories) {
+    const { freePercent, freeGB, capacityGB } = repository;
+    if (freePercent === undefined) continue;
+    const key = `repo:${repository.key}`;
+    if (freePercent >= thresholdPercent) {
+      alarms.cleared.push(key);
+      continue;
+    }
+    alarms.events.push({
+      kind: 'repository',
+      // Under half the threshold is the one that fills up tonight.
+      severity: freePercent < thresholdPercent / 2 ? 'critical' : 'warning',
+      subject: repository.subject,
+      title: `Репозиторий ${repository.name}: мало свободного места`,
+      fields: [
+        ['Свободно', `${(freeGB ?? 0).toFixed(1)} ГБ (${freePercent.toFixed(1)}%)`],
+        ['Ёмкость', `${(capacityGB ?? 0).toFixed(1)} ГБ`],
+        ['Порог', `${thresholdPercent}%`],
+        ['Сервер', repository.hostName],
+        ['Путь', repository.path],
+      ],
+      dedupeKey: key,
+      cooldownMs,
+    });
+  }
+  return alarms;
+};
