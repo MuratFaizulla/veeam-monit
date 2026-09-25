@@ -297,8 +297,9 @@ test('evidence nothing has read yet says why, instead of an empty estate', async
 test('a scan that throws leaves the previous evidence standing', async () => {
   // Cadence zero, so the second refresh really re-scans rather than being
   // waved through by the gate — otherwise this would pass without ever
-  // reaching the failure it is about.
-  const w = exchange({ TELEGRAM_PROTECTION_INTERVAL_MIN: '0' });
+  // reaching the failure it is about. No operator may set zero, so it is set
+  // on the config itself rather than through TELEGRAM_PROTECTION_INTERVAL_MIN.
+  const w = exchange({ protectionIntervalMs: 0 });
   const jobs = [job('1', 'OPS_Exchange', 'Failed')];
   await w.evidence.refresh('tok', jobs);
   const first = w.evidence.evidence;
@@ -725,7 +726,10 @@ test('a button and its reader cannot disagree about what it means', () => {
 test('the command menu is registered with Telegram at startup', async () => {
   // A webhook world on purpose: long polling would leave a loop running for as
   // long as the test process lives.
-  const w = monitorWorld({ TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com' }, []);
+  const w = monitorWorld({
+    TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com',
+    TELEGRAM_WEBHOOK_SECRET: 'test-secret',
+  }, []);
 
   await w.updates.onModuleInit();
 

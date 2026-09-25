@@ -25,9 +25,9 @@ export class VeeamMonitorAuthService {
   private pending?: Promise<string>;
 
   constructor(config: ConfigService, private readonly veeam: VeeamHttpService) {
-    const telegram = config.getOrThrow<AppConfig['telegram']>('telegram');
-    this.user = telegram.veeamUsername;
-    this.password = telegram.veeamPassword;
+    const account = config.getOrThrow<AppConfig['veeam']>('veeam');
+    this.user = account.username;
+    this.password = account.password;
   }
 
   get configured(): boolean {

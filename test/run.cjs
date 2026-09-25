@@ -10,4 +10,5 @@ require('./veeam.test.cjs');
 require('./runs.test.cjs');
 require('./topics.test.cjs');
 require('./alerts.test.cjs');
+require('./config.test.cjs');
 require('./architecture.test.cjs');
