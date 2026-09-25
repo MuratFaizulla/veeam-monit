@@ -133,3 +133,47 @@ test('a job card lists one retried run as one line, with its attempts counted', 
   assert.match(list, /attempt 3/, 'причина — от последней попытки');
   assert.doesNotMatch(lines[1], /попыток/, 'у запуска с одной попыткой счётчика нет');
 });
+
+/* ------------------------------------------------------------------ *
+ * The rule itself, with no Veeam behind it
+ * ------------------------------------------------------------------ */
+
+const { runsOf, failureStreakOf, attemptOf, retryWindowOf } = require('../dist/monitor/runs');
+const at = (text) => `2026-09-17T${text}:00+05:00`;
+const attempt = (start, end, result) => ({ startedAt: at(start), endedAt: at(end), result });
+const WINDOW = retryWindowOf(RETRY_POLICY);
+
+test('a retry links to the end of the attempt before it, not to its start', () => {
+  // 52 minutes start to start, ten minutes end to start: one run.
+  const runs = runsOf([attempt('03:54', '03:55', 'Failed'), attempt('03:02', '03:44', 'Failed')], WINDOW);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].attempts.length, 2);
+  assert.equal(runs[0].result, 'failed');
+});
+
+test('a run ends with the attempt that finished it, and a success is nobody\'s retry', () => {
+  const runs = runsOf([
+    attempt('04:10', '04:30', 'Success'),
+    attempt('03:54', '04:00', 'Warning'),
+    attempt('03:00', '03:30', 'Success'),
+  ], WINDOW);
+  assert.deepEqual(runs.map((run) => [run.result, run.attempts.length]), [['success', 2], ['success', 1]]);
+});
+
+test('a gap wider than the window starts a new run', () => {
+  const runs = runsOf([attempt('05:00', '05:10', 'Failed'), attempt('03:00', '03:30', 'Failed')], WINDOW);
+  assert.equal(runs.length, 2);
+  assert.equal(attemptOf([attempt('05:00', '05:10', 'Failed'), attempt('03:00', '03:30', 'Failed')], WINDOW), 1);
+});
+
+test('the streak counts runs that did not succeed, a warning among them, back to a success', () => {
+  const sessions = [
+    attempt('09:00', '09:10', 'Warning'),
+    attempt('07:00', '07:10', 'Failed'),
+    attempt('06:45', '06:50', 'Failed'),
+    attempt('05:00', '05:10', 'Success'),
+    attempt('03:00', '03:10', 'Failed'),
+  ];
+  assert.equal(failureStreakOf(sessions, WINDOW), 2, 'warning and one retried failure; the success stops it');
+  assert.equal(failureStreakOf([], WINDOW), 0);
+});

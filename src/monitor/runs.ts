@@ -66,7 +66,7 @@ export const retriesAllowed = (schedule: VeeamSchedule | undefined): number | un
 const resultOf = (attempt: Attempt): string => (attempt.result ?? '').toLowerCase();
 
 /** Whether `newer` is Veeam retrying the run `older` belongs to. */
-const retries = (newer: Attempt, older: Attempt, windowMs: number): boolean => {
+const isRetryOf = (newer: Attempt, older: Attempt, windowMs: number): boolean => {
   // A good attempt ends its run: nothing retries a success.
   if (!isBadResult(resultOf(older))) return false;
   const started = Date.parse(newer.startedAt ?? '');
@@ -82,7 +82,7 @@ export const runsOf = <T extends Attempt>(newestFirst: T[], windowMs: number): R
   newestFirst.forEach((attempt, index) => {
     attempts.push(attempt);
     const older = newestFirst[index + 1];
-    if (older && retries(attempt, older, windowMs)) return;
+    if (older && isRetryOf(attempt, older, windowMs)) return;
     runs.push({ attempts, result: resultOf(attempts[0]) });
     attempts = [];
   });
