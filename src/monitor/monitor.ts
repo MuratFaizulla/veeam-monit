@@ -22,8 +22,8 @@ export interface MonitorHealth {
  *
  * The bot's ear and the HTTP surface need five things from it: its health, a
  * pass on demand, the summary, and a job card by name or by id. They used to
- * take the whole monitor for that — a class with eight dependencies of its
- * own, so a test of one command had to build a Veeam, an evidence scan and a
+ * take the whole monitor for that — a class with most of the service behind
+ * it, so a test of one command had to build a Veeam, an evidence scan and a
  * delivery pipeline or hand-write a stub and hope it matched.
  *
  * The seam is real: `MonitorService` is one adapter, and the idle monitor the
