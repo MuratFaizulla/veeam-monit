@@ -11,17 +11,17 @@ import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
-import { capacities, RepositoryCapacity } from './repository-capacity';
-import { BackupEvidenceService, Evidence } from './backup-evidence.service';
-import { addressable, digestDue, digestEvent, summarise } from './digest';
+import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
+import { BackupEvidenceService, Evidence } from '../estate/backup-evidence.service';
+import { addressable, digestDue, digestEvent, summarise } from '../estate/digest';
 import { repositoryAlarms } from './repository-alarms';
 import { jobTransitions, Transition } from './transitions';
-import { attemptOf, retriesAllowed, retryWindowOf } from './runs';
-import { JobSession } from './job-card';
+import { attemptOf, retriesAllowed, retryWindowOf } from '../estate/runs';
+import { JobSession } from '../estate/job-card';
 import { renderEvent } from '../telegram/format';
-import { MonitorAnswer } from './answer';
+import { MonitorAnswer } from '../estate/answer';
 import { Monitor, MonitorHealth } from './monitor';
-import { JobQueryService } from './job-query.service';
+import { JobQueryService } from '../estate/job-query.service';
 
 const HOUR = 3_600_000;
 

@@ -3,11 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
-import { Evidence } from '../monitor/backup-evidence.service';
-import { Standings, standingsOf } from '../monitor/job-standing';
-import { isDisabled, isRunningNow } from '../monitor/job-state';
-import { RepositoryCapacity } from '../monitor/repository-capacity';
-import { todayRuns } from '../monitor/schedule-planner';
+import { Evidence } from '../estate/backup-evidence.service';
+import { Standings, standingsOf } from '../estate/job-standing';
+import { isDisabled, isRunningNow } from '../estate/job-state';
+import { RepositoryCapacity } from '../estate/repository-capacity';
+import { todayRuns } from '../estate/schedule-planner';
 import {
   LiveClock,
   LiveHealth,

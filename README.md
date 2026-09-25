@@ -169,26 +169,27 @@ npm run lint   # проверка типов TypeScript
 npm test       # сборка и тесты node:test
 ```
 
-Исходники расположены в `src/telegram`, `src/monitor`, `src/live` и `src/veeam`.
+### Модули и папки
 
-### Модули
-
-Один Nest-модуль на предмет; все импорты направлены в одну сторону:
+Один Nest-модуль на предмет и одна папка на модуль. Папки лежат слоями, и
+любой импорт — и между Nest-модулями, и между файлами — идёт только вниз:
 
 ```
-VeeamModule ← EstateModule ← LiveModule ← MonitorModule ← TelegramUpdatesModule
-TelegramModule (доставка) ← LiveModule, MonitorModule, TelegramUpdatesModule
+updates   TelegramUpdatesModule   команды, кнопки, webhook, HTTP-эндпоинты
+monitor   MonitorModule           цикл опроса и алерты; наружу отдаёт только MONITOR
+live      LiveModule              live-слоты: что в них написано и одно сообщение на слот
+estate    EstateModule            Evidence, карточка задания, сводка, Run'ы
+veeam     VeeamModule             HTTP-клиент, токен, модуль чтения, имена репозиториев и прокси
+telegram  TelegramModule          доставка: чаты, темы, маршрутизация, файл состояния, язык бота
+config                            настройки: одно объявление на переменную
 ```
 
-| Модуль | Файл | Что в нём |
-|---|---|---|
-| `VeeamModule` | `src/veeam/veeam.module.ts` | HTTP-клиент Veeam, токен служебной учётки, имена репозиториев и прокси |
-| `TelegramModule` | `src/telegram/telegram.module.ts` | доставка: чаты, темы, маршрутизация, файл состояния |
-| `EstateModule` | `src/monitor/estate.module.ts` | чтение Veeam: сканирование точек восстановления, карточка задания, сессии |
-| `LiveModule` | `src/live/live.module.ts` | live-слоты: что в них написано и поддержание одного сообщения |
-| `MonitorModule` | `src/monitor/monitor.module.ts` | цикл опроса и алерты; наружу отдаёт только `MONITOR` |
-| `TelegramUpdatesModule` | `src/telegram/updates.module.ts` | команды, кнопки, webhook, HTTP-эндпоинты |
+`veeam` и `telegram` — соседи одного слоя и друг друга не импортируют. Файл,
+который сам ничего из проекта не импортирует (имена слотов, виды уведомлений),
+может использовать любой слой.
 
-`test/architecture.test.cjs` падает, если импорт укажет в обратную сторону или приложение перестанет собираться.
+`test/architecture.test.cjs` падает, если импорт укажет вверх или вбок — между
+Nest-модулями или между файлами разных папок, — или если приложение перестанет
+собираться.
 
 Файл [docs/veeam-openapi.json](docs/veeam-openapi.json) описывает API самого Veeam; `/api/docs` описывает API этого сервиса.

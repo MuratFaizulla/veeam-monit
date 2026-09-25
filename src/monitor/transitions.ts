@@ -1,6 +1,6 @@
 import { NotificationSeverity } from '../telegram/types';
 import { Job } from '../veeam/estate';
-import { isBadResult, rememberedResult } from './job-state';
+import { isBadResult, rememberedResult } from '../estate/job-state';
 
 /**
  * Which job alerts a cycle owes, and what to remember afterwards.

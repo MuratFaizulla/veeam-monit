@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { LiveClock } from '../live/format';
+import { LiveClock } from '../telegram/time';
 import { escapeHtml } from '../telegram/format';
 import { Job } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';

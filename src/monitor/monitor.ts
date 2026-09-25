@@ -1,7 +1,7 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
-import { MonitorAnswer } from './answer';
+import { MonitorAnswer } from '../estate/answer';
 
-export type { MonitorAnswer } from './answer';
+export type { MonitorAnswer } from '../estate/answer';
 
 export interface MonitorHealth {
   lastCheckAt: string | null;

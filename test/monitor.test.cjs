@@ -373,7 +373,7 @@ test('both slots are told the same thing about which jobs are in scope', async (
 });
 
 test('a job is only excused on positive evidence, never on a gap', async () => {
-  const { standingsOf } = require('../dist/monitor/job-standing');
+  const { standingsOf } = require('../dist/estate/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
     unscheduled: new Set(['known-manual']), streakByJob: new Map(), depthByJob: new Map(),
@@ -452,7 +452,7 @@ test('/status carries the same health as /check, without running anything', asyn
 });
 
 test('an approximate name finds the job somebody meant', () => {
-  const { matchJob } = require('../dist/monitor/job-card');
+  const { matchJob } = require('../dist/estate/job-card');
   const jobs = [
     { id: '1', name: 'TTC_Veeam_DB_Konaev' },
     { id: '2', name: 'TTC_Konaev_EM_DB' },
@@ -466,7 +466,7 @@ test('an approximate name finds the job somebody meant', () => {
 });
 
 test('a name that fits several jobs is listed, never guessed at', () => {
-  const { matchJob } = require('../dist/monitor/job-card');
+  const { matchJob } = require('../dist/estate/job-card');
   const jobs = [{ id: '1', name: 'TTC_Veeam_DB_Konaev' }, { id: '2', name: 'TTC_Konaev_EM_DB' }];
 
   // Answering confidently about the wrong job is worse than answering with a
@@ -635,7 +635,7 @@ test('a job that is not failing is not asked which machine failed', async () => 
 });
 
 test('a schedule is read the way Veeam means it', () => {
-  const { describeSchedule, describeRetry } = require('../dist/monitor/schedule-planner');
+  const { describeSchedule, describeRetry } = require('../dist/estate/schedule-planner');
 
   assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }), 'ежедневно в 22:00');
   assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'WeekDays', localTime: '03:00' } }), 'по рабочим дням в 03:00');
@@ -651,7 +651,7 @@ test('a schedule is read the way Veeam means it', () => {
 });
 
 test('a named proxy is told apart from automatic selection', () => {
-  const { settingsOf } = require('../dist/monitor/job-card');
+  const { settingsOf } = require('../dist/estate/job-card');
   const names = {
     repositories: new Map([['r1', 'AST01_BKP06']]),
     proxies: new Map([['p1', '10.10.108.20'], ['p2', '10.10.108.21']]),
@@ -702,8 +702,8 @@ const pressed = (w, data) => w.updates.handleUpdate({
 });
 
 test('a button and its reader cannot disagree about what it means', () => {
-  const { encode, decode } = require('../dist/telegram/keyboard');
-  const { BOT_COMMANDS } = require('../dist/telegram/commands');
+  const { encode, decode } = require('../dist/updates/keyboard');
+  const { BOT_COMMANDS } = require('../dist/updates/commands');
 
   for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
@@ -801,7 +801,7 @@ test('a job that disappeared between the message and the press says so', async (
 });
 
 test('a running job Veeam still calls disabled is counted as running', async () => {
-  const { summarise } = require('../dist/monitor/digest');
+  const { summarise } = require('../dist/estate/digest');
   const { jobOf } = require('../dist/veeam/estate');
   const jobs = [
     { id: '1', name: 'Konaev EM', status: 'Disabled', lastResult: 'Success' },
@@ -934,7 +934,7 @@ test('answers older than Telegram allows are never offered for deletion', () => 
  * ------------------------------------------------------------------ */
 
 test('"none" never erases what was known about a job', () => {
-  const { rememberedResult } = require('../dist/monitor/job-state');
+  const { rememberedResult } = require('../dist/estate/job-state');
 
   // Veeam says "none" while a job is running. Recording it over a real result
   // is what lost every recovery and re-announced every retry.
@@ -976,7 +976,7 @@ test('a run that fails, retries and finally succeeds is one alert and one recove
 });
 
 test('an attempt is counted from the sessions behind it', () => {
-  const { attemptOf, retryWindowOf, retriesAllowed } = require('../dist/monitor/runs');
+  const { attemptOf, retryWindowOf, retriesAllowed } = require('../dist/estate/runs');
   const run = (started, ended, result) => ({ startedAt: started, endedAt: ended, result });
   // Newest first, ten minutes apart — Veeam retrying one run.
   const retried = [

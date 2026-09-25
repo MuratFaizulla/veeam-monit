@@ -1,4 +1,4 @@
-import { TelegramKeyboard } from './types';
+import { TelegramKeyboard } from '../telegram/types';
 
 /**
  * The buttons under an answer, and what a pressed one means.

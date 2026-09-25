@@ -1,21 +1,21 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { plural, stampOf } from '../live/format';
+import { plural, stampOf } from '../telegram/time';
 import { MONITOR, Monitor, MonitorAnswer } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
-import { escapeHtml, truncate } from './format';
+import { escapeHtml, truncate } from '../telegram/format';
 import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard } from './keyboard';
-import { TelegramStateStore } from './state.store';
-import { TelegramTopicsService } from './topics.service';
-import { TelegramTransportService } from './transport.service';
+import { TelegramStateStore } from '../telegram/state.store';
+import { TelegramTopicsService } from '../telegram/topics.service';
+import { TelegramTransportService } from '../telegram/transport.service';
 import {
   TelegramCallbackQuery,
   TelegramChat,
   TelegramDestination,
   TelegramMessage,
   TelegramUpdate,
-} from './types';
+} from '../telegram/types';
 
 /** Shortest gap between two passes asked for by hand, in the group. */
 const CHECK_COOLDOWN_MS = 30_000;

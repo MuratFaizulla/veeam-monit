@@ -9,10 +9,10 @@ require('reflect-metadata');
 const { AppModule } = require('../dist/app.module');
 const { VeeamModule } = require('../dist/veeam/veeam.module');
 const { TelegramModule } = require('../dist/telegram/telegram.module');
-const { EstateModule } = require('../dist/monitor/estate.module');
+const { EstateModule } = require('../dist/estate/estate.module');
 const { LiveModule } = require('../dist/live/live.module');
 const { MonitorModule } = require('../dist/monitor/monitor.module');
-const { TelegramUpdatesModule } = require('../dist/telegram/updates.module');
+const { TelegramUpdatesModule } = require('../dist/updates/updates.module');
 const { MONITOR } = require('../dist/monitor/monitor');
 
 const importsOf = (module) =>
@@ -59,7 +59,7 @@ test('the whole application assembles', () => {
     const { NestFactory } = require(${JSON.stringify(path.join(root, 'node_modules/@nestjs/core'))});
     const { AppModule } = require(${JSON.stringify(path.join(root, 'dist/app.module'))});
     const { MONITOR } = require(${JSON.stringify(path.join(root, 'dist/monitor/monitor'))});
-    const { TelegramUpdatesService } = require(${JSON.stringify(path.join(root, 'dist/telegram/updates.service'))});
+    const { TelegramUpdatesService } = require(${JSON.stringify(path.join(root, 'dist/updates/updates.service'))});
     const { TelegramLiveService } = require(${JSON.stringify(path.join(root, 'dist/live/live.service'))});
     (async () => {
       const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
@@ -90,4 +90,55 @@ test('the whole application assembles', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   assert.ok(AppModule);
+});
+
+test('every import between folders points down the layers the modules are wired in', () => {
+  // The Nest imports above can be clean while the files are not: a helper
+  // imported across folders is invisible to Reflect metadata. That is how the
+  // estate files came to import the live slots' formatter, and the state store
+  // two files living in monitor/ and live/, while those modules imported them
+  // back — cycles between folders the module graph could not see.
+  //
+  // Lower layers never import higher ones. A file that imports nothing of ours
+  // is vocabulary — slot names, notification kinds — and anyone may use it.
+  const LAYERS = [
+    ['config', 'logging'],
+    ['veeam', 'telegram'],
+    ['estate'],
+    ['live'],
+    ['monitor'],
+    ['updates', 'http'],
+  ];
+  const rank = new Map(LAYERS.flatMap((folders, index) => folders.map((folder) => [folder, index])));
+  const src = path.resolve(__dirname, '..', 'src');
+  const files = [];
+  (function walk(dir) {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith('.ts')) files.push(full);
+    }
+  })(src);
+  const importsOf = (file) =>
+    [...fs.readFileSync(file, 'utf8').matchAll(/from '(\.{1,2}\/[^']+)'/g)]
+      .map((match) => path.resolve(path.dirname(file), match[1]) + '.ts');
+  const folderOf = (file) => path.relative(src, file).split(path.sep)[0];
+
+  const wrong = [];
+  for (const file of files) {
+    const from = folderOf(file);
+    if (!rank.has(from)) {
+      assert.ok(!file.slice(src.length + 1).includes(path.sep), `folder ${from} has no layer`);
+      continue; // main.ts and app.module.ts wire everything
+    }
+    for (const target of importsOf(file)) {
+      const to = folderOf(target);
+      if (to === from) continue;
+      if (fs.existsSync(target) && importsOf(target).length === 0) continue;
+      if (!rank.has(to) || rank.get(to) >= rank.get(from)) {
+        wrong.push(`${path.relative(src, file)} -> ${path.relative(src, target)}`);
+      }
+    }
+  }
+  assert.deepEqual(wrong, [], 'импорт вверх по слоям или вбок');
 });

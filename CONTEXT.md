@@ -18,7 +18,7 @@ Evidence is either **ready** or **pending**, and pending carries the reason a
 slot can show. There is no third state and no sentinel: "never scanned" and
 "Veeam did not answer this cycle" are both pending, with different reasons.
 
-Owned by `src/monitor/backup-evidence.service.ts`. Readers take it as
+Owned by `src/estate/backup-evidence.service.ts`. Readers take it as
 an argument; nothing reads it out of a field.
 
 Refreshed once per cycle, as its own step, right after the job list is read
@@ -47,7 +47,7 @@ continues a failure streak — but the restore points it wrote still count:
 Veeam finished the backup, with complaints. Only a session that *failed* has
 its points set aside (see **Restore point**). Two questions, two answers.
 
-Which sessions are one Run is decided in one place, `src/monitor/runs.ts`,
+Which sessions are one Run is decided in one place, `src/estate/runs.ts`,
 and read by all three things that need it: the alert's **Attempt** label, the
 failure streak in 🛡 Protection, and the run list on a **Job card**. They used
 to fold sessions by rules of their own, and the streak's — start to start —
@@ -90,7 +90,7 @@ slots ask different questions of the same Standing — "how many Runs has it
 skipped" and "is this past the deadline worth reporting" — and those are
 decisions about what to alarm on.
 
-Owned by `src/monitor/job-standing.ts`.
+Owned by `src/estate/job-standing.ts`.
 
 ## Cadence
 
@@ -117,7 +117,7 @@ low-space alarm and exists only when Veeam actually reported free space — a
 guess is not grounds for waking somebody up, and an unknown percentage is never
 zero.
 
-Owned by `src/monitor/repository-capacity.ts`. The 💾 slot renders what
+Owned by `src/estate/repository-capacity.ts`. The 💾 slot renders what
 it is given, like every other live slot.
 
 ## Live slot
@@ -195,8 +195,8 @@ the same. Two adapters sit behind that seam: `MonitorService`, and the idle
 monitor the tests use for a world with no Veeam, which a test keeps in step
 with the real one.
 
-Intake is owned by `src/telegram/updates.service.ts`; commands and Buttons by
-`src/telegram/commands.service.ts`, declared in `src/telegram/commands.ts`.
+Intake is owned by `src/updates/updates.service.ts`; commands and Buttons by
+`src/updates/commands.service.ts`, declared in `src/updates/commands.ts`.
 
 ## Attempt
 
@@ -214,7 +214,7 @@ next failure look like a new one. `none` is not a result — see
 `rememberedResult`. The same mistake lost every recovery, whose definition is
 "the previous result was bad".
 
-Owned by `src/monitor/runs.ts`, with the **Run** it is an attempt at.
+Owned by `src/estate/runs.ts`, with the **Run** it is an attempt at.
 
 ## Transition
 
@@ -257,7 +257,7 @@ same estate at the same moment. The Working sessions are one read a cycle,
 check — shared by ▶️, 📈 and the daily Summary; `/digest` makes the same read.
 They used to be read twice a cycle with two ideas of "Working".
 
-Owned by `src/monitor/digest.ts`.
+Owned by `src/estate/digest.ts`.
 
 ## Job card
 
@@ -290,7 +290,7 @@ then containment, then every word of the query appearing somewhere — because
 the name arrives half-remembered. Several matches are listed, never resolved by
 guessing.
 
-Owned by `src/monitor/job-card.ts`.
+Owned by `src/estate/job-card.ts`.
 
 ## Inventory
 
@@ -392,7 +392,7 @@ One offered next step under an answer. What it means travels in Telegram's
 never by its name, and a button opens the job it was labelled with even if the
 estate changed between the message and the press.
 
-The encoding and its reader are one module, `src/telegram/keyboard.ts`, because
+The encoding and its reader are one module, `src/updates/keyboard.ts`, because
 they are one decision seen twice. Written apart they drift, and nothing fails
 until somebody presses one in production. An action the running version does
 not recognise — a button on an older message — is acknowledged and ignored
@@ -402,7 +402,7 @@ The **command menu** is the neighbouring idea: the list registered with
 `setMyCommands` at startup, which Telegram shows beside the input field. It is
 the only place the bot's commands are discoverable without reading `/help`.
 
-Each command is declared once, in `src/telegram/commands.ts`: its name, the
+Each command is declared once, in `src/updates/commands.ts`: its name, the
 hidden spellings (`/start`, `/chatid`), its menu line, its `/help` paragraph,
 the Answer it gives and the Button that stands for it. The menu and `/help`
 are derived from that list and the dispatch reads it. They were four lists

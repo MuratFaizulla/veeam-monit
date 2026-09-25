@@ -8,7 +8,7 @@ import { TelegramApiError, TelegramTransportService } from '../telegram/transpor
 import { TelegramChat } from '../telegram/types';
 import { isFooter } from './format';
 import { LiveSlot, specOf } from './slots';
-import { LiveMessageRef } from './live-messages';
+import { LiveMessageRef } from '../telegram/live-messages';
 
 /**
  * How long a live slot keeps one message before posting a fresh one.

@@ -3,10 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { BOT_COMMANDS } from './commands';
 import { TelegramCommandsService } from './commands.service';
-import { TelegramStateStore } from './state.store';
-import { TelegramTopicsService } from './topics.service';
-import { TelegramTransportService } from './transport.service';
-import { TelegramChat, TelegramUpdate } from './types';
+import { TelegramStateStore } from '../telegram/state.store';
+import { TelegramTopicsService } from '../telegram/topics.service';
+import { TelegramTransportService } from '../telegram/transport.service';
+import { TelegramChat, TelegramUpdate } from '../telegram/types';
 
 /**
  * How the bot hears from Telegram.

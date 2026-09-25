@@ -11,8 +11,8 @@ import {
 } from '@nestjs/swagger';
 import { AppConfig } from '../config/configuration';
 import { MONITOR, Monitor } from '../monitor/monitor';
-import { TelegramRoutingService } from './routing.service';
-import { DELIVERY_OUTCOMES, DeliveryReport, TelegramService } from './telegram.service';
+import { TelegramRoutingService } from '../telegram/routing.service';
+import { DELIVERY_OUTCOMES, DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramUpdatesService } from './updates.service';
 import {
   TelegramAdminGuard,
@@ -21,7 +21,7 @@ import {
 } from './access.guard';
 import { announcement, ManualEvent, probe } from './manual-event';
 import { AnnouncementBody, ProbeBody } from './dto';
-import { TelegramUpdate } from './types';
+import { TelegramUpdate } from '../telegram/types';
 
 /** Shape of what `notify` reports back, for the published document. */
 const DELIVERY_REPORT = {

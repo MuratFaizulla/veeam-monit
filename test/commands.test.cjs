@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   CHAT, world, idleMonitor, TelegramCommandsService, TelegramUpdatesService,
 } = require('./world.cjs');
-const { COMMANDS, BOT_COMMANDS } = require('../dist/telegram/commands');
+const { COMMANDS, BOT_COMMANDS } = require('../dist/updates/commands');
 
 /* ------------------------------------------------------------------ *
  * Commands, declared once
@@ -70,7 +70,7 @@ test('the menu and /help agree that commands work in General', async () => {
 });
 
 test('a command with a Button answers the same whether typed or pressed', async () => {
-  const { encode } = require('../dist/telegram/keyboard');
+  const { encode } = require('../dist/updates/keyboard');
   const withButton = COMMANDS.filter((command) => command.button);
 
   // The four Buttons under the bot's answers that stand for a command. The

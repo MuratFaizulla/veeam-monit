@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES } from './types';
+import { NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES } from '../telegram/types';
 
 /**
  * The request bodies of the Telegram endpoints, declared once.
