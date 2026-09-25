@@ -111,7 +111,7 @@ export interface ScheduledRun {
   name: string;
   /** ISO instant of the next scheduled start. */
   at: string;
-  cadence?: string;
+  scheduleKind?: string;
 }
 
 export interface LiveRunning {
@@ -287,7 +287,7 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
         '',
       ];
       for (const run of runs.slice(0, shown)) {
-        const kind = run.cadence ? ` <i>· ${escapeHtml(run.cadence)}</i>` : '';
+        const kind = run.scheduleKind ? ` <i>· ${escapeHtml(run.scheduleKind)}</i>` : '';
         lines.push(`${timeOnly(run.at, clock)} · ${escapeHtml(run.name)}${kind}`);
       }
       const rest = runs.length - shown;

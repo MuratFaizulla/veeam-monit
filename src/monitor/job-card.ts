@@ -2,7 +2,8 @@ import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../live/format';
 import { VeeamJob, VeeamJobState, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
-import { iconOf, resultOf } from './job-state';
+import { iconOf, isBadResult, resultOf } from './job-state';
+import { runsOf } from './runs';
 import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
 
 /**
@@ -20,8 +21,13 @@ import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
  * the asker must be told about.
  */
 
-/** A finished or running session of this job. */
-export interface JobRun {
+/**
+ * One session of this job — one attempt, not one run.
+ *
+ * Veeam retries a failed job by starting another session; which sessions are
+ * one run is decided in runs.ts.
+ */
+export interface JobSession {
   /** The session id, which is how its per-object detail is reached. */
   id?: string;
   startedAt?: string;
@@ -77,7 +83,12 @@ export interface JobCard {
   nextRun?: string;
   objects?: number;
   /** Newest sessions first. Empty when the sessions could not be read. */
-  runs: JobRun[];
+  runs: JobSession[];
+  /**
+   * How far apart two sessions may be and still be one run, from the job's own
+   * retry policy (see runs.ts). The run list folds its sessions by it.
+   */
+  retryWindowMs: number;
   /** Absent when the job configuration could not be read. */
   settings?: JobSettings;
   /** The machines this job protects, as its configuration lists them. */
@@ -248,7 +259,7 @@ export const machinesOf = (
  * ------------------------------------------------------------------ */
 
 /** "32 мин", or nothing when the run has not ended. */
-const spanOf = (run: JobRun): string | undefined => {
+const spanOf = (run: JobSession): string | undefined => {
   if (!run.startedAt || !run.endedAt) return undefined;
   const from = Date.parse(run.startedAt);
   const to = Date.parse(run.endedAt);
@@ -280,7 +291,7 @@ const whenOf = (iso: string | undefined, clock: LiveClock): string | undefined =
 };
 
 /** "раз в сутки", "примерно раз в 7.0 сут". Null cadence says nothing. */
-const cadenceOf = (days: number | null | undefined): string | undefined => {
+const cadenceLabel = (days: number | null | undefined): string | undefined => {
   if (!days || !Number.isFinite(days)) return undefined;
   if (days >= 0.9 && days <= 1.1) return 'примерно раз в сутки';
   if (days >= 6.5 && days <= 7.5) return 'примерно раз в неделю';
@@ -408,26 +419,31 @@ export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
       `Новейшая: ${longMoment(freshest, clock)}`,
       `Старейшая: ${longMoment(oldest, clock)}`,
     );
-    const cadence = cadenceOf(card.cadenceDays);
+    const cadence = cadenceLabel(card.cadenceDays);
     if (cadence) lines.push(`Периодичность: ${cadence}`);
   } else {
     lines.push(card.pointsUnavailable ?? 'У задания нет ни одной точки восстановления.');
   }
 
-  const finished = card.runs.filter((run) => run.endedAt);
+  // Runs, not sessions: four twenty-second retries and the attempt that worked
+  // are one night, and listed a line each they read as a disaster.
+  const finished = runsOf(card.runs.filter((run) => run.endedAt), card.retryWindowMs);
   if (finished.length > 0) {
     lines.push('', '<b>Последние запуски</b>');
     for (const run of finished.slice(0, RUNS_SHOWN)) {
-      const when = momentOf(run.startedAt, clock) ?? '—';
-      const span = spanOf(run);
-      const result = (run.result ?? '').toLowerCase();
-      // The reason only on the runs that went wrong: on a success Veeam puts
-      // its own boilerplate in the same field and it says nothing.
+      const first = run.attempts[run.attempts.length - 1];
+      const last = run.attempts[0];
+      const when = momentOf(first.startedAt, clock) ?? '—';
+      const span = spanOf({ startedAt: first.startedAt, endedAt: last.endedAt });
+      const tries = run.attempts.length > 1 ? ` · попыток: ${run.attempts.length}` : '';
+      // The reason only on the runs that went wrong, and from the attempt that
+      // finished the run: on a success Veeam puts its own boilerplate in the
+      // same field and it says nothing.
       const why =
-        (result === 'failed' || result === 'warning') && run.message
-          ? `\n   <i>${escapeHtml(clip(oneLine(run.message), MESSAGE_SHOWN))}</i>`
+        isBadResult(run.result) && last.message
+          ? `\n   <i>${escapeHtml(clip(oneLine(last.message), MESSAGE_SHOWN))}</i>`
           : '';
-      lines.push(`${iconOf(result)} ${when}${span ? ` · ${span}` : ''}${why}`);
+      lines.push(`${iconOf(run.result)} ${when}${span ? ` · ${span}` : ''}${tries}${why}`);
     }
   }
 

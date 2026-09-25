@@ -972,7 +972,7 @@ test('a run that fails, retries and finally succeeds is one alert and one recove
 });
 
 test('an attempt is counted from the sessions behind it', () => {
-  const { attemptOf, retryWindowOf, retriesAllowed } = require('../dist/monitor/retries');
+  const { attemptOf, retryWindowOf, retriesAllowed } = require('../dist/monitor/runs');
   const run = (started, ended, result) => ({ startedAt: started, endedAt: ended, result });
   // Newest first, ten minutes apart — Veeam retrying one run.
   const retried = [

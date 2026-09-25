@@ -146,7 +146,7 @@ function veeamFake(routes) {
 function monitorOf(w, veeam, auth, evidence) {
   const scan = evidence ?? new BackupEvidenceService(w.config, veeam, auth);
   const query = new JobQueryService(w.config, veeam, auth, scan, new VeeamInventoryService());
-  const snapshots = new LiveSnapshotsService(w.config, veeam, auth, scan, query);
+  const snapshots = new LiveSnapshotsService(w.config, veeam, auth, query);
   return new MonitorService(
     w.config, veeam, w.service, auth, w.store, w.live,
     scan, query, snapshots,

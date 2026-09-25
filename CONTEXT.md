@@ -21,6 +21,12 @@ slot can show. There is no third state and no sentinel: "never scanned" and
 Owned by `src/monitor/backup-evidence.service.ts`. Readers take it as
 an argument; nothing reads it out of a field.
 
+Refreshed once per cycle, as its own step, right after the job list is read
+and before anything reads it — the alerts as much as the live slots. It used
+to be refreshed by the live step, which runs last, so the alerts read the
+previous cycle's evidence; after a cycle Veeam did not answer that was
+pending, and the first alert after the outage lost the job's retry policy.
+
 ## Run
 
 One execution of a Veeam job, *including its automatic retries*. Not a session.
@@ -31,7 +37,16 @@ Run. Everything the bot counts — failure streaks, missed backups, retained
 history — counts Runs.
 
 A Run **succeeded** if the attempt that finished it succeeded, whatever the
-earlier attempts did.
+earlier attempts did. One that ended in a warning did not succeed.
+
+Which sessions are one Run is decided in one place, `src/monitor/runs.ts`,
+and read by all three things that need it: the alert's **Attempt** label, the
+failure streak in 🛡 Protection, and the run list on a **Job card**. They used
+to fold sessions by rules of their own, and the streak's — start to start —
+counted a Run whose attempts took longer than the allowance as several: one
+night the alert called "3 из 4" was, to 🛡, three failed Runs in a row.
+
+A session is an attempt, not a Run; in code it is `JobSession`.
 
 ## Restore point
 
@@ -180,7 +195,7 @@ next failure look like a new one. `none` is not a result — see
 `rememberedResult`. The same mistake lost every recovery, whose definition is
 "the previous result was bad".
 
-Owned by `src/monitor/retries.ts`.
+Owned by `src/monitor/runs.ts`, with the **Run** it is an attempt at.
 
 ## Summary
 

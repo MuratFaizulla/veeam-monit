@@ -11,11 +11,11 @@ import { TelegramStateStore } from '../telegram/state.store';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
 import { capacities, RepositoryCapacity } from './repository-capacity';
-import { BackupEvidenceService } from './backup-evidence.service';
+import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { addressable, digestEvent, summarise } from './digest';
 import { isBadResult, rememberedResult, resultOf } from './job-state';
-import { attemptOf, retriesAllowed, retryWindowOf } from './retries';
-import { JobRun } from './job-card';
+import { attemptOf, retriesAllowed, retryWindowOf } from './runs';
+import { JobSession } from './job-card';
 import { renderEvent } from '../telegram/format';
 import { MonitorAnswer } from './answer';
 import { Monitor, MonitorHealth } from './monitor';
@@ -107,17 +107,29 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       const token = reachable ? await this.checkAuthentication() : null;
       let jobs: VeeamJobState[] | undefined;
       let repositories: RepositoryCapacity[] | undefined;
+      // Each step is isolated: one hiccup on /jobs/states used to abort the
+      // rest of the cycle, taking the repository check and the digest with it.
+      if (token) jobs = await this.step('jobs', () => this.readJobs(token));
+
+      // Once, before anything reads it — the alerts as much as the live slots.
+      // It used to be refreshed by the live step, which runs last, so the
+      // alerts read the previous cycle's evidence: after one cycle Veeam did
+      // not answer, that was "pending", and the first alert after the outage —
+      // the likeliest alert of all — lost the job's retry policy and said
+      // "Попытка: 2" instead of "2 из 4".
+      await this.evidence.refresh(token, jobs);
+      const evidence = this.evidence.evidence;
+
       if (token) {
-        // Each step is isolated: one hiccup on /jobs/states used to abort the
-        // rest of the cycle, taking the repository check and the digest with it.
-        jobs = await this.step('jobs', () => this.checkJobs(token));
+        const read = jobs;
+        if (read) await this.step('alerts', () => this.checkJobs(read, evidence, token));
         repositories = await this.step('repositories', () => this.checkRepositories(token));
         await this.step('digest', () => this.maybeSendDigest(token));
       }
       this.health.lastCheckAt = new Date().toISOString();
       // Last, so it reports what this cycle actually found — including the
       // cycles where Veeam answered nothing at all.
-      await this.step('live', () => this.publishLive(jobs, repositories, token));
+      await this.step('live', () => this.publishLive(jobs, repositories, token, evidence));
       return 'ran';
     } finally {
       this.running = false;
@@ -251,13 +263,21 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Returns the states it just read, so the live message reuses that fetch. */
-  private async checkJobs(accessToken: string): Promise<VeeamJobState[]> {
+  /** Read once per cycle; the alerts, the evidence and the live slots share it. */
+  private async readJobs(accessToken: string): Promise<VeeamJobState[]> {
     const response = await authorized<VeeamCollection<VeeamJobState>>(this.reader(accessToken), {
       method: 'GET',
       path: JOB_STATES,
     });
-    const jobs = response.data ?? [];
+    return response.data ?? [];
+  }
+
+  /** Announces what changed since the results the monitor remembers. */
+  private async checkJobs(
+    jobs: VeeamJobState[],
+    evidence: Evidence,
+    accessToken: string,
+  ): Promise<void> {
 
     // An empty store means this installation has never been observed. Seeding
     // silently avoids announcing history as if it just happened; every later
@@ -272,7 +292,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
       if (severity) {
         const report = await this.emit(
-          await this.jobEvent(job, result, previous, severity, accessToken),
+          await this.jobEvent(job, result, previous, severity, evidence, accessToken),
         );
         // Advancing the remembered result is the record of "this transition has
         // been dealt with". A delivery that reached nobody has not dealt with
@@ -289,8 +309,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     if (seeding) {
       this.logger.log(`Veeam monitor seeded with ${jobs.length} job states, alerts start next cycle`);
     }
-
-    return jobs;
   }
 
   /* ---------------------------------------------------------------- *
@@ -308,11 +326,13 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     jobs: VeeamJobState[] | undefined,
     repositories: RepositoryCapacity[] | undefined,
     accessToken: string | null,
+    evidence: Evidence,
   ): Promise<void> {
     const pages = await this.snapshots.pages({
       jobs,
       repositories,
       accessToken,
+      evidence,
       health: {
         reachable: this.health.reachable === true,
         authenticated: this.health.authenticated,
@@ -342,6 +362,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     result: string,
     previous: string | undefined,
     severity: NotificationSeverity,
+    evidence: Evidence,
     accessToken: string,
   ): Promise<NotificationEvent> {
     const name = job.name ?? job.id ?? 'неизвестное задание';
@@ -363,7 +384,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       fields: [
         ['Результат', result.toUpperCase()],
         ['Было', previous ? previous.toUpperCase() : '—'],
-        ['Попытка', this.attemptLabel(job, runs)],
+        ['Попытка', this.attemptLabel(job, runs, evidence)],
         ['Тип', job.type],
         ['Статус', job.status],
         ['Последний запуск', job.lastRun],
@@ -386,8 +407,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    * scan, which already reads every job configuration — a policy that changed
    * in the last twenty minutes is not worth a request per alert.
    */
-  private attemptLabel(job: VeeamJobState, runs: JobRun[]): string | undefined {
-    const evidence = this.evidence.evidence;
+  private attemptLabel(
+    job: VeeamJobState,
+    runs: JobSession[],
+    evidence: Evidence,
+  ): string | undefined {
     const schedule =
       evidence.status === 'ready' && job.id ? evidence.schedulesByJob.get(job.id) : undefined;
     const attempt = attemptOf(runs, retryWindowOf(schedule));

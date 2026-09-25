@@ -27,7 +27,7 @@ export const daysOf = (days: string[] | undefined): string =>
  * The schedule in one line: "пн, ср, пт в 03:12", "ежедневно в 22:00",
  * "только вручную".
  *
- * Shares its reading of the configuration with `cadence` below, which answers
+ * Shares its reading of the configuration with `scheduleKind` below, which answers
  * the shorter version of the same question for the 📅 slot. Both are here
  * because this is the module that knows what a VeeamSchedule means; a second
  * reading of `dailyKind` living next to a renderer would be the third copy of
@@ -96,7 +96,7 @@ const localDay = (date: Date, timezone: string): string =>
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(date);
 
-const cadence = (schedule: VeeamSchedule | undefined): string | undefined => {
+const scheduleKind = (schedule: VeeamSchedule | undefined): string | undefined => {
   if (schedule?.monthly?.isEnabled) return 'ежемесячно';
   if (schedule?.periodically?.isEnabled) return 'периодически';
   if (schedule?.daily?.isEnabled) {
@@ -129,7 +129,7 @@ export const todayRuns = (
       return [{
         name: job.name ?? job.id ?? 'без имени',
         at: new Date(at).toISOString(),
-        cadence: cadence(schedule),
+        scheduleKind: scheduleKind(schedule),
       }];
     })
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
