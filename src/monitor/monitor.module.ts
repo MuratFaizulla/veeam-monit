@@ -11,8 +11,8 @@ import { MonitorService } from './monitor.service';
  * live slots.
  *
  * Exports `MONITOR` and nothing else. What the rest of the service may ask of
- * the monitor is that interface; the class behind it, with its eight
- * dependencies, stays in here.
+ * the monitor is that interface; the class behind it, with everything it
+ * depends on, stays in here.
  */
 @Module({
   imports: [VeeamModule, EstateModule, LiveModule, TelegramModule],

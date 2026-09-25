@@ -93,10 +93,6 @@ export class TelegramTopicsService {
   }
 
   /**
-   * Drops a mapping whose topic Telegram no longer knows, so the next event
-   * re-creates it instead of failing forever against a deleted thread.
-   */
-  /**
    * Sends into a topic, surviving somebody deleting it.
    *
    * The recovery was written twice — once for alerts and once for the live
@@ -106,8 +102,13 @@ export class TelegramTopicsService {
    * to it; if re-resolving hands back the same dead thread, the message goes to
    * General, because a delivered alert in the wrong place beats none.
    *
-   * `fixedThread` addresses a topic somebody created by hand, which the bot
-   * cannot re-create and so never forgets.
+   * `fixedThread` addresses one thread directly: a topic somebody created by
+   * hand, or the one a live slot remembers posting into. Neither is the same
+   * thing as the name's mapping, so a dead fixed thread is not a reason to
+   * forget the name — only a dead thread the name itself points at is. That
+   * distinction is what stops a third topic: a slot remembering a renamed
+   * topic that was then deleted used to drop the mapping of the living topic
+   * with the configured name, and re-resolving created another one.
    */
   async send(
     chat: TelegramChat,
@@ -124,7 +125,10 @@ export class TelegramTopicsService {
       return await this.transport.sendMessage(destination, text);
     } catch (error) {
       if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
-      this.forget(destination.chatId, destination.topic);
+      const name = destination.topic ? topicName(destination.topic) : undefined;
+      if (name && this.store.threadId(destination.chatId, name) === destination.threadId) {
+        this.forget(destination.chatId, name);
+      }
       const retry = await this.destination(chat, topic);
       return this.transport.sendMessage(
         retry.threadId === destination.threadId ? { chatId: destination.chatId } : retry,
@@ -133,6 +137,10 @@ export class TelegramTopicsService {
     }
   }
 
+  /**
+   * Drops a mapping whose topic Telegram no longer knows, so the next event
+   * re-creates it instead of failing forever against a deleted thread.
+   */
   forget(chatId: string, name: string | undefined): void {
     if (!name) return;
     // A topic that had to be re-created is evidence the chat is usable again.
