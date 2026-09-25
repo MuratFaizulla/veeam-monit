@@ -2,6 +2,7 @@
 // their own. Running a single file no longer means running a quarter of the
 // suite without noticing — use `npm test`.
 require('./telegram.test.cjs');
+require('./commands.test.cjs');
 require('./monitor.test.cjs');
 require('./live.test.cjs');
 require('./live-performance.test.cjs');

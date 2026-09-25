@@ -703,7 +703,8 @@ const pressed = (w, data) => w.updates.handleUpdate({
 });
 
 test('a button and its reader cannot disagree about what it means', () => {
-  const { encode, decode, BOT_COMMANDS } = require('../dist/telegram/keyboard');
+  const { encode, decode } = require('../dist/telegram/keyboard');
+  const { BOT_COMMANDS } = require('../dist/telegram/commands');
 
   for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);

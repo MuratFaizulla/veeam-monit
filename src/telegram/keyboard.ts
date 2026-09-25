@@ -1,4 +1,4 @@
-import { TelegramBotCommand, TelegramKeyboard } from './types';
+import { TelegramKeyboard } from './types';
 
 /**
  * The buttons under an answer, and what a pressed one means.
@@ -94,24 +94,3 @@ export const jobsKeyboard = (
 /** Under a job card: ask the same question again, or step back out. */
 export const cardKeyboard = (id: string): TelegramKeyboard | undefined =>
   keyboard([[['🔄 Обновить', { kind: 'job', id }], ['📊 Сводка', { kind: 'summary' }]]]);
-
-/**
- * The menu Telegram shows next to the input field.
- *
- * Registered with the Bot API rather than printed, so somebody who has never
- * read `/help` still sees what the bot can do — which in a group, where the bot
- * was added once by one person and inherited by everybody else, is most people.
- *
- * `/job` is listed with its argument spelled out: the menu inserts the command
- * and leaves the cursor after it, so the description is the only place the
- * argument can be explained.
- */
-export const BOT_COMMANDS: TelegramBotCommand[] = [
-  { command: 'status', description: 'Состояние монитора: отвечает ли Veeam' },
-  { command: 'digest', description: 'Сводка по всем заданиям' },
-  { command: 'job', description: 'Карточка задания: /job часть имени' },
-  { command: 'check', description: 'Опросить Veeam сейчас' },
-  { command: 'topics', description: 'Известные боту темы форума' },
-  { command: 'clear', description: 'Убрать мои ответы в этой теме' },
-  { command: 'help', description: 'Что умеет бот' },
-];
