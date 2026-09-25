@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MonitorModule } from '../monitor/monitor.module';
 import { TelegramAdminGuard, TelegramEnabledGuard, TelegramWebhookGuard } from './access.guard';
+import { TelegramCommandsService } from './commands.service';
 import { TelegramController } from './telegram.controller';
 import { TelegramModule } from './telegram.module';
 import { TelegramUpdatesService } from './updates.service';
@@ -13,10 +14,20 @@ import { TelegramUpdatesService } from './updates.service';
  * anything. With it inside the delivery module, the monitor — which sends
  * through delivery — and the ear — which asks the monitor — made one cycle,
  * and the whole service had to be a single module to hold it.
+ *
+ * Inside, hearing and interpreting are two providers: `TelegramUpdatesService`
+ * is how an Update arrives, `TelegramCommandsService` what it means. Only the
+ * second asks the monitor.
  */
 @Module({
   imports: [TelegramModule, MonitorModule],
   controllers: [TelegramController],
-  providers: [TelegramUpdatesService, TelegramAdminGuard, TelegramWebhookGuard, TelegramEnabledGuard],
+  providers: [
+    TelegramUpdatesService,
+    TelegramCommandsService,
+    TelegramAdminGuard,
+    TelegramWebhookGuard,
+    TelegramEnabledGuard,
+  ],
 })
 export class TelegramUpdatesModule {}
