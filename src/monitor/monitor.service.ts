@@ -4,6 +4,7 @@ import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from '../veeam/http.service';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { Job, WorkingSessions, workingUnavailable } from '../veeam/estate';
+import { VeeamSchedule } from '../veeam/types';
 import { DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
 import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
@@ -14,7 +15,7 @@ import { capacities, RepositoryCapacity } from './repository-capacity';
 import { BackupEvidenceService, Evidence } from './backup-evidence.service';
 import { addressable, digestDue, digestEvent, summarise } from './digest';
 import { repositoryAlarms } from './repository-alarms';
-import { jobTransitions } from './transitions';
+import { jobTransitions, Transition } from './transitions';
 import { attemptOf, retriesAllowed, retryWindowOf } from './runs';
 import { JobSession } from './job-card';
 import { renderEvent } from '../telegram/format';
@@ -284,11 +285,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     const seeding = !this.store.jobResults.seeded();
     const transitions = jobTransitions(jobs, (id) => this.store.jobResults.of(id), seeding);
 
-    for (const { job, result, previous, severity, remember } of transitions) {
+    for (const transition of transitions) {
+      const { job, severity, remember } = transition;
       if (severity) {
-        const report = await this.emit(
-          await this.jobEvent(job, result, previous, severity, evidence),
-        );
+        const report = await this.emit(await this.jobEvent({ ...transition, severity }, evidence));
         // Advancing the remembered result is the record of "this transition has
         // been dealt with". A delivery that reached nobody has not dealt with
         // anything, so the transition stays pending and is retried next tick.
@@ -333,12 +333,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
 
   private async jobEvent(
-    job: Job,
-    result: string,
-    previous: string | undefined,
-    severity: NotificationSeverity,
+    transition: Transition & { severity: NotificationSeverity },
     evidence: Evidence,
   ): Promise<NotificationEvent> {
+    const { job, result, previous, severity } = transition;
     const { name } = job;
     const title =
       severity === 'success'
@@ -349,6 +347,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     // the run this is. They come from the same sessions, and fetching them
     // twice would be two requests to say one thing.
     const sessions = severity === 'success' ? [] : await this.jobQuery.recentSessions(job);
+    const schedule = severity === 'success' ? undefined : await this.retryPolicyOf(job, evidence);
 
     return {
       kind: 'job',
@@ -358,7 +357,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       fields: [
         ['Результат', result.toUpperCase()],
         ['Было', previous ? previous.toUpperCase() : '—'],
-        ['Попытка', this.attemptLabel(job, sessions, evidence)],
+        ['Попытка', this.attemptLabel(sessions, schedule)],
         ['Тип', job.type],
         ['Статус', job.status],
         ['Последний запуск', job.lastRun],
@@ -382,16 +381,33 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    * in the last twenty minutes is not worth a request per alert.
    */
   private attemptLabel(
-    job: Job,
     sessions: JobSession[],
-    evidence: Evidence,
+    schedule: VeeamSchedule | undefined,
   ): string | undefined {
-    const schedule =
-      evidence.status === 'ready' ? evidence.schedulesByJob.get(job.id) : undefined;
     const attempt = attemptOf(sessions, retryWindowOf(schedule));
     const allowed = retriesAllowed(schedule);
     if (attempt === 1 && !allowed) return undefined;
     return allowed ? `${attempt} из ${allowed}` : String(attempt);
+  }
+
+  /**
+   * The job's schedule, retry policy included: from the Evidence when a scan
+   * has finished, otherwise from the job's own configuration.
+   *
+   * The scan already reads every job configuration, so it is the free answer.
+   * But after a restart the Evidence is pending until the first scan finishes,
+   * and a scan can fail outright; the alert used to lose "из 4" for as long as
+   * that lasted. One request per alert is cheap next to that. Best effort: an
+   * alert without the policy is still an alert.
+   */
+  private async retryPolicyOf(job: Job, evidence: Evidence): Promise<VeeamSchedule | undefined> {
+    if (evidence.status === 'ready') return evidence.schedulesByJob.get(job.id);
+    try {
+      return (await this.reader.jobConfiguration(job.id)).schedule;
+    } catch (error) {
+      this.logger.debug(`No configuration for job ${job.id}: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   private async checkRepositories(): Promise<RepositoryCapacity[]> {
