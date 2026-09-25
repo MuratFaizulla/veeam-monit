@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 require('reflect-metadata');
 
-const { configuration } = require('../dist/config/configuration');
+const { configuration, readConfig } = require('../dist/config/configuration');
 const { TelegramStateStore } = require('../dist/telegram/state.store');
 const { TelegramTransportService } = require('../dist/telegram/transport.service');
 const { TelegramTopicsService } = require('../dist/telegram/topics.service');
@@ -27,22 +27,39 @@ const { capacities, capacityOf } = require('../dist/monitor/repository-capacity'
 
 const CHAT = '-1001234567890';
 
-/** Builds a real telegram config block from env overrides, then restores env. */
-function telegramConfig(overrides) {
-  const saved = {};
-  for (const [key, value] of Object.entries(overrides)) {
-    saved[key] = process.env[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = String(value);
+/**
+ * The service's real config, read from `settings` alone and never from
+ * process.env, so nobody's shell leaks into a test. A setting that is
+ * undefined is left out.
+ *
+ * UPPER_CASE keys are environment variables and go through the same checks as
+ * at startup. camelCase keys are not: they set a field of the telegram block
+ * after reading, for the few tests that need a value no operator is allowed to
+ * configure — a heartbeat or a scan on every call, say.
+ */
+function appConfig(settings = {}) {
+  const env = {};
+  const fields = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (value === undefined) continue;
+    if (/^[A-Z0-9_]+$/.test(key)) env[key] = String(value);
+    else fields[key] = value;
   }
-  try {
-    return configuration().telegram;
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+  const config = readConfig(env);
+  Object.assign(config.telegram, fields);
+  return config;
+}
+
+const telegramConfig = (settings) => appConfig(settings).telegram;
+
+/** ConfigService as the services use it: one block per key, and an unknown key throws. */
+function configService(config) {
+  return {
+    getOrThrow: (key) => {
+      if (!(key in config)) throw new TypeError(`Configuration key "${key}" does not exist`);
+      return config[key];
+    },
+  };
 }
 
 /** Records every Bot API call and answers with plausible Telegram payloads. */
@@ -75,7 +92,7 @@ function fakeBotApi(handlers = {}) {
 function world(env = {}, handlers = {}, stateFile) {
   const file =
     stateFile ?? path.join(os.tmpdir(), `veeam-telegram-${Math.random().toString(36).slice(2)}.json`);
-  const telegram = telegramConfig({
+  const app = appConfig({
     TELEGRAM_BOT_TOKEN: 'test-token',
     TELEGRAM_CHAT_IDS: CHAT,
     TELEGRAM_STATE_FILE: file,
@@ -91,7 +108,8 @@ function world(env = {}, handlers = {}, stateFile) {
     TELEGRAM_LIVE: 'false',
     ...env,
   });
-  const config = { getOrThrow: () => telegram };
+  const telegram = app.telegram;
+  const config = configService(app);
   const store = new TelegramStateStore(file, telegram.chatIds);
   const api = fakeBotApi(handlers);
   const transport = new TelegramTransportService(config, api.fn);
@@ -212,7 +230,7 @@ const exchange = (env = {}) =>
   });
 
 module.exports = {
-  CHAT, telegramConfig, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
+  CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,

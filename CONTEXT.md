@@ -300,6 +300,24 @@ The **command menu** is the neighbouring idea: the list registered with
 `setMyCommands` at startup, which Telegram shows beside the input field. It is
 the only place the bot's commands are discoverable without reading `/help`.
 
+## Setting
+
+One environment variable and the value the service runs on, declared once in
+`readConfig`: the variable, its kind, its bounds, its default. Startup's check
+(`validateEnvironment`, the `validate` hook) and the config every module reads
+(`configuration`, the `load` factory) are the same reading of that declaration.
+They used to be two parsers, and startup refused `Single` and `critical,` that
+the service would have read fine, and passed `1e3` that it then read as 1.
+
+Harmless variants are read as meant — any case for a fixed choice, surrounding
+spaces, an empty item in a list — and a blank variable means its default.
+Anything else stops startup, every wrong variable named at once. An integer is
+digits and nothing else.
+
+The declaration is `src/config/configuration.ts`; the kinds of setting are
+`src/config/settings.ts`. The monitor's Veeam account is a Veeam setting and
+lives in the `veeam` block; the `telegram` block is Telegram's alone.
+
 ## Orphaned chain
 
 A backup chain no live job owns — the job was deleted, what it produced stayed.

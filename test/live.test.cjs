@@ -868,7 +868,7 @@ test('a pinned slot notices its message was deleted, and posts a new one', async
   // with no reason to look at its message again. Somebody clearing the chat by
   // hand emptied the topic for good: nothing had changed, so nothing looked.
   let present = true;
-  const w = world({ TELEGRAM_LIVE: 'true', TELEGRAM_LIVE_REFRESH_MIN: '0' }, {
+  const w = world({ TELEGRAM_LIVE: 'true', liveRefreshMs: 0 }, {
     // Telegram's own two answers: an empty markup edit on a message that has
     // none is refused as "not modified", and a message that is gone as "not found".
     editMessageReplyMarkup: () => ({
@@ -900,7 +900,7 @@ test('a pinned slot notices its message was deleted, and posts a new one', async
 });
 
 test('a slot returns to the topic it was in, not to the one now configured', async () => {
-  const w = world({ TELEGRAM_LIVE: 'true', TELEGRAM_LIVE_REFRESH_MIN: '0' }, {
+  const w = world({ TELEGRAM_LIVE: 'true', liveRefreshMs: 0 }, {
     // The message is gone and the topic has since been renamed by hand, so its
     // configured name resolves to nothing.
     editMessageText: () => ({

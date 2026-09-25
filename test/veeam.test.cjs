@@ -7,7 +7,7 @@ const fs = require('node:fs');
 // One harness for every test file. Everything it pulls out of dist/ is
 // re-exported, so each file opens with the same line and takes what it needs.
 const {
-  CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
+  CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService,
@@ -179,10 +179,13 @@ test('a failure that is not about the token is passed straight through', async (
   assert.equal(rejected, 0, 'a working token is not thrown away over a server fault');
 });
 
+/** The config a signed-in monitor starts from: its account is in the veeam block. */
+const monitorAccount = () =>
+  configService(appConfig({ VEEAM_MONITOR_USERNAME: 'svc', VEEAM_MONITOR_PASSWORD: 'p' }));
+
 test('one burst of refusals buys one new token, not one per call', async () => {
   const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
-  const config = { getOrThrow: () => ({ veeamUsername: 'svc', veeamPassword: 'p' }) };
-  const auth = new VeeamMonitorAuthService(config, { login: async () => ({ access_token: 't' }) });
+  const auth = new VeeamMonitorAuthService(monitorAccount(), { login: async () => ({ access_token: 't' }) });
 
   assert.equal(auth.rejectToken(), true, 'the first refusal is acted on');
   assert.equal(auth.rejectToken(), false, 'and the rest of the same burst is not');
@@ -212,10 +215,7 @@ const veeamAuth = () => {
 
 const authService = (veeam) => {
   const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
-  return new VeeamMonitorAuthService(
-    { getOrThrow: () => ({ veeamUsername: 'svc', veeamPassword: 'p' }) },
-    veeam,
-  );
+  return new VeeamMonitorAuthService(monitorAccount(), veeam);
 };
 
 test('a token refused after a refresh sends the next sign-in through the password grant', async () => {
