@@ -9,10 +9,11 @@ import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { allPages, authorized } from '../veeam/pages';
 import { VeeamCollection, VeeamJob, VeeamJobState, VeeamSession, VeeamTaskSession } from '../veeam/types';
 import { MonitorAnswer } from './answer';
+import { retryWindowOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled, resultOf } from './job-state';
-import { FailedObject, JobCard, JobRun, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
+import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 
 const JOB_STATES = '/api/v1/jobs/states';
 const JOBS = '/api/v1/jobs';
@@ -168,6 +169,7 @@ export class JobQueryService {
         ? await this.failedObjects(runs, accessToken)
         : [],
       runs,
+      retryWindowMs: retryWindowOf(configured?.schedule),
       name: job.name ?? id ?? 'без имени',
       type: job.type,
       status: job.status,
@@ -190,7 +192,7 @@ export class JobQueryService {
    * run failed, and enough history around it to say which attempt this is.
    * Reading it twice would be two requests to answer one question.
    */
-  async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobRun[]> {
+  async recentRuns(job: VeeamJobState, accessToken: string): Promise<JobSession[]> {
     if (!job.id) return [];
     try {
       const response = await authorized<VeeamCollection<VeeamSession>>(this.reader(accessToken), {
@@ -248,7 +250,7 @@ export class JobQueryService {
    * reach the machine at all — "Virtual Machine … is unavailable" — never
    * starts a task for it, and then the session message is the whole story.
    */
-  private async failedObjects(runs: JobRun[], accessToken: string): Promise<FailedObject[]> {
+  private async failedObjects(runs: JobSession[], accessToken: string): Promise<FailedObject[]> {
     const bad = runs.find((run) => isBadResult((run.result ?? '').toLowerCase()));
     if (!bad?.id) return [];
     try {

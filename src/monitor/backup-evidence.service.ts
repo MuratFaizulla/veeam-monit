@@ -12,6 +12,7 @@ import {
   VeeamSession,
 } from '../veeam/types';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
+import { failureStreakOf, retryWindowOf } from './runs';
 
 /**
  * What one reading of the estate established.
@@ -44,13 +45,6 @@ const SCAN_PAGE = 500;
 
 /** How far back sessions are read when counting consecutive failures. */
 const STREAK_WINDOW_DAYS = 7;
-
-/**
- * Retry window used when the job configuration does not state one. Veeam
- * defaults to waiting ten minutes between retries; the extra allowance covers
- * how long the failing run itself took.
- */
-const DEFAULT_RETRY_WINDOW_MS = 30 * 60_000;
 
 /**
  * Run timestamps kept per job.
@@ -195,15 +189,6 @@ export class BackupEvidenceService {
           )
           .map((job) => [job.id, job.schedule]),
       );
-      const retryWindows = new Map(
-        configured
-          .filter((job): job is VeeamJob & { id: string } => Boolean(job.id))
-          .map((job) => {
-            const retry = job.schedule?.retry;
-            const await_ = retry?.isEnabled === false ? 0 : retry?.awaitMinutes;
-            return [job.id, ((await_ ?? 10) + 20) * 60_000];
-          }),
-      );
 
       // Backups whose job no longer exists. Every other check starts from the
       // job list, so nothing else can see them at all.
@@ -324,7 +309,7 @@ export class BackupEvidenceService {
         scannedAt,
         runsByJob: runs,
         cadenceByJob: new Map([...runs].map(([jobId, kept]) => [jobId, cadenceOf(kept)])),
-        streakByJob: failureStreaks(sessions, retryWindows),
+        streakByJob: failureStreaks(sessions, schedulesByJob),
         unscheduled,
         schedulesByJob,
         depthByJob: new Map(
@@ -435,20 +420,16 @@ const wroteByFailedRun = (
 /**
  * Consecutive failed *runs* per job, counted back from its newest session.
  *
- * A run is not a session. Veeam retries a failed job automatically, and each
+ * A run is not a session: Veeam retries a failed job automatically, and each
  * retry is its own session, so a job with the default three retries reports
  * four failed sessions for one failed run — which made "4 неуспеха подряд"
- * appear against nearly every currently-failing job and mean nothing. Sessions
- * closer together than the job's own retry window are therefore folded into the
- * run that spawned them.
- *
- * The streak breaks at the first success, which is what makes "three in a row"
- * mean a job that is still broken rather than one that failed thrice at some
- * point.
+ * appear against nearly every currently-failing job and mean nothing. Which
+ * sessions are one run is decided in runs.ts, the same rule the alert's
+ * "Попытка 2 из 4" reads; this only picks the sessions to hand it.
  */
 const failureStreaks = (
   sessions: VeeamSession[],
-  retryWindows: Map<string, number>,
+  schedules: ReadonlyMap<string, VeeamSchedule>,
 ): Map<string, number> => {
   const since = Date.now() - STREAK_WINDOW_DAYS * 86_400_000;
 
@@ -470,20 +451,13 @@ const failureStreaks = (
   const streaks = new Map<string, number>();
   for (const [jobId, list] of newestFirst) {
     list.sort((a, b) => Date.parse(b.creationTime ?? '') - Date.parse(a.creationTime ?? ''));
-    const window = retryWindows.get(jobId) ?? DEFAULT_RETRY_WINDOW_MS;
-
-    let runs = 0;
-    let previousStart = Number.POSITIVE_INFINITY;
-    for (const session of list) {
-      if ((session.result?.result ?? '').toLowerCase() === 'success') break;
-      const startedAt = Date.parse(session.creationTime ?? '');
-      if (!Number.isFinite(startedAt)) continue;
-      // Only a session far enough from the one after it starts a new run; the
-      // rest are that run's retries.
-      if (previousStart - startedAt > window) runs += 1;
-      previousStart = startedAt;
-    }
-    if (runs > 0) streaks.set(jobId, runs);
+    const attempts = list.map((session) => ({
+      startedAt: session.creationTime,
+      endedAt: session.endTime,
+      result: session.result?.result,
+    }));
+    const streak = failureStreakOf(attempts, retryWindowOf(schedules.get(jobId)));
+    if (streak > 0) streaks.set(jobId, streak);
   }
   return streaks;
 };

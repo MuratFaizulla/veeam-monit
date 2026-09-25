@@ -5,7 +5,7 @@ import { VeeamHttpService } from '../veeam/http.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { allPages } from '../veeam/pages';
 import { VeeamJobState, VeeamSession, VeeamTaskSession } from '../veeam/types';
-import { BackupEvidenceService, Evidence } from '../monitor/backup-evidence.service';
+import { Evidence } from '../monitor/backup-evidence.service';
 import { JobQueryService } from '../monitor/job-query.service';
 import { Standings, standingsOf } from '../monitor/job-standing';
 import { isDisabled, isRunningNow } from '../monitor/job-state';
@@ -49,6 +49,8 @@ export interface LiveCycle {
   repositories?: RepositoryCapacity[];
   /** Null when the monitor account could not log in, or was never configured. */
   accessToken: string | null;
+  /** This cycle's Evidence, already refreshed by the monitor before anything read it. */
+  evidence: Evidence;
   /** The monitor's own view of itself, which only the monitor has. */
   health: LiveHealth;
 }
@@ -80,21 +82,13 @@ export class LiveSnapshotsService {
     config: ConfigService,
     private readonly veeam: VeeamHttpService,
     private readonly monitorAuth: VeeamMonitorAuthService,
-    private readonly evidence: BackupEvidenceService,
     private readonly jobQuery: JobQueryService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
 
   async pages(cycle: LiveCycle, clock: LiveClock = this.clock()): Promise<LivePage[]> {
-    const { jobs, repositories, accessToken } = cycle;
-
-    // Once, before anything reads. Three slots answer from this and they used
-    // to take turns paying for it, which made the order they were published in
-    // load-bearing: rendering depth before protection showed the previous
-    // cycle's numbers and nothing failed.
-    await this.evidence.refresh(accessToken, jobs);
-    const evidence = this.evidence.evidence;
+    const { jobs, repositories, accessToken, evidence } = cycle;
     // Worked out once and read by both slots below, so they cannot disagree
     // about which jobs are in scope or how many were left out.
     const standings =

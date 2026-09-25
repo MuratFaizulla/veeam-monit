@@ -347,7 +347,7 @@ test('the planner keeps only today and excludes manual or disabled jobs', () => 
   assert.equal(runs.filter((run) => run.name === 'Monthly').length, 0);
   assert.ok(!runs.some((run) => run.name === 'Manual'));
   assert.ok(!runs.some((run) => run.name === 'Disabled'));
-  assert.equal(runs.find((run) => run.name === 'Daily').cadence, 'ежедневно');
+  assert.equal(runs.find((run) => run.name === 'Daily').scheduleKind, 'ежедневно');
 });
 
 test('a cycle Veeam did not answer leaves the schedule honest about it', async () => {
@@ -968,13 +968,16 @@ const snapshotsOf = (routes, env = {}) => {
   const auth = { configured: true, getAccessToken: async () => 'tok', invalidateAccessToken: () => {}, rejectToken: () => true };
   const evidence = new Evidence(w.config, veeam, auth);
   const query = new JobQueryService(w.config, veeam, auth, evidence, new Inventory());
-  return new Snapshots(w.config, veeam, auth, evidence, query);
+  return new Snapshots(w.config, veeam, auth, query);
 };
 
 const liveHealth = (over = {}) => ({
   reachable: true, authenticated: true, serverUrl: 'https://veeam.test:9419',
   error: null, trackedJobs: 3, intervalMs: 60_000, ...over,
 });
+
+/** The monitor refreshes the evidence before the slots read it; these cycles have none. */
+const PENDING = { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' };
 
 const pageOf = (pages, slot) => pages.find((page) => page.slot === slot)?.content;
 
@@ -995,7 +998,7 @@ test('▶️ counts a job running by status and one running by session as two', 
     { id: '2', name: 'By session', status: 'Stopped', lastResult: 'Success' },
     { id: '3', name: 'Idle', status: 'Stopped', lastResult: 'Success' },
   ];
-  const pages = await snapshots.pages({ jobs, accessToken: 'tok', health: liveHealth() });
+  const pages = await snapshots.pages({ jobs, accessToken: 'tok', evidence: PENDING, health: liveHealth() });
   const running = pageOf(pages, 'running');
   assert.match(running, /выполняются: 2 задания/);
   assert.match(running, /By status/);
@@ -1006,7 +1009,7 @@ test('▶️ counts a job running by status and one running by session as two', 
 test('a cycle Veeam did not answer says so in every slot instead of "nothing"', async () => {
   const snapshots = snapshotsOf({});
   const pages = await snapshots.pages({
-    jobs: undefined, accessToken: null, health: liveHealth({ reachable: false }),
+    jobs: undefined, accessToken: null, evidence: PENDING, health: liveHealth({ reachable: false }),
   });
   assert.deepEqual(
     pages.map((page) => page.slot),
@@ -1021,6 +1024,6 @@ test('a cycle Veeam did not answer says so in every slot instead of "nothing"', 
 
 test('🧹 is only among the pages while it is switched on', async () => {
   const on = await snapshotsOf({}, { TELEGRAM_LIVE_ORPHANS: 'true' })
-    .pages({ jobs: undefined, accessToken: null, health: liveHealth() });
+    .pages({ jobs: undefined, accessToken: null, evidence: PENDING, health: liveHealth() });
   assert.equal(on.at(-1).slot, 'orphans');
 });
