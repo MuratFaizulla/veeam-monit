@@ -958,7 +958,10 @@ const snapshotsOf = (routes, env = {}) => {
   const { world: makeWorld, veeamFake: fakeVeeam, LiveSnapshotsService: Snapshots,
     VeeamEstateReader: Reader } = require('./world.cjs');
   const w = makeWorld({ TELEGRAM_LIVE: 'true', ...env });
-  return new Snapshots(w.config, new Reader(fakeVeeam(routes), monitorAccount()));
+  const snapshots = new Snapshots(w.config);
+  // The server shown, as the monitor hands it over with every cycle.
+  const server = { name: 'veeam', reader: new Reader(fakeVeeam(routes), monitorAccount()) };
+  return { pages: (cycle) => snapshots.pages({ server, ...cycle }) };
 };
 
 const liveHealth = (over = {}) => ({

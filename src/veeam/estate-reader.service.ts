@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { VeeamApiError } from './api.error';
 import { InventoryNames, Job, jobOf, withResultLowered, WorkingSessions, workingOf } from './estate';
 import { RawRequest, VeeamHttpService } from './http.service';
@@ -53,8 +53,9 @@ const SCAN_PAGE = 500;
  *
  * Every read throws when Veeam does not answer; what a failure means is the
  * caller's decision.
+ *
+ * One per Veeam server, built by `VeeamServers` beside the token it asks for.
  */
-@Injectable()
 export class VeeamEstateReader {
   private readonly logger = new Logger(VeeamEstateReader.name);
 

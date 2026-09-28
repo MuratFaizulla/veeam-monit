@@ -7,7 +7,7 @@ const fs = require('node:fs');
 // One harness for every test file. Everything it pulls out of dist/ is
 // re-exported, so each file opens with the same line and takes what it needs.
 const {
-  CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
+  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
@@ -425,12 +425,12 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {}, rejectSend(() => broken));
 
   await w.monitor.check();
-  assert.equal(w.store.jobResults.of('1'), 'success', 'первый цикл засеял состояние');
+  assert.equal(w.store.jobResultsOf(SERVER).of('1'), 'success', 'первый цикл засеял состояние');
 
   w.setJobs([job('1', 'SQL Daily', 'Failed')]);
   await w.monitor.check();
   assert.equal(
-    w.store.jobResults.of('1'),
+    w.store.jobResultsOf(SERVER).of('1'),
     'success',
     'провалившаяся отправка не отмечает переход как обработанный',
   );
@@ -444,7 +444,7 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
   assert.match(sent[0].text, /SQL Daily/);
   assert.match(sent[0].text, /FAILED/);
-  assert.equal(w.store.jobResults.of('1'), 'failed');
+  assert.equal(w.store.jobResultsOf(SERVER).of('1'), 'failed');
   assert.equal(w.monitor.status.lastOutcome, 'delivered');
 });
 
@@ -504,7 +504,7 @@ test('every state write persists without the caller managing save()', async () =
   const w = world({}, {}, file);
 
   w.store.rememberTopic(CHAT, 'SQL Daily', 77);
-  w.store.jobResults.record('job-1', 'failed');
+  w.store.jobResultsOf(SERVER).record('job-1', 'failed');
   w.store.cooldowns.arm('k', 60_000);
   w.store.flush();
 
@@ -512,7 +512,7 @@ test('every state write persists without the caller managing save()', async () =
   // three modules above ever had to remember a save.
   const reopened = new TelegramStateStore(file);
   assert.equal(reopened.threadId(CHAT, 'SQL Daily'), 77);
-  assert.equal(reopened.jobResults.of('job-1'), 'failed');
+  assert.equal(reopened.jobResultsOf(SERVER).of('job-1'), 'failed');
   assert.equal(reopened.cooldowns.isSuppressed('k'), true);
   assert.deepEqual(
     reopened.chats().map(([id]) => id),
@@ -520,25 +520,25 @@ test('every state write persists without the caller managing save()', async () =
     'чат, засеянный из конфигурации, тоже сохранён',
   );
 
-  reopened.jobResults.keepOnly(new Set(['other']));
+  reopened.jobResultsOf(SERVER).keepOnly(new Set(['other']));
   reopened.flush();
-  assert.equal(new TelegramStateStore(file).jobResults.of('job-1'), undefined);
+  assert.equal(new TelegramStateStore(file).jobResultsOf(SERVER).of('job-1'), undefined);
   fs.rmSync(file, { force: true });
 });
 
 test('a damaged Telegram state is restored from the last complete copy', async () => {
   const file = path.join(os.tmpdir(), `veeam-backup-${Math.random().toString(36).slice(2)}.json`);
   const store = new TelegramStateStore(file, [CHAT]);
-  store.jobResults.record('job-1', 'failed');
+  store.jobResultsOf(SERVER).record('job-1', 'failed');
   store.flush();
   assert.ok(fs.existsSync(`${file}.bak`));
 
   fs.writeFileSync(file, '{broken', 'utf8');
   const restored = new TelegramStateStore(file);
-  assert.equal(restored.jobResults.of('job-1'), 'failed');
+  assert.equal(restored.jobResultsOf(SERVER).of('job-1'), 'failed');
   assert.deepEqual(restored.chats().map(([id]) => id), [CHAT]);
   restored.flush();
-  assert.equal(new TelegramStateStore(file).jobResults.of('job-1'), 'failed');
+  assert.equal(new TelegramStateStore(file).jobResultsOf(SERVER).of('job-1'), 'failed');
 
   await new Promise(setImmediate);
   fs.rmSync(file, { force: true });

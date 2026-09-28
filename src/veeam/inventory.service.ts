@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { InventoryNames } from './estate';
 import { VeeamEstateReader } from './estate-reader.service';
 
@@ -23,7 +23,7 @@ export interface VeeamInventory extends InventoryNames {
   at: number;
 }
 
-@Injectable()
+/** One per Veeam server: the names are that server's. */
 export class VeeamInventoryService {
   private readonly logger = new Logger(VeeamInventoryService.name);
   private cached: VeeamInventory = { repositories: new Map(), proxies: new Map(), at: 0 };

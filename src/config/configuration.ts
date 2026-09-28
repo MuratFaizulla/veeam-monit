@@ -5,7 +5,7 @@ import {
   type NotificationKind,
   type NotificationSeverity,
 } from '../telegram/types';
-import { type Environment, readSettings } from './settings';
+import { type Environment, httpUrl, readSettings } from './settings';
 
 /**
  * How an event is mapped onto a forum topic when no rule in the routes file
@@ -24,7 +24,12 @@ export interface AppConfig {
    */
   docs: boolean;
   veeam: {
-    baseUrl: string;
+    /**
+     * Every Veeam server watched, in the order people see them listed. Never
+     * empty. The first is the one shown until somebody selects another.
+     */
+    servers: VeeamEndpoint[];
+    /** Shared by every server: they run one version, behind one account. */
     apiVersion: string;
     insecureTls: boolean;
     timeoutMs: number;
@@ -102,7 +107,98 @@ export interface AppConfig {
   };
 }
 
+/** One Veeam server, as configured. */
+export interface VeeamEndpoint {
+  /**
+   * Short, ASCII and unique: what a Button and the state file address the
+   * server by. Derived from the name, so renaming a server forgets what was
+   * remembered about it — the job results it is compared against, and so one
+   * quiet cycle while it is learned again.
+   */
+  key: string;
+  /** What people call it: in alerts, the server menu and the live slots. */
+  name: string;
+  baseUrl: string;
+  /**
+   * Whether the TLS handshake offers what an old server insists on — SHA-1
+   * signatures among them — and modern OpenSSL no longer offers by default.
+   * Such a server resets the connection instead of saying why. Off unless
+   * VEEAM_LEGACY_TLS names the server; the fix that lasts is on the server.
+   */
+  legacyTls: boolean;
+}
+
 const MINUTE = 60_000;
+
+const DEFAULT_VEEAM_URL = 'https://localhost:9419';
+
+/**
+ * A Button carries the key and a job's 36-character id in Telegram's 64 bytes
+ * of callback data, with room to spare for the prefix.
+ */
+const KEY_LENGTH = 16;
+/** Long enough for "veeam01main-baas", short enough for a row of buttons. */
+const NAME_LENGTH = 32;
+
+/** The server's name when none is given: the first label of its host name. */
+const hostLabel = (baseUrl: string): string => new URL(baseUrl).hostname.split('.')[0] || baseUrl;
+
+const keyOf = (name: string, index: number): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, KEY_LENGTH)
+    .replace(/-+$/, '') || `server${index + 1}`;
+
+/** The one server of an installation configured by `VEEAM_BASE_URL`. */
+const endpointAt = (baseUrl: string): VeeamEndpoint => {
+  const name = hostLabel(baseUrl);
+  return { key: keyOf(name, 0), name, baseUrl, legacyTls: false };
+};
+
+/** Whether `named` — a name or a key, in any case — is this server. */
+const isNamed = (endpoint: VeeamEndpoint, named: string): boolean =>
+  named.toLowerCase() === endpoint.name.toLowerCase() || named.toLowerCase() === endpoint.key;
+
+/**
+ * `VEEAM_SERVERS`: comma-separated entries, each `name=url` or a bare URL
+ * named after its host. Every problem is reported through `refuse`, and the
+ * entries that were fine are still returned, so reading carries on.
+ */
+const endpointsOf = (listed: string, refuse: (message: string) => void): VeeamEndpoint[] => {
+  const endpoints: VeeamEndpoint[] = [];
+  listed
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .forEach((entry, index) => {
+      const equals = entry.indexOf('=');
+      // A URL may hold "=" itself, but never before its "://".
+      const named = equals > 0 && !entry.slice(0, equals).includes('://');
+      const baseUrl = httpUrl(named ? entry.slice(equals + 1).trim() : entry);
+      // The entry is not repeated: a URL can carry credentials.
+      if (baseUrl === undefined) return refuse(`VEEAM_SERVERS entry ${index + 1} must be a valid HTTP(S) URL`);
+      const name = named ? entry.slice(0, equals).trim() : hostLabel(baseUrl);
+      if (!name || name.length > NAME_LENGTH) {
+        return refuse(`VEEAM_SERVERS entry ${index + 1} needs a name of 1 to ${NAME_LENGTH} characters`);
+      }
+      endpoints.push({ key: keyOf(name, index), name, baseUrl, legacyTls: false });
+    });
+
+  const seen = new Map<string, VeeamEndpoint>();
+  for (const endpoint of endpoints) {
+    const twin = seen.get(endpoint.key);
+    if (twin) {
+      refuse(`VEEAM_SERVERS names "${twin.name}" and "${endpoint.name}" are too alike to tell apart`);
+    }
+    seen.set(endpoint.key, endpoint);
+  }
+  if (new Set(endpoints.map((endpoint) => endpoint.baseUrl.toLowerCase())).size < endpoints.length) {
+    refuse('VEEAM_SERVERS lists one URL twice');
+  }
+  return endpoints;
+};
 
 const isTimeZone = (zone: string): boolean => {
   try {
@@ -132,6 +228,30 @@ export const readConfig = (env: Environment): AppConfig =>
       'VEEAM_MONITOR_USERNAME and VEEAM_MONITOR_PASSWORD must be set together',
     );
 
+    // Two ways to name the servers: the list, or the one URL every
+    // installation had before there was a list. Both at once would leave a
+    // reader of the file guessing which one the service believed.
+    const listed = read.text('VEEAM_SERVERS', '');
+    const single = read.url('VEEAM_BASE_URL', '');
+    read.require(
+      !(listed && single),
+      'VEEAM_SERVERS and VEEAM_BASE_URL both name the Veeam servers: set one of them',
+    );
+    const refuse = (message: string) => read.require(false, message);
+    const listedServers = listed ? endpointsOf(listed, refuse) : [];
+    const configured = listedServers.length ? listedServers : [endpointAt(single || DEFAULT_VEEAM_URL)];
+    const legacyTls = read.list('VEEAM_LEGACY_TLS', /^[^=]+$/, 'server names');
+    for (const named of legacyTls) {
+      read.require(
+        configured.some((endpoint) => isNamed(endpoint, named)),
+        `VEEAM_LEGACY_TLS names "${named}", which is not one of the Veeam servers`,
+      );
+    }
+    const servers = configured.map((endpoint) => ({
+      ...endpoint,
+      legacyTls: legacyTls.some((named) => isNamed(endpoint, named)),
+    }));
+
     const webhookUrl = read.url('TELEGRAM_WEBHOOK_URL', '', { httpsOnly: true });
     const webhookSecret = read.text('TELEGRAM_WEBHOOK_SECRET', '');
     read.require(
@@ -143,7 +263,7 @@ export const readConfig = (env: Environment): AppConfig =>
       port: read.integer('PORT', 3000, { min: 1, max: 65535 }),
       docs: read.flag('API_DOCS', true),
       veeam: {
-        baseUrl: read.url('VEEAM_BASE_URL', 'https://localhost:9419'),
+        servers,
         apiVersion: read.text('VEEAM_API_VERSION', '1.2-rev1'),
         insecureTls: read.flag('VEEAM_INSECURE_TLS', true),
         timeoutMs: read.integer('VEEAM_TIMEOUT_MS', 30000, { min: 1 }),

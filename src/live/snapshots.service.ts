@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Job, WorkingSessions } from '../veeam/estate';
-import { VeeamEstateReader } from '../veeam/estate-reader.service';
+import { VeeamServer } from '../veeam/servers';
 import { VeeamSession } from '../veeam/types';
 import { Evidence } from '../estate/backup-evidence.service';
 import { Standings, standingsOf } from '../estate/job-standing';
@@ -11,6 +11,7 @@ import { RepositoryCapacity } from '../estate/repository-capacity';
 import { ScheduledRun, todayRuns } from '../estate/schedule-planner';
 import {
   Clock,
+  headed,
   LiveHealth,
   LiveRunning,
   LiveSchedule,
@@ -38,6 +39,11 @@ const NOT_ANSWERED = 'Veeam не ответил на этот цикл.';
 
 /** What one monitor cycle found, as the live slots need to hear it. */
 export interface LiveCycle {
+  /**
+   * The server the slots show: named on top of every slot when there are
+   * several, and read for the task detail 📈 needs.
+   */
+  server: Pick<VeeamServer, 'name' | 'reader'>;
   /** Undefined when Veeam did not answer the job list this cycle. */
   jobs?: Job[];
   /**
@@ -76,12 +82,12 @@ export interface LivePage {
 export class LiveSnapshotsService {
   private readonly logger = new Logger(LiveSnapshotsService.name);
   private readonly config: AppConfig['telegram'];
+  /** Whether a slot names its server: only when there is more than one to tell apart. */
+  private readonly named: boolean;
 
-  constructor(
-    config: ConfigService,
-    private readonly reader: VeeamEstateReader,
-  ) {
+  constructor(config: ConfigService) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
+    this.named = config.getOrThrow<AppConfig['veeam']>('veeam').servers.length > 1;
   }
 
   async pages(cycle: LiveCycle, clock: Clock = this.clock()): Promise<LivePage[]> {
@@ -109,7 +115,12 @@ export class LiveSnapshotsService {
     if (this.config.liveOrphans) {
       pages.push({ slot: 'orphans', content: renderOrphans(this.orphansState(jobs, evidence), clock) });
     }
-    return pages;
+    if (!this.named) return pages;
+    const name = cycle.server.name;
+    return pages.map(({ slot, content }) => ({
+      slot,
+      content: Array.isArray(content) ? content.map((page) => headed(name, page)) : headed(name, content),
+    }));
   }
 
   /** Now, in the timezone the operator reads in. */
@@ -217,7 +228,7 @@ export class LiveSnapshotsService {
         const session = sessions[next++];
         if (!session.id) continue;
         try {
-          const tasks = await this.reader.taskSessions(session.id);
+          const tasks = await cycle.server.reader.taskSessions(session.id);
           jobs.push(named(aggregatePerformance(session, tasks), session));
         } catch (error) {
           // One inaccessible session must not hide all other performance data.

@@ -310,6 +310,51 @@ clearing them: last month's name is far closer to the truth than a GUID.
 Owned by `src/veeam/inventory.service.ts`, which keeps what the **Estate
 reader**'s `inventoryNames` reads.
 
+## Server
+
+One Veeam Backup & Replication server the bot watches, listed in
+`VEEAM_SERVERS`. It has a **name** — what the alerts, the server menu and the
+**Live slots** say — and a **key**: short, ASCII, derived from the name, and
+what a **Button** and the state file address the server by. Renaming a server
+changes its key, and the bot learns its jobs again, quietly.
+
+Everything a server is read with is its own: token, **Estate reader**,
+**Inventory**, **Evidence**, and the job results a **Transition** is decided
+against. Nothing is shared but the monitor account and the API version. A
+server that has never been observed is seeded quietly, whatever the others
+remember: a job that was already failing when the server was added is not news.
+
+Servers of one estate run different Veeam builds. Each is spoken to in the
+REST API version of its own build: the configured one, until the server refuses
+it and names the ones it speaks, and then the newest of those. An old one may
+also insist on SHA-1 signatures in the TLS handshake and reset the connection
+without them; `VEEAM_LEGACY_TLS` names the servers that are offered them.
+
+Every server is watched every cycle — reachability, sign-in, job states,
+repositories — and its alerts carry its name first in the title, when there is
+more than one: `BAAS · Files: ОШИБКА`. The daily **Summary** goes out once per
+server.
+
+Owned by `src/veeam/servers.ts` (`VeeamServers`) and, with its Evidence and
+job answers, `src/estate/server-estates.ts` (`ServerEstates`).
+
+## Selected server
+
+The one **Server** the **Live slots**, `/digest` and `/job` show. The first in
+the list until somebody picks another with `/servers`; one for the whole group,
+and kept across a restart. Selecting redraws the slots at once rather than at
+the next tick.
+
+It decides what is shown, never what is watched: alerts come from every server
+whichever is selected. What it does decide is which server pays for the reads
+only the slots need — the **Evidence** scan and the Working sessions. A server
+not selected keeps the Evidence of its last scan, and an alert's retry policy
+comes from the job's own configuration when there is none.
+
+A job's **Button** names the server the job is on, so pressing it after another
+server was selected still opens the job it was labelled with. A Button from
+before there was a list names none, and opens the job on the Selected server.
+
 ## Estate reader
 
 Everything the service reads from Veeam, by name: the job states, one job's

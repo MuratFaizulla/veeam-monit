@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Job } from '../veeam/estate';
@@ -100,9 +100,9 @@ interface RunWindow {
   failed: boolean;
 }
 
-@Injectable()
+/** One per Veeam server, built by `ServerEstates`: a scan reads one server. */
 export class BackupEvidenceService {
-  private readonly logger = new Logger(BackupEvidenceService.name);
+  private readonly logger: Logger;
   private readonly config: AppConfig['telegram'];
   /** The last scan that finished. Survives cycles Veeam did not answer. */
   private scanned?: ScannedEvidence;
@@ -111,7 +111,9 @@ export class BackupEvidenceService {
   constructor(
     config: ConfigService,
     private readonly reader: VeeamEstateReader,
+    server = '',
   ) {
+    this.logger = new Logger(`${BackupEvidenceService.name}${server ? ` ${server}` : ''}`);
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
 
