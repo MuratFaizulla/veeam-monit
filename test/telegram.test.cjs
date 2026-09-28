@@ -455,6 +455,8 @@ test('a failing job step does not abort the repository check', async () => {
     '/api/v1/jobs/states': () => {
       throw new Error('Veeam 500 Internal Server Error');
     },
+    // Answered, so the only failure in this cycle is the one the test is about.
+    '/api/v1/sessions': { data: [] },
     '/api/v1/backupInfrastructure/repositories/states': {
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
     },

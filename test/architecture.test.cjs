@@ -99,8 +99,9 @@ test('every import between folders points down the layers the modules are wired 
   // two files living in monitor/ and live/, while those modules imported them
   // back — cycles between folders the module graph could not see.
   //
-  // Lower layers never import higher ones. A file that imports nothing of ours
-  // is vocabulary — slot names, notification kinds — and anyone may use it.
+  // Lower layers never import higher ones. Two files are vocabulary, named
+  // here rather than inferred — the slot names and the notification kinds —
+  // and any layer may use them, because they import nothing of ours.
   const LAYERS = [
     ['config', 'logging'],
     ['veeam', 'telegram'],
@@ -123,6 +124,8 @@ test('every import between folders points down the layers the modules are wired 
     [...fs.readFileSync(file, 'utf8').matchAll(/from '(\.{1,2}\/[^']+)'/g)]
       .map((match) => path.resolve(path.dirname(file), match[1]) + '.ts');
   const folderOf = (file) => path.relative(src, file).split(path.sep)[0];
+  const VOCABULARY = new Set(['live/slots.ts', 'telegram/types.ts'].map((file) => path.join(src, file)));
+  for (const file of VOCABULARY) assert.deepEqual(fileImportsOf(file), [], `${file} is vocabulary and imports nothing`);
 
   const wrong = [];
   for (const file of files) {
@@ -134,7 +137,7 @@ test('every import between folders points down the layers the modules are wired 
     for (const target of fileImportsOf(file)) {
       const to = folderOf(target);
       if (to === from) continue;
-      if (fs.existsSync(target) && fileImportsOf(target).length === 0) continue;
+      if (VOCABULARY.has(target)) continue;
       if (!rank.has(to) || rank.get(to) >= rank.get(from)) {
         wrong.push(`${path.relative(src, file)} -> ${path.relative(src, target)}`);
       }

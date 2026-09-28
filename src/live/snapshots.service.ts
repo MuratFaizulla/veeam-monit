@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
+import { VeeamSession } from '../veeam/types';
 import { Evidence } from '../estate/backup-evidence.service';
 import { Standings, standingsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
@@ -199,6 +200,16 @@ export class LiveSnapshotsService {
 
     if (!sessions.length) return { jobs: [], activeCount: 0, statisticsAvailable: true };
 
+    // A session of one of our jobs goes by the Job's name, as it does in every
+    // other message; a session with no job behind it — Malware Detection —
+    // has only its own. Veeam names a session after the job as it was called
+    // when the session began, or not at all.
+    const nameOf = new Map((cycle.jobs ?? []).map((job) => [job.id, job.name]));
+    const named = (job: PerformanceJob, session: VeeamSession): PerformanceJob => {
+      const name = session.jobId ? nameOf.get(session.jobId) : undefined;
+      return name ? { ...job, name } : job;
+    };
+
     const jobs: PerformanceJob[] = [];
     let next = 0;
     const worker = async (): Promise<void> => {
@@ -207,11 +218,11 @@ export class LiveSnapshotsService {
         if (!session.id) continue;
         try {
           const tasks = await this.reader.taskSessions(session.id);
-          jobs.push(aggregatePerformance(session, tasks));
+          jobs.push(named(aggregatePerformance(session, tasks), session));
         } catch (error) {
           // One inaccessible session must not hide all other performance data.
           this.logger.warn(`Performance task sessions ${session.id} skipped: ${(error as Error).message}`);
-          jobs.push(aggregatePerformance(session, []));
+          jobs.push(named(aggregatePerformance(session, []), session));
         }
       }
     };
