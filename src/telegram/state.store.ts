@@ -13,8 +13,15 @@ interface TelegramState {
   chats: Record<string, TelegramChat>;
   /** Forum topic name -> message_thread_id, keyed by chat id. */
   topics: Record<string, Record<string, number>>;
-  /** Last reported Veeam job result, keyed by job id. */
-  jobResults: Record<string, string>;
+  /**
+   * Last reported Veeam job result: server key -> job id -> result.
+   *
+   * A file written before there were several servers holds job id -> result
+   * directly; it is read as the first server's.
+   */
+  jobResults: Record<string, Record<string, string>>;
+  /** Key of the server the live slots and commands show; absent means the first. */
+  selectedServer?: string;
   /** dedupeKey -> epoch ms after which the same condition may be reported again. */
   cooldowns: Record<string, number>;
   /** chat id -> slot -> the one message that slot keeps current. */
@@ -36,7 +43,8 @@ const empty = (): TelegramState => ({
 /**
  * Everything the notifier must not forget across a restart, in one file.
  *
- * The store owns the file, the chats and the forum topics. The four other
+ * The store owns the file, the chats, the forum topics and which Veeam server
+ * is selected. The four other
  * things kept in it — job results, cooldowns, live messages and the answer log
  * — are each their own module, handed their part of the state and a way to
  * save it. They carry their own rules (48 hours, 500 answers, "never arm on
@@ -58,24 +66,27 @@ export class TelegramStateStore implements OnModuleDestroy {
   private readonly state: TelegramState;
   private writeQueued = false;
 
-  readonly jobResults: JobResults;
   readonly cooldowns: Cooldowns;
   readonly liveMessages: LiveMessages;
   readonly answerLog: AnswerLog;
+  private readonly results = new Map<string, JobResults>();
 
   /**
    * `chatIds` are the chats named in configuration. They are registered here
    * rather than by whichever service happens to be constructed first: a
    * configured chat is usable before any update arrives, and making that depend
    * on provider order is how a monitor tick can find an empty registry.
+   *
+   * `firstServer` is the key of the server listed first: the one whose job
+   * results a file from before the server list holds.
    */
   constructor(
     private readonly filePath: string,
     chatIds: string[] = [],
+    private readonly firstServer = '',
   ) {
     this.state = this.load();
     const save = () => this.save();
-    this.jobResults = new JobResults(this.state.jobResults, save);
     this.cooldowns = new Cooldowns(this.state.cooldowns, save);
     this.liveMessages = new LiveMessages(this.state.liveMessages, save);
     this.answerLog = new AnswerLog(this.state.answers, save);
@@ -85,6 +96,49 @@ export class TelegramStateStore implements OnModuleDestroy {
   /** The debounced write may still be pending when the process stops. */
   onModuleDestroy(): void {
     this.flush();
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Veeam servers
+   * ---------------------------------------------------------------- */
+
+  /**
+   * The results remembered for one server's jobs.
+   *
+   * Per server, because what the monitor compares against is per server: a
+   * server added to the list has never been observed and must be seeded
+   * quietly, whatever the others remember, and pruning one server's deleted
+   * jobs must not take the other servers' jobs with them.
+   */
+  jobResultsOf(server: string): JobResults {
+    let results = this.results.get(server);
+    if (!results) {
+      results = new JobResults((this.state.jobResults[server] ??= {}), () => this.save());
+      this.results.set(server, results);
+    }
+    return results;
+  }
+
+  /** Drops what is remembered about servers no longer configured. */
+  keepServers(servers: ReadonlySet<string>): void {
+    let changed = false;
+    for (const server of Object.keys(this.state.jobResults)) {
+      if (servers.has(server)) continue;
+      delete this.state.jobResults[server];
+      this.results.delete(server);
+      changed = true;
+    }
+    if (changed) this.save();
+  }
+
+  selectedServer(): string | undefined {
+    return this.state.selectedServer;
+  }
+
+  selectServer(server: string): void {
+    if (this.state.selectedServer === server) return;
+    this.state.selectedServer = server;
+    this.save();
   }
 
   /* ---------------------------------------------------------------- *
@@ -161,6 +215,24 @@ export class TelegramStateStore implements OnModuleDestroy {
    * Persistence
    * ---------------------------------------------------------------- */
 
+  /**
+   * Job results keyed by server. A file from before the server list keyed them
+   * by job id alone, and every one of them was the first server's; read any
+   * other way, the first cycle after the upgrade would find nothing remembered
+   * and either stay quiet about a failure or repeat one already reported.
+   */
+  private byServer(
+    jobResults: Record<string, unknown>,
+  ): Record<string, Record<string, string>> {
+    const flat = Object.values(jobResults).some((value) => typeof value === 'string');
+    if (!flat) return jobResults as Record<string, Record<string, string>>;
+    const results: Record<string, string> = {};
+    for (const [job, result] of Object.entries(jobResults)) {
+      if (typeof result === 'string') results[job] = result;
+    }
+    return { [this.firstServer]: results };
+  }
+
   private load(): TelegramState {
     for (const path of [this.filePath, `${this.filePath}.bak`]) {
       try {
@@ -177,7 +249,7 @@ export class TelegramStateStore implements OnModuleDestroy {
         if (path !== this.filePath) {
           this.logger.warn(`Telegram state restored from ${path}`);
         }
-        return { ...empty(), ...parsed, version: 1 };
+        return { ...empty(), ...parsed, jobResults: this.byServer(parsed.jobResults!), version: 1 };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           this.logger.warn(`Telegram state at ${path} is unreadable: ${(error as Error).message}`);

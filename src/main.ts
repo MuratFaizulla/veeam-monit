@@ -25,7 +25,11 @@ async function bootstrap(): Promise<void> {
   const veeam = config.getOrThrow<AppConfig['veeam']>('veeam');
   const telegram = config.getOrThrow<AppConfig['telegram']>('telegram');
   const logger = new Logger('Bootstrap');
-  logger.log(`Listening on http://localhost:${port}/api — Veeam: ${veeam.baseUrl}`);
+  logger.log(
+    `Listening on http://localhost:${port}/api — Veeam: ${veeam.servers
+      .map((server) => `${server.name} ${server.baseUrl}`)
+      .join(', ')}`,
+  );
   logger.log(
     docs
       ? `API docs on http://localhost:${port}/${DOCS_PATH}`

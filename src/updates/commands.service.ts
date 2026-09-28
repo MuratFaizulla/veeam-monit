@@ -2,13 +2,14 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
-import { MONITOR, Monitor, Answer } from '../monitor/monitor';
+import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml, truncate } from '../telegram/format';
-import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard } from './keyboard';
+import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard, serversKeyboard } from './keyboard';
+import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
-import { TelegramTransportService } from '../telegram/transport.service';
+import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
 import {
   TelegramCallbackQuery,
   TelegramChat,
@@ -117,15 +118,46 @@ export class TelegramCommandsService implements Answers {
 
     const asked: Asked = { chat: message.chat, argument: '' };
     const answer = await this.act(action, asked);
-    if (answer) await this.send(this.whereAnswered(asked), answer);
+    if (!answer) return;
+    if (answer.replaces && (await this.replace(message, answer))) return;
+    await this.send(this.whereAnswered(asked), answer);
+  }
+
+  /**
+   * Rewrites the message whose Button was pressed. False when Telegram would
+   * not — the message is too old to edit, say — and the answer should be sent
+   * as a new one instead.
+   */
+  private async replace(message: TelegramMessage, answer: Reply): Promise<boolean> {
+    try {
+      await this.transport.call('editMessageText', {
+        chat_id: message.chat.id,
+        message_id: message.message_id,
+        text: truncate(answer.lines.join('\n')),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: answer.markup,
+      });
+      return true;
+    } catch (error) {
+      // Pressing the Button of the server already shown asks for the text the
+      // message already has, which Telegram refuses as a no-op edit.
+      if (error instanceof TelegramApiError && error.isUnchanged) return true;
+      this.logger.debug(`Answer not edited in place: ${(error as Error).message}`);
+      return false;
+    }
   }
 
   /**
    * A Button stands for a command, and is answered as that command typed with
-   * nothing after it — except a job's own, which carries the job's id.
+   * nothing after it — except a job's own, which carries the job's id, and a
+   * server's, which selects it.
    */
   private async act(action: Action, asked: Asked): Promise<Reply | undefined> {
-    if (action.kind === 'job') return this.reading(() => this.monitor.describeJobById(action.id));
+    if (action.kind === 'job') {
+      return this.reading(() => this.monitor.describeJobById(action.id, action.server));
+    }
+    if (action.kind === 'server') return this.selected(action.key);
     return commandPressed(action.kind)?.answer(this, asked);
   }
 
@@ -157,6 +189,42 @@ export class TelegramCommandsService implements Answers {
       ],
       markup: mainKeyboard(),
     };
+  }
+
+  /**
+   * `/servers` — every Veeam server, how it is doing, and which one the live
+   * slots and the commands show. A Button per server selects it.
+   */
+  servers(note?: string): Reply {
+    const servers = this.monitor.servers();
+    return {
+      lines: [
+        '🖥 <b>Серверы Veeam</b>',
+        '',
+        ...servers.map(
+          (server) =>
+            `${server.selected ? '✅' : '▫️'} <b>${escapeHtml(server.name)}</b> — ${serverIcon(server)} ${standing(server)}`,
+        ),
+        '',
+        'Живые темы, /digest и /job показывают сервер с ✅.',
+        'Оповещения приходят со всех.',
+        ...(note ? ['', note] : []),
+      ],
+      markup: serversKeyboard(servers),
+    };
+  }
+
+  /** A server's Button was pressed: select it, and redraw the menu it was pressed in. */
+  private selected(key: string): Reply {
+    const outcome = this.monitor.select(key);
+    const name = escapeHtml(this.monitor.servers().find((server) => server.key === key)?.name ?? key);
+    const note =
+      outcome === 'unknown'
+        ? '⚠️ Этого сервера больше нет в настройках.'
+        : outcome === 'already'
+          ? `Уже показан <b>${name}</b>.`
+          : `Переключено на <b>${name}</b>. Живые темы перерисуются в течение минуты.`;
+    return { ...this.servers(note), replaces: true };
   }
 
   summary(): Promise<Reply> {
@@ -359,9 +427,9 @@ export class TelegramCommandsService implements Answers {
    */
   private offered(answer: Answer, tail: ButtonRow): Reply {
     const lines = [answer.text];
-    if (answer.jobId) return { lines, markup: cardKeyboard(answer.jobId) };
+    if (answer.jobId) return { lines, markup: cardKeyboard(answer.jobId, answer.server) };
     if (answer.jobs && answer.jobs.length > 0) {
-      return { lines, markup: jobsKeyboard(answer.jobs, tail) };
+      return { lines, markup: jobsKeyboard(answer.jobs, tail, answer.server) };
     }
     return { lines, markup: mainKeyboard() };
   }
@@ -369,9 +437,14 @@ export class TelegramCommandsService implements Answers {
   /** The monitor's own state, compact enough to sit under any answer. */
   private healthLines(): string[] {
     const health = this.monitor.status;
+    const servers = this.monitor.servers();
+    const shown = servers.find((server) => server.selected);
     const mark = (value: boolean | null): string =>
       value === null ? '⚪ неизвестно' : value ? '🟢 да' : '🔴 нет';
     return [
+      ...(servers.length > 1 && shown
+        ? [`<b>Сервер:</b> ${escapeHtml(shown.name)} (из ${servers.length}, сменить — /servers)`]
+        : []),
       `<b>Veeam отвечает:</b> ${mark(health.reachable)}`,
       `<b>Учётная запись:</b> ${mark(health.authenticated)}`,
       `<b>Заданий под наблюдением:</b> ${health.trackedJobs}`,
@@ -380,3 +453,18 @@ export class TelegramCommandsService implements Answers {
     ];
   }
 }
+
+/** How a server is doing, in the words of the server menu. */
+const standing = (server: ServerStatus): string => {
+  if (server.reachable === null) return 'ещё не проверялся';
+  if (!server.reachable) return 'не отвечает';
+  if (server.authenticated === false) return 'отвечает, вход не выполнен';
+  if (server.authenticated === null) return 'отвечает, мониторинг заданий выключен';
+  if (!server.jobs) return 'отвечает';
+  const { total, failed, warning } = server.jobs;
+  const problems = [
+    ...(failed ? [`с ошибкой: ${failed}`] : []),
+    ...(warning ? [`с предупреждением: ${warning}`] : []),
+  ];
+  return `${total} ${plural(total, 'задание', 'задания', 'заданий')}${problems.length ? `, ${problems.join(', ')}` : ', всё в порядке'}`;
+};

@@ -28,7 +28,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
 
-    # Veeam usually sits outside Docker. If VEEAM_BASE_URL points at the host
+    # Veeam usually sits outside Docker. If a Veeam server URL points at the host
     # this container runs on, address it as host.docker.internal — `localhost`
     # inside a container is the container. On Linux this mapping is not
     # automatic, which is why it is spelled out.

@@ -29,6 +29,8 @@ const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
 
 const CHAT = '-1001234567890';
+/** The key of the one server a world has: named after its host, https://localhost:9419. */
+const SERVER = 'localhost';
 
 /**
  * The service's real config, read from `settings` alone and never from
@@ -113,7 +115,7 @@ function world(env = {}, handlers = {}, stateFile) {
   });
   const telegram = app.telegram;
   const config = configService(app);
-  const store = new TelegramStateStore(file, telegram.chatIds);
+  const store = new TelegramStateStore(file, telegram.chatIds, app.veeam.servers[0].key);
   const api = fakeBotApi(handlers);
   const transport = new TelegramTransportService(config, api.fn);
   const topics = new TelegramTopicsService(config, transport, store);
@@ -127,7 +129,7 @@ function world(env = {}, handlers = {}, stateFile) {
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
   return {
-    file, config, store, api, transport, topics, routing, service, commands, updates, live, telegram,
+    file, app, config, store, api, transport, topics, routing, service, commands, updates, live, telegram,
   };
 }
 
@@ -145,10 +147,14 @@ function ear(w, monitor) {
 /** A Monitor with nothing behind it. Kept in step with MonitorService by a test. */
 function idleMonitor() {
   return {
+    servers: () => [{
+      key: SERVER, name: SERVER, selected: true, reachable: null, authenticated: null, lastError: null,
+    }],
+    select: (key) => (key === SERVER ? 'already' : 'unknown'),
     check: async () => 'ran',
     summary: async () => ({ text: 'сводка' }),
     describeJob: async (query) => ({ text: `карточка ${query}` }),
-    describeJobById: async (id) => ({ text: `карточка ${id}`, jobId: id }),
+    describeJobById: async (id, server) => ({ text: `карточка ${id}`, jobId: id, server }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
       trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
@@ -156,9 +162,9 @@ function idleMonitor() {
   };
 }
 
-function veeamFake(routes) {
+function veeamFake(routes, baseUrl = 'https://veeam.test:9419') {
   return {
-    baseUrl: 'https://veeam.test:9419',
+    baseUrl,
     request: async (req) => {
       const handler = routes[req.path];
       assert.ok(handler, `unexpected Veeam path ${req.path}`);
@@ -199,13 +205,29 @@ function evidenceOf(w, veeam, auth = monitorAccount()) {
  * time it was added, eleven tests stopped compiling at once.
  */
 function monitorOf(w, veeam, auth = monitorAccount(), evidence) {
+  return monitorOfServers(w, [serverOf(w, veeam, auth, evidence)]);
+}
+
+/**
+ * One server of a world, as `ServerEstates` wires one: `veeam` is its
+ * transport and `auth` its token. Its key and name are the world's first
+ * configured server's unless `endpoint` says otherwise.
+ */
+function serverOf(w, veeam, auth = monitorAccount(), evidence, endpoint = w.app.veeam.servers[0]) {
   const reader = new VeeamEstateReader(veeam, auth);
   const scan = evidence ?? new BackupEvidenceService(w.config, reader);
-  const query = new JobQueryService(w.config, reader, auth, scan, new VeeamInventoryService(reader));
-  const snapshots = new LiveSnapshotsService(w.config, reader);
+  const inventory = new VeeamInventoryService(reader);
+  return {
+    key: endpoint.key, name: endpoint.name, baseUrl: veeam.baseUrl,
+    http: veeam, auth, reader, inventory, evidence: scan,
+    jobs: new JobQueryService(w.config, reader, auth, scan, inventory),
+  };
+}
+
+/** A monitor watching several servers, the first of them selected until one is chosen. */
+function monitorOfServers(w, servers) {
   return new MonitorService(
-    w.config, veeam, w.service, auth, reader, w.store, w.live,
-    scan, query, snapshots,
+    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config),
   );
 }
 
@@ -262,11 +284,11 @@ const exchange = (env = {}) =>
   });
 
 module.exports = {
-  CHAT, appConfig, telegramConfig, configService, fakeBotApi, world, veeamFake, idleMonitor, monitorWorld, job, exchange,
+  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, monitorWorld, job, exchange,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService,
-  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf,
+  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

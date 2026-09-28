@@ -32,8 +32,8 @@ test('every module import points one way, and none points back', () => {
       VeeamModule: [],
       TelegramModule: [],
       EstateModule: ['VeeamModule'],
-      LiveModule: ['TelegramModule', 'VeeamModule'],
-      MonitorModule: ['EstateModule', 'LiveModule', 'TelegramModule', 'VeeamModule'],
+      LiveModule: ['TelegramModule'],
+      MonitorModule: ['EstateModule', 'LiveModule', 'TelegramModule'],
       TelegramUpdatesModule: ['MonitorModule', 'TelegramModule'],
     },
   );

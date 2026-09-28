@@ -27,6 +27,12 @@ import { TelegramBotCommand, TelegramChat, TelegramKeyboard } from '../telegram/
 export interface Reply {
   lines: readonly string[];
   markup?: TelegramKeyboard;
+  /**
+   * Takes the place of the message whose Button was pressed, rather than
+   * following it: a menu that changed is the same menu, and a second copy of
+   * it under the first would leave two to choose from, one of them wrong.
+   */
+  replaces?: boolean;
 }
 
 /** The question a command or a Button put. */
@@ -46,6 +52,7 @@ export interface Asked {
 /** The Answers a command can give. `TelegramCommandsService` gives them. */
 export interface Answers {
   status(asked: Asked): Reply;
+  servers(): Reply;
   check(): Promise<Reply>;
   summary(): Promise<Reply>;
   job(name: string): Promise<Reply>;
@@ -55,9 +62,10 @@ export interface Answers {
 
 /**
  * A Button that stands for a command. A job's own Button is not one: it
- * carries an id, and `/job` is asked with a half-remembered name.
+ * carries an id, and `/job` is asked with a half-remembered name. Nor is a
+ * server's: it selects that server, which no command does.
  */
-export type CommandButton = Exclude<Action['kind'], 'job'>;
+export type CommandButton = Exclude<Action['kind'], 'job' | 'server'>;
 
 export interface Command {
   /** What is typed after the slash, and what the menu shows. */
@@ -102,6 +110,16 @@ const DECLARED = [
     ],
     button: 'status',
     answer: (answers, asked) => answers.status(asked),
+  },
+  {
+    name: 'servers',
+    menu: 'Выбрать сервер Veeam',
+    help: [
+      'серверы Veeam и их состояние. Кнопкой выбирается сервер, который',
+      'показывают живые темы, <code>/digest</code> и <code>/job</code>. Оповещения приходят со всех.',
+    ],
+    button: 'servers',
+    answer: (answers) => answers.servers(),
   },
   {
     name: 'digest',

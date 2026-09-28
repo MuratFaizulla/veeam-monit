@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
 import { AppConfig } from '../config/configuration';
 import { VeeamHttpService } from './http.service';
 import { VeeamTokenResponse } from './types';
@@ -9,9 +8,15 @@ const DEFAULT_TOKEN_LIFETIME_MS = 15 * 60_000;
 /** Shortest gap between two logins forced by Veeam refusing a token. */
 const REJECT_COOLDOWN_MS = 60_000;
 
-@Injectable()
+/**
+ * The monitor account's token on one Veeam server.
+ *
+ * One per server, built by `VeeamServers`. Every server is signed in to with
+ * the same account, but a token is the server's own, and so is the lesson that
+ * its refresh grant cannot be trusted.
+ */
 export class VeeamMonitorAuthService {
-  private readonly logger = new Logger(VeeamMonitorAuthService.name);
+  private readonly logger: Logger;
   private readonly user: string;
   private readonly password: string;
   private accessToken = '';
@@ -24,8 +29,12 @@ export class VeeamMonitorAuthService {
   private refreshUsable = true;
   private pending?: Promise<string>;
 
-  constructor(config: ConfigService, private readonly veeam: VeeamHttpService) {
-    const account = config.getOrThrow<AppConfig['veeam']>('veeam');
+  constructor(
+    account: Pick<AppConfig['veeam'], 'username' | 'password'>,
+    private readonly veeam: VeeamHttpService,
+    server = '',
+  ) {
+    this.logger = new Logger(`${VeeamMonitorAuthService.name}${server ? ` ${server}` : ''}`);
     this.user = account.username;
     this.password = account.password;
   }

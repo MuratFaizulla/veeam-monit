@@ -67,7 +67,8 @@ export class TelegramController {
       'Открыт без ключа: это проба, по которой судят, жив ли мониторинг.\n\n' +
       '`mode` — чем бот действительно принимает обновления: `polling`, `webhook`,' +
       ' `disabled` (нет токена) или `starting` (токен есть, но ни один способ ещё не' +
-      ' поднялся — например, запуск long polling не удался).',
+      ' поднялся — например, запуск long polling не удался).\n\n' +
+      '`monitor` — выбранный сервер Veeam, `servers` — все серверы и их состояние.',
   })
   status() {
     const reach = this.telegram.reach;
@@ -80,6 +81,7 @@ export class TelegramController {
       knownTopics: reach.topics,
       queue: reach.queue,
       monitor: this.monitor.status,
+      servers: this.monitor.servers(),
     };
   }
 

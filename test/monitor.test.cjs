@@ -7,7 +7,7 @@ const fs = require('node:fs');
 // One harness for every test file. Everything it pulls out of dist/ is
 // re-exported, so each file opens with the same line and takes what it needs.
 const {
-  CHAT, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
+  CHAT, SERVER, telegramConfig, fakeBotApi, world, veeamFake, monitorWorld, job, exchange,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
@@ -448,7 +448,7 @@ test('/status carries the same health as /check, without running anything', asyn
   assert.match(reply.text, /Учётная запись:<\/b> 🟢 да/);
   // The way to the rest is a button now, not a line telling somebody to type.
   const buttons = reply.reply_markup.inline_keyboard.flat().map((b) => b.text);
-  assert.deepEqual(buttons, ['📊 Сводка', '🔄 Проверить', '🤖 Команды']);
+  assert.deepEqual(buttons, ['📊 Сводка', '🔄 Проверить', '🖥 Серверы', '🤖 Команды']);
 });
 
 test('an approximate name finds the job somebody meant', () => {
@@ -705,11 +705,19 @@ test('a button and its reader cannot disagree about what it means', () => {
   const { encode, decode } = require('../dist/updates/keyboard');
   const { BOT_COMMANDS } = require('../dist/updates/commands');
 
-  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
+  for (const action of [
+    { kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }, { kind: 'servers' },
+    { kind: 'server', key: 'veam01baas01' },
+  ]) {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
   }
-  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf' };
-  assert.deepEqual(decode(encode(job)), job, 'GUID помещается в 64 байта Telegram');
+  // The longest key configuration allows, beside a GUID.
+  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01ast01-baa' };
+  assert.deepEqual(decode(encode(job)), job, 'сервер и GUID помещаются в 64 байта Telegram');
+  // A job's Button from before there was a list names no server.
+  assert.deepEqual(decode('a:job:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
+    kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf',
+  });
 
   // A button from a version that had actions this one does not.
   assert.equal(decode('a:whatever'), undefined);
@@ -718,7 +726,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'clear', 'digest', 'help', 'job', 'status', 'topics'],
+    ['check', 'clear', 'digest', 'help', 'job', 'servers', 'status', 'topics'],
   );
 });
 
@@ -751,13 +759,15 @@ test('the summary offers the jobs it just named', async () => {
   const rows = w.api.sent().at(-1).reply_markup.inline_keyboard;
   assert.deepEqual(rows.map((row) => row[0].text), ['SQL Daily', 'Exchange', '🔄 Обновить']);
   // Addressed by id: a name would not fit the 64 bytes, and would open the
-  // wrong job if the estate changed between the message and the press.
-  assert.equal(rows[0][0].callback_data, 'a:job:1');
+  // wrong job if the estate changed between the message and the press. And by
+  // server, which may no longer be the one selected when it is pressed.
+  assert.equal(rows[0][0].callback_data, `a:job:${SERVER}:1`);
 });
 
 test('pressing a job button opens that job, without anybody typing a name', async () => {
   const w = configured();
 
+  // A Button from before there was a list: no server, so the first one.
   await pressed(w, 'a:job:1');
 
   const sent = w.api.sent().at(-1);
@@ -767,7 +777,7 @@ test('pressing a job button opens that job, without anybody typing a name', asyn
   // And the card offers its own refresh, so the loop closes.
   assert.deepEqual(
     sent.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
-    ['a:job:1', 'a:sum'],
+    [`a:job:${SERVER}:1`, 'a:sum'],
   );
 });
 

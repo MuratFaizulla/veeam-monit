@@ -167,7 +167,7 @@ test('a failure that is not about the token is passed straight through', async (
 
 /** The config a signed-in monitor starts from: its account is in the veeam block. */
 const monitorAccount = () =>
-  configService(appConfig({ VEEAM_MONITOR_USERNAME: 'svc', VEEAM_MONITOR_PASSWORD: 'p' }));
+  appConfig({ VEEAM_MONITOR_USERNAME: 'svc', VEEAM_MONITOR_PASSWORD: 'p' }).veeam;
 
 test('one burst of refusals buys one new token, not one per call', async () => {
   const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
@@ -235,4 +235,50 @@ test('where refreshing works it is never switched off', async () => {
   await auth.getAccessToken();
 
   assert.deepEqual(v.calls, ['login', 'refresh', 'refresh'], 'nothing refused anything');
+});
+
+/* ------------------------------------------------------------------ *
+ * The API version each server speaks
+ * ------------------------------------------------------------------ */
+
+test('a server that does not speak the configured API version is spoken to in the newest it offers', async () => {
+  const http = require('node:http');
+  const { VeeamHttpService } = require('../dist/veeam/http.service');
+  const asked = [];
+  // An older Veeam, exactly as veam01baas01 answered a 1.2 client.
+  const old = http.createServer((req, res) => {
+    asked.push(req.headers['x-api-version']);
+    res.setHeader('Content-Type', 'application/json');
+    if (req.headers['x-api-version'] !== '1.1-rev2') {
+      res.statusCode = 400;
+      res.end(JSON.stringify({
+        errorCode: 'BadRequest',
+        message: 'Unsupported RESTAPI version. The following versions are supported: v1.0-rev1, v1.0-rev2, v1.1-rev0, v1.1-rev1, v1.1-rev2',
+      }));
+      return;
+    }
+    res.end(JSON.stringify({ serverTime: '2026-09-28T10:40:01+05:00' }));
+  });
+  await new Promise((listening) => old.listen(0, '127.0.0.1', listening));
+  const veeam = new VeeamHttpService({
+    name: 'old', baseUrl: `http://127.0.0.1:${old.address().port}`,
+    apiVersion: '1.2-rev1', insecureTls: false, timeoutMs: 5000,
+  });
+  try {
+    assert.deepEqual(await veeam.reachability(), { reachable: true, serverTime: '2026-09-28T10:40:01+05:00' });
+    await veeam.reachability();
+    assert.deepEqual(asked, ['1.2-rev1', '1.1-rev2', '1.1-rev2'], 'refused once, then spoken to in its own version');
+  } finally {
+    old.close();
+  }
+});
+
+test('only a refusal of the version is read as one, and the newest version it names wins', () => {
+  const { spokenVersion } = require('../dist/veeam/http.service');
+  assert.equal(
+    spokenVersion('Unsupported RESTAPI version. The following versions are supported: v1.1-rev2, v1.0-rev1, v1.1-rev10'),
+    '1.1-rev10',
+  );
+  assert.equal(spokenVersion('Veeam API responded with HTTP 400'), undefined);
+  assert.equal(spokenVersion('Job v1.1-rev2 not found'), undefined);
 });

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Clock } from '../telegram/time';
@@ -26,8 +26,12 @@ import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices,
  */
 const RECENT_SESSIONS = 30;
 
-/** Reads one job on demand without changing the background monitor's health. */
-@Injectable()
+/**
+ * Reads one job on demand without changing the background monitor's health.
+ *
+ * One per Veeam server, built by `ServerEstates`: it answers about the jobs of
+ * the server whose reader and Evidence it was handed.
+ */
 export class JobQueryService {
   private readonly logger = new Logger(JobQueryService.name);
   private readonly config: AppConfig['telegram'];

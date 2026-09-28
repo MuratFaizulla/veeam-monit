@@ -64,7 +64,7 @@ test('a token refused in the middle of a cycle costs one sign-in, not the rest o
       data: [{ id: 'r1', name: 'Repo01', capacityGB: 1000, freeGB: 40 }],
     },
   });
-  const auth = new VeeamMonitorAuthService(w.config, veeam);
+  const auth = new VeeamMonitorAuthService(w.app.veeam, veeam);
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
@@ -89,7 +89,7 @@ test('a refusal that reaches a whole batch of pages at once costs one sign-in an
       return { data: rows.slice(skip, skip + limit), pagination: { total: rows.length, skip, limit } };
     },
   });
-  const reader = new VeeamEstateReader(veeam, new VeeamMonitorAuthService(w.config, veeam));
+  const reader = new VeeamEstateReader(veeam, new VeeamMonitorAuthService(w.app.veeam, veeam));
 
   const points = await reader.restorePoints();
 

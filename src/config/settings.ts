@@ -62,6 +62,21 @@ const items = (raw: string): string[] =>
     .filter(Boolean);
 
 /**
+ * `value` as an http or https URL without trailing slashes, or undefined when
+ * it is not one. What `url` accepts, for a setting that holds several.
+ */
+export const httpUrl = (value: string, { httpsOnly = false } = {}): string | undefined => {
+  const protocols = httpsOnly ? ['https:'] : ['http:', 'https:'];
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname && protocols.includes(parsed.protocol)) return value.replace(/\/+$/, '');
+  } catch {
+    // Not a URL at all.
+  }
+  return undefined;
+};
+
+/**
  * Reads the settings `declare` asks for. Returns what it built, or throws one
  * error listing every variable that was wrong — all of them, so an operator
  * fixes the file once rather than once per restart.
@@ -119,13 +134,8 @@ export const readSettings = <T>(env: Environment, declare: (settings: Settings) 
     url(key, fallback, { httpsOnly = false } = {}) {
       const value = given(key);
       if (!value) return fallback;
-      const protocols = httpsOnly ? ['https:'] : ['http:', 'https:'];
-      try {
-        const parsed = new URL(value);
-        if (parsed.hostname && protocols.includes(parsed.protocol)) return value.replace(/\/+$/, '');
-      } catch {
-        // Not a URL at all; refused below with the same message.
-      }
+      const url = httpUrl(value, { httpsOnly });
+      if (url !== undefined) return url;
       // The value is not repeated: a URL can carry credentials.
       return refuse(`${key} must be a valid ${httpsOnly ? 'HTTPS' : 'HTTP(S)'} URL`, fallback);
     },

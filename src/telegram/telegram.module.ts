@@ -27,6 +27,7 @@ import { TelegramTransportService } from './transport.service';
         new TelegramStateStore(
           config.getOrThrow<AppConfig['telegram']>('telegram').stateFile,
           config.getOrThrow<AppConfig['telegram']>('telegram').chatIds,
+          config.getOrThrow<AppConfig['veeam']>('veeam').servers[0].key,
         ),
     },
     {

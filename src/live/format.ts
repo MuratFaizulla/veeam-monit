@@ -27,9 +27,28 @@ const BAR = 10;
  */
 export const fitted = (count: number, build: (shown: number) => string): string => {
   const whole = build(count);
-  if (whole.length <= MAX_LENGTH) return whole;
-  return build(largest(count, (shown) => build(shown).length <= MAX_LENGTH));
+  if (whole.length <= BUDGET) return whole;
+  return build(largest(count, (shown) => build(shown).length <= BUDGET));
 };
+
+/**
+ * Room left above every slot for the name of the server it shows.
+ *
+ * The lists are fitted to what is left, rather than cut after the name is
+ * put on top: cutting would take the footer, or the "…и ещё" that says how many
+ * rows were left out.
+ */
+const HEADING_ROOM = 64;
+const BUDGET = MAX_LENGTH - HEADING_ROOM;
+
+/**
+ * A slot's page with the server it shows named on top.
+ *
+ * Only where there are several servers: with one, there is nothing to tell
+ * apart, and the name would be one more line on every message saying nothing.
+ */
+export const headed = (serverName: string, page: string): string =>
+  truncate(`🖥 <b>${escapeHtml(serverName)}</b>\n\n${page}`);
 
 /**
  * The largest `n` up to `limit` for which `fits(n)` holds.
@@ -70,14 +89,14 @@ export const paged = (
   for (let page = 0; page < maxPages; page += 1) {
     const rest = count - from;
     const whole = build(from, rest, true);
-    if (whole.length <= MAX_LENGTH) {
+    if (whole.length <= BUDGET) {
       out.push(whole);
       return out;
     }
     // The last page allowed must carry the summary even though it cannot carry
     // every remaining row; the summary is what says how many were left out.
     const closing = page === maxPages - 1;
-    const take = largest(rest, (n) => build(from, n, closing).length <= MAX_LENGTH);
+    const take = largest(rest, (n) => build(from, n, closing).length <= BUDGET);
     out.push(build(from, take, closing));
     from += take;
     // A single row that does not fit on its own would loop forever otherwise.
@@ -96,6 +115,16 @@ export interface LiveHealth {
   error?: string | null;
   trackedJobs: number;
   intervalMs: number;
+  /** Every Veeam server watched, and which one the slots show. Listed when there are several. */
+  servers?: LiveServerHealth[];
+}
+
+export interface LiveServerHealth {
+  name: string;
+  selected: boolean;
+  /** Null until the server has been asked once. */
+  reachable: boolean | null;
+  authenticated: boolean | null;
 }
 
 export interface RunningJob {
@@ -162,6 +191,19 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
     lines.push('', `<b>Причина:</b> ${escapeHtml(health.error)}`);
   }
 
+  // Every server, not only the one shown: this is the slot that answers "is
+  // the monitor watching everything", and a server that fell over while
+  // another was selected is the one somebody needs to see here.
+  if (health.servers && health.servers.length > 1) {
+    lines.push('', '<b>Серверы:</b>');
+    for (const server of health.servers) {
+      const name = escapeHtml(server.name);
+      lines.push(
+        `${serverIcon(server)} ${server.selected ? `<b>${name}</b> — показан здесь` : name}`,
+      );
+    }
+  }
+
   lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
 
   // Veeam's own clock belongs on the volatile line: it moves every poll, and a
@@ -175,6 +217,13 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
 
   return truncate(lines.join('\n'));
 };
+
+/** 🟢 answering and signed in, 🟡 answering only, 🔴 not answering, ⚪ not asked yet. */
+export const serverIcon = (server: {
+  reachable: boolean | null;
+  authenticated: boolean | null;
+}): string =>
+  server.reachable === null ? '⚪' : !server.reachable ? '🔴' : server.authenticated ? '🟢' : '🟡';
 
 const authLabel = (authenticated: boolean | null): string => {
   if (authenticated === null) return 'не настроена';

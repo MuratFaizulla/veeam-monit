@@ -132,7 +132,9 @@ test('harmless variants are read as meant', () => {
   assert.equal(config.docs, false);
   assert.equal(config.telegram.liveOrphans, true);
   assert.deepEqual(config.telegram.chatIds, ['-100123', '-100456']);
-  assert.equal(config.veeam.baseUrl, 'https://veeam.example:9419');
+  assert.deepEqual(config.veeam.servers, [
+    { key: 'veeam', name: 'veeam', baseUrl: 'https://veeam.example:9419', legacyTls: false },
+  ]);
   assert.equal(config.telegram.protectionOverdueFactor, 1.5);
 });
 
@@ -147,12 +149,53 @@ test('a variable left empty means its default, whatever its kind', () => {
     TELEGRAM_ROUTING_MODE: '',
     TELEGRAM_PROTECTION_OVERDUE_FACTOR: '',
   });
-  assert.equal(config.veeam.baseUrl, 'https://localhost:9419');
+  assert.equal(config.veeam.servers[0].baseUrl, 'https://localhost:9419');
   assert.equal(config.veeam.apiVersion, '1.2-rev1');
   assert.equal(config.telegram.queueLimit, 200);
   assert.equal(config.telegram.live, true);
   assert.equal(config.telegram.routingMode, 'single');
   assert.equal(config.telegram.protectionOverdueFactor, 2.5);
+});
+
+test('several Veeam servers are listed once, each named or named after its host', () => {
+  const config = accepted({
+    VEEAM_SERVERS: ' https://veeam01ast01.t-cloud.kz:9419/ , BAAS = https://veam01baas01.t-cloud.kz:9419 ,',
+  });
+  assert.deepEqual(config.veeam.servers, [
+    { key: 'veeam01ast01', name: 'veeam01ast01', baseUrl: 'https://veeam01ast01.t-cloud.kz:9419', legacyTls: false },
+    { key: 'baas', name: 'BAAS', baseUrl: 'https://veam01baas01.t-cloud.kz:9419', legacyTls: false },
+  ]);
+
+  // A key is what a Button carries beside a job id in 64 bytes, so it is ASCII
+  // and short whatever the name is; a name with nothing ASCII in it gets one by
+  // its place in the list.
+  const named = accepted({ VEEAM_SERVERS: 'Астана=https://a.example:9419,Very long name of a server=https://b.example:9419' });
+  assert.deepEqual(named.veeam.servers.map((server) => server.key), ['server1', 'very-long-name-o']);
+});
+
+test('old TLS is offered only to the servers named for it', () => {
+  const config = accepted({
+    VEEAM_SERVERS: 'https://veeam01ast01.t-cloud.kz:9419,BAAS=https://veam01baas01.t-cloud.kz:9419',
+    VEEAM_LEGACY_TLS: 'baas',
+  });
+  assert.deepEqual(config.veeam.servers.map((server) => [server.name, server.legacyTls]), [
+    ['veeam01ast01', false],
+    ['BAAS', true],
+  ]);
+  // A name that matches nothing would be a server left refusing the handshake,
+  // with nothing to say the setting did not apply.
+  refused({ VEEAM_SERVERS: 'https://a.example:9419', VEEAM_LEGACY_TLS: 'b' }, /VEEAM_LEGACY_TLS names "b"/);
+});
+
+test('the server list refuses what it could not tell apart or reach', () => {
+  refused(
+    { VEEAM_SERVERS: 'https://a.example:9419', VEEAM_BASE_URL: 'https://b.example:9419' },
+    /VEEAM_SERVERS and VEEAM_BASE_URL/,
+  );
+  refused({ VEEAM_SERVERS: 'one=not-a-url' }, /VEEAM_SERVERS entry 1 must be a valid HTTP/);
+  refused({ VEEAM_SERVERS: 'VBR 1=https://a.example:9419,vbr-1=https://b.example:9419' }, /too alike/);
+  refused({ VEEAM_SERVERS: 'https://a.example:9419,other=https://a.example:9419' }, /one URL twice/);
+  refused({ VEEAM_SERVERS: `${'x'.repeat(33)}=https://a.example:9419` }, /entry 1 needs a name/);
 });
 
 test('the monitor account is Veeam settings, not Telegram ones', () => {
@@ -169,7 +212,7 @@ test('with nothing set, every setting has the default it has always had', () => 
     port: 3000,
     docs: true,
     veeam: {
-      baseUrl: 'https://localhost:9419',
+      servers: [{ key: 'localhost', name: 'localhost', baseUrl: 'https://localhost:9419', legacyTls: false }],
       apiVersion: '1.2-rev1',
       insecureTls: true,
       timeoutMs: 30000,
