@@ -84,7 +84,7 @@ export class TelegramStateStore implements OnModuleDestroy {
    */
   constructor(
     private readonly filePath: string,
-    chatIds?: string[],
+    chatIds: string[] = [],
     private readonly firstServer = '',
   ) {
     this.state = this.load();
@@ -92,22 +92,7 @@ export class TelegramStateStore implements OnModuleDestroy {
     this.cooldowns = new Cooldowns(this.state.cooldowns, save);
     this.liveMessages = new LiveMessages(this.state.liveMessages, save);
     this.answerLog = new AnswerLog(this.state.answers, save);
-    const configured = chatIds ?? [];
-    let pruned = false;
-    if (chatIds) {
-      const allowed = new Set(configured);
-      for (const id of Object.keys(this.state.chats)) {
-        if (allowed.has(id)) continue;
-        delete this.state.chats[id];
-        delete this.state.topics[id];
-        delete this.state.menus?.[id];
-        delete this.state.liveMessages[id];
-        delete this.state.answers[id];
-        pruned = true;
-      }
-    }
-    if (pruned) this.save();
-    for (const id of configured) this.seedChat(id, { id: Number(id), type: 'supergroup' });
+    for (const id of chatIds) this.seedChat(id, { id: Number(id), type: 'supergroup' });
   }
 
   /** The debounced write may still be pending when the process stops. */

@@ -29,7 +29,6 @@ import { TelegramChat, TelegramUpdate } from '../telegram/types';
 export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramUpdatesService.name);
   private readonly config: AppConfig['telegram'];
-  private readonly allowedChats: ReadonlySet<string>;
   private polling = false;
   private stopping = false;
   private updateOffset = 0;
@@ -42,7 +41,6 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     private readonly commands: TelegramCommandsService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
-    this.allowedChats = new Set(this.config.chatIds);
   }
 
   async onModuleInit(): Promise<void> {
@@ -97,9 +95,6 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   async handleUpdate(update: TelegramUpdate): Promise<void> {
     const message = update.message;
     const chat = message?.chat ?? update.callback_query?.message?.chat ?? update.my_chat_member?.chat;
-    // A bot can be added to an arbitrary group or contacted in private. Only
-    // explicitly configured destinations may read Veeam data or run commands.
-    if (!chat || !this.allowedChats.has(String(chat.id))) return;
     if (chat) this.registerChat(chat);
 
     // The Bot API cannot enumerate forum topics, so a topic the bot did not
