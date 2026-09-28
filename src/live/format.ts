@@ -1,10 +1,9 @@
 import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
-import { dayKey, dayOf, duration, LiveClock, moment, plural, stampOf, timeOnly } from '../telegram/time';
+import { dayKey, dayOf, duration, Clock, moment, plural, stampOf, timeOnly } from '../telegram/time';
 import { ScheduledRun } from '../estate/schedule-planner';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
-export { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../telegram/time';
-export { ScheduledRun } from '../estate/schedule-planner';
+export { dayOf, Clock, longMoment, plural } from '../telegram/time';
 
 /**
  * Renders the two always-current status messages.
@@ -134,7 +133,7 @@ export interface LiveSchedule {
  * Health
  * ------------------------------------------------------------------ */
 
-export const renderHealth = (health: LiveHealth, clock: LiveClock): string => {
+export const renderHealth = (health: LiveHealth, clock: Clock): string => {
   const lines: string[] = [];
 
   if (!health.reachable) {
@@ -186,7 +185,7 @@ const authLabel = (authenticated: boolean | null): string => {
  * Running jobs
  * ------------------------------------------------------------------ */
 
-export const renderRunning = (running: LiveRunning, clock: LiveClock): string => {
+export const renderRunning = (running: LiveRunning, clock: Clock): string => {
   const lines: string[] = [];
 
   if (running.unavailable) {
@@ -242,7 +241,7 @@ export const renderRunning = (running: LiveRunning, clock: LiveClock): string =>
  * Today's schedule
  * ------------------------------------------------------------------ */
 
-export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string => {
+export const renderSchedule = (schedule: LiveSchedule, clock: Clock): string => {
   if (schedule.unavailable) {
     return truncate(
       [
@@ -292,7 +291,7 @@ export const renderSchedule = (schedule: LiveSchedule, clock: LiveClock): string
   );
 };
 
-const jobBlock = (job: RunningJob, clock: LiveClock): string[] => {
+const jobBlock = (job: RunningJob, clock: Clock): string[] => {
   const head = job.percent === undefined
     ? `<b>${escapeHtml(job.name)}</b>`
     : `<b>${escapeHtml(job.name)}</b> — ${Math.round(job.percent)}%`;
@@ -327,7 +326,7 @@ export const bar = (percent: number, width = BAR): string => {
 
 const nextRunLabel = (
   next: { name: string; at: string } | null | undefined,
-  clock: LiveClock,
+  clock: Clock,
 ): string => {
   if (!next) return 'по расписанию ничего не запланировано';
   const at = Date.parse(next.at);
@@ -352,7 +351,7 @@ const UPDATED = '<i>Обновлено';
  * `extra` stays inside the line, and so inside what the comparison ignores:
  * it is for things that move every poll, like Veeam's own clock.
  */
-export const footerOf = (clock: LiveClock, extra = ''): string =>
+export const footerOf = (clock: Clock, extra = ''): string =>
   `${UPDATED} ${stampOf(clock.now, clock)}${extra}</i>`;
 
 /** Whether this line is the one `footerOf` writes. */

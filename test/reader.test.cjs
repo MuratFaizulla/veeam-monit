@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { world, veeamFake, monitorOf, job } = require('./world.cjs');
+const { world, veeamFake, monitorOf, monitorWorld, job, CHAT, VeeamEstateReader } = require('./world.cjs');
 const { VeeamApiError } = require('../dist/veeam/api.error');
 const { VeeamMonitorAuthService } = require('../dist/veeam/monitor-auth.service');
 
@@ -78,7 +78,6 @@ test('a token refused in the middle of a cycle costs one sign-in, not the rest o
 });
 
 test('a refusal that reaches a whole batch of pages at once costs one sign-in and no page', async () => {
-  const { VeeamEstateReader } = require('./world.cjs');
   const w = world(SIGNED_IN);
   const rows = Array.from({ length: 3000 }, (_, i) => ({ id: `p${i}` }));
   const { veeam, state } = tokenVeeam({
@@ -103,7 +102,6 @@ test('a refusal that reaches a whole batch of pages at once costs one sign-in an
 });
 
 test('a token somebody already replaced is simply retried with the new one', async () => {
-  const { VeeamEstateReader } = require('./world.cjs');
   let token = 'old';
   let rejected = 0;
   const reader = new VeeamEstateReader(
@@ -131,7 +129,6 @@ test('a token somebody already replaced is simply retried with the new one', asy
  * ------------------------------------------------------------------ */
 
 test('a cycle reads the Working sessions once, and ▶️, 📈 and the Summary count the same run', async () => {
-  const { monitorWorld } = require('./world.cjs');
   let workingReads = 0;
   // Switched off in Veeam and transferring anyway: only the session says so.
   const byHand = { id: '9', name: 'Started by hand', type: 'Backup', status: 'Disabled', lastResult: 'Success' };
@@ -168,7 +165,6 @@ test('a cycle reads the Working sessions once, and ▶️, 📈 and the Summary 
  * ------------------------------------------------------------------ */
 
 test('a job Veeam gave no name is called by its id in the alert, the Summary and ▶️ alike', async () => {
-  const { monitorWorld, CHAT } = require('./world.cjs');
   const unnamed = (lastResult) => ({ id: '5f1c0e2a', type: 'Backup', status: 'Working', lastResult });
   const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [unnamed('Success')]);
   await w.monitor.check();

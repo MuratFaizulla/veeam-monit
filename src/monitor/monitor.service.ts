@@ -19,13 +19,13 @@ import { jobTransitions, Transition } from './transitions';
 import { attemptOf, retriesAllowed, retryWindowOf } from '../estate/runs';
 import { JobSession } from '../estate/job-card';
 import { renderEvent } from '../telegram/format';
-import { MonitorAnswer } from '../estate/answer';
+import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth } from './monitor';
 import { JobQueryService } from '../estate/job-query.service';
 
 const HOUR = 3_600_000;
 
-export type { MonitorAnswer, MonitorHealth } from './monitor';
+export type { Answer, MonitorHealth } from './monitor';
 
 /**
  * Polls Veeam and turns what changed into notification events.
@@ -149,7 +149,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    * asked for in General would land in the recoveries topic, where nobody who
    * asked for it is looking. An answer belongs where the question was.
    */
-  async summary(): Promise<MonitorAnswer> {
+  async summary(): Promise<Answer> {
     const read = await this.jobQuery.jobsNow();
     if (!read.ok) return { text: read.message };
     const summary = summarise(read.jobs, (await this.working()).byJob);
@@ -165,11 +165,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async describeJob(query: string): Promise<MonitorAnswer> {
+  async describeJob(query: string): Promise<Answer> {
     return this.jobQuery.describeJob(query);
   }
 
-  async describeJobById(id: string): Promise<MonitorAnswer> {
+  async describeJobById(id: string): Promise<Answer> {
     return this.jobQuery.describeJobById(id);
   }
 
@@ -338,16 +338,18 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   ): Promise<NotificationEvent> {
     const { job, result, previous, severity } = transition;
     const { name } = job;
+    // A recovery needs no reason and no attempt: the run that matters worked.
+    const recovery = severity === 'success';
     const title =
-      severity === 'success'
+      recovery
         ? `${name}: задание восстановлено`
         : `${name}: ${result === 'failed' ? 'ОШИБКА' : 'предупреждение'}`;
 
     // One read, two answers: the reason the run failed, and which attempt of
     // the run this is. They come from the same sessions, and fetching them
     // twice would be two requests to say one thing.
-    const sessions = severity === 'success' ? [] : await this.jobQuery.recentSessions(job);
-    const schedule = severity === 'success' ? undefined : await this.retryPolicyOf(job, evidence);
+    const sessions = recovery ? [] : await this.jobQuery.recentSessions(job);
+    const schedule = recovery ? undefined : await this.retryPolicyOf(job, evidence);
 
     return {
       kind: 'job',
@@ -364,7 +366,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         ['Следующий запуск', job.nextRun],
         ['Объектов', job.objectsCount],
       ],
-      body: severity === 'success' ? undefined : sessions[0]?.message,
+      body: recovery ? undefined : sessions[0]?.message,
       // One message per job per transition; the cooldown only guards against a
       // job flapping between two results within the window.
       dedupeKey: `job:${job.id}:${result}`,
@@ -376,9 +378,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    * "2 из 3", or nothing when this is a first attempt with no retries behind it.
    *
    * Three alerts a night with identical text were three attempts at one run,
-   * and nothing in the message said so. The retry policy comes from the estate
-   * scan, which already reads every job configuration — a policy that changed
-   * in the last twenty minutes is not worth a request per alert.
+   * and nothing in the message said so. The policy is handed in; where it comes
+   * from is retryPolicyOf's business.
    */
   private attemptLabel(
     sessions: JobSession[],
@@ -402,12 +403,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    */
   private async retryPolicyOf(job: Job, evidence: Evidence): Promise<VeeamSchedule | undefined> {
     if (evidence.status === 'ready') return evidence.schedulesByJob.get(job.id);
-    try {
-      return (await this.reader.jobConfiguration(job.id)).schedule;
-    } catch (error) {
-      this.logger.debug(`No configuration for job ${job.id}: ${(error as Error).message}`);
-      return undefined;
-    }
+    return (await this.jobQuery.configurationOf(job))?.schedule;
   }
 
   private async checkRepositories(): Promise<RepositoryCapacity[]> {

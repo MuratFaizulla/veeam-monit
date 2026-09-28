@@ -1,6 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { Standings } from '../estate/job-standing';
-import { dayOf, fitted, footerOf, LiveClock, longMoment, plural } from './format';
+import { dayOf, fitted, footerOf, Clock, longMoment, plural } from './format';
 
 /**
  * "What is not actually protected right now."
@@ -134,7 +134,7 @@ const compareRisk = (a: ProtectionRisk, b: ProtectionRisk): number => {
  * Rendering
  * ------------------------------------------------------------------ */
 
-export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock): string => {
+export const renderProtection = (snapshot: ProtectionSnapshot, clock: Clock): string => {
   const footer = footerOf(clock);
 
   if (snapshot.unavailable) {
@@ -193,7 +193,7 @@ export const renderProtection = (snapshot: ProtectionSnapshot, clock: LiveClock)
   });
 };
 
-const riskLine = (risk: ProtectionRisk, clock: LiveClock): string => {
+const riskLine = (risk: ProtectionRisk, clock: Clock): string => {
   const icon = risk.severity === 'critical' ? '🔴' : '🟠';
   const reasons: string[] = [];
 

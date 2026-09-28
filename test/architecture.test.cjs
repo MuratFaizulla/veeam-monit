@@ -119,7 +119,7 @@ test('every import between folders points down the layers the modules are wired 
       else if (name.endsWith('.ts')) files.push(full);
     }
   })(src);
-  const importsOf = (file) =>
+  const fileImportsOf = (file) =>
     [...fs.readFileSync(file, 'utf8').matchAll(/from '(\.{1,2}\/[^']+)'/g)]
       .map((match) => path.resolve(path.dirname(file), match[1]) + '.ts');
   const folderOf = (file) => path.relative(src, file).split(path.sep)[0];
@@ -131,10 +131,10 @@ test('every import between folders points down the layers the modules are wired 
       assert.ok(!file.slice(src.length + 1).includes(path.sep), `folder ${from} has no layer`);
       continue; // main.ts and app.module.ts wire everything
     }
-    for (const target of importsOf(file)) {
+    for (const target of fileImportsOf(file)) {
       const to = folderOf(target);
       if (to === from) continue;
-      if (fs.existsSync(target) && importsOf(target).length === 0) continue;
+      if (fs.existsSync(target) && fileImportsOf(target).length === 0) continue;
       if (!rank.has(to) || rank.get(to) >= rank.get(from)) {
         wrong.push(`${path.relative(src, file)} -> ${path.relative(src, target)}`);
       }

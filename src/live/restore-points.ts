@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, footerOf, LiveClock, longMoment, paged, plural } from './format';
+import { dayOf, footerOf, Clock, longMoment, paged, plural } from './format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
@@ -92,7 +92,7 @@ const MAX_PAGES = 2;
 
 export const renderRestorePoints = (
   snapshot: RestorePointsSnapshot,
-  clock: LiveClock,
+  clock: Clock,
 ): string[] => {
   const footer = footerOf(clock);
 
@@ -215,7 +215,7 @@ const byUrgency =
  * line somebody reads before opening Veeam, and a relative age has to be
  * translated back into a moment before it can be checked against anything.
  */
-const depthLine = (job: JobDepth, missed: number | null, clock: LiveClock): string => {
+const depthLine = (job: JobDepth, missed: number | null, clock: Clock): string => {
   const icon =
     missed === null ? '⚪' : missed >= 2 ? '🔴' : missed >= MISSED_ALERT ? '🟠' : '🟢';
 

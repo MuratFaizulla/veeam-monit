@@ -17,7 +17,7 @@ import { VeeamJobState, VeeamSession } from './types';
  * ▶️ and 📅, and its bare id in 🛡 — seven decisions with three answers — and
  * `!job.id` was guarded against in seven places.
  */
-export interface Job extends VeeamJobState {
+export interface Job extends Omit<VeeamJobState, 'lastResult'> {
   id: string;
   /**
    * Veeam's name, or the id where it gave none: the one name every alert,

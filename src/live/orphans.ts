@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, fitted, footerOf, LiveClock, plural } from './format';
+import { dayOf, fitted, footerOf, Clock, plural } from './format';
 
 /**
  * Backup chains no live job owns any more.
@@ -33,7 +33,7 @@ export interface OrphansSnapshot {
   unavailable?: string;
 }
 
-export const renderOrphans = (snapshot: OrphansSnapshot, clock: LiveClock): string => {
+export const renderOrphans = (snapshot: OrphansSnapshot, clock: Clock): string => {
   const footer = footerOf(clock);
 
   if (snapshot.unavailable) {
@@ -89,7 +89,7 @@ export const renderOrphans = (snapshot: OrphansSnapshot, clock: LiveClock): stri
   });
 };
 
-const orphanLine = (backup: OrphanBackup, clock: LiveClock): string => {
+const orphanLine = (backup: OrphanBackup, clock: Clock): string => {
   const age =
     backup.newest === undefined
       ? 0

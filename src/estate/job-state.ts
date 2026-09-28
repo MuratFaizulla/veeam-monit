@@ -7,8 +7,8 @@ import { Job } from '../veeam/estate';
  * builds. The result is lower-cased once, when the job is read (`Job.result`);
  * the status is read here. The rule for it had settled into a `Set` here, a
  * literal comparison there, and `(job.status ?? '').toLowerCase() ===
- * 'disabled'` written out in three modules. Each copy was right; there was simply nowhere to add the next status
- * without finding all of them first — and the one time that mattered, a job
+ * 'disabled'` written out in three modules. Each copy was right; there was
+ * simply nowhere to add the next status without finding all of them first — and the one time that mattered, a job
  * reported as `disabled` while it was transferring went missing from the list
  * of running jobs and the count said so confidently.
  */
