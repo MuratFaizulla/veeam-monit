@@ -316,7 +316,7 @@ test('commands answer in General, including messages marked as topic 1', async (
       message_id: 6,
       message_thread_id: 1,
       is_topic_message: true,
-      text: '/start@VeeamMonitorExampleBot',
+      text: '/chatid@VeeamMonitorExampleBot',
       chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
     },
   });
@@ -510,7 +510,7 @@ test('every state write persists without the caller managing save()', async () =
 
   // A second store over the same file sees everything, and no caller in the
   // three modules above ever had to remember a save.
-  const reopened = new TelegramStateStore(file);
+  const reopened = new TelegramStateStore(file, [CHAT]);
   assert.equal(reopened.threadId(CHAT, 'SQL Daily'), 77);
   assert.equal(reopened.jobResultsOf(SERVER).of('job-1'), 'failed');
   assert.equal(reopened.cooldowns.isSuppressed('k'), true);
@@ -526,6 +526,34 @@ test('every state write persists without the caller managing save()', async () =
   fs.rmSync(file, { force: true });
 });
 
+test('only configured chats are sent to, and one remembered by an older version is forgotten', async () => {
+  const file = path.join(os.tmpdir(), `veeam-strangers-${Math.random().toString(36).slice(2)}.json`);
+  // What an older version wrote after a stranger pressed Start in a private chat.
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1,
+    chats: { [CHAT]: { id: Number(CHAT), type: 'supergroup', is_forum: true }, 99: { id: 99, type: 'private' } },
+    topics: { 99: { Alerts: 5 } },
+    jobResults: {}, cooldowns: {},
+    liveMessages: { 99: { health: { messageId: 1, hash: 'h', at: 1 } } },
+    answers: { 99: [{ messageId: 1, at: Date.now() }] },
+  }));
+
+  const store = new TelegramStateStore(file, [CHAT]);
+  assert.deepEqual(store.chats().map(([id]) => id), [CHAT]);
+  store.mergeChat({ id: 77, type: 'private' });
+  assert.deepEqual(store.chats().map(([id]) => id), [CHAT], 'a new stranger is not taken in either');
+  store.flush();
+
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(saved.chats), [CHAT]);
+  for (const part of ['topics', 'liveMessages', 'answers']) {
+    assert.equal(saved[part]['99'], undefined, `${part} of the stranger forgotten`);
+  }
+  await new Promise(setImmediate);
+  fs.rmSync(file, { force: true });
+  fs.rmSync(`${file}.bak`, { force: true });
+});
+
 test('a damaged Telegram state is restored from the last complete copy', async () => {
   const file = path.join(os.tmpdir(), `veeam-backup-${Math.random().toString(36).slice(2)}.json`);
   const store = new TelegramStateStore(file, [CHAT]);
@@ -534,7 +562,7 @@ test('a damaged Telegram state is restored from the last complete copy', async (
   assert.ok(fs.existsSync(`${file}.bak`));
 
   fs.writeFileSync(file, '{broken', 'utf8');
-  const restored = new TelegramStateStore(file);
+  const restored = new TelegramStateStore(file, [CHAT]);
   assert.equal(restored.jobResultsOf(SERVER).of('job-1'), 'failed');
   assert.deepEqual(restored.chats().map(([id]) => id), [CHAT]);
   restored.flush();

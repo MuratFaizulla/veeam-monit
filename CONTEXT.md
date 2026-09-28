@@ -179,7 +179,8 @@ by whether `TELEGRAM_WEBHOOK_URL` is set, and nothing downstream knows which.
 Hearing and sending are separate modules. They share the transport and the chat
 registry and nothing else, and no caller of one ever wants the other.
 
-Hearing an Update and interpreting it are separate too. **Intake** registers
+Hearing an Update and interpreting it are separate too. **Intake** first
+decides whether the chat may be spoken to at all (**Access**), then registers
 the chat and any topic a message mentions, publishes the command menu and sets
 up the webhook or the polling loop at startup. Both transports end in its
 `handleUpdate`: the webhook endpoint in the controller and the polling loop are
@@ -194,6 +195,16 @@ What a command needs from the monitor — its health, a pass on demand, the
 the same. Two adapters sit behind that seam: `MonitorService`, and the idle
 monitor the tests use for a world with no Veeam, which a test keeps in step
 with the real one.
+
+**Access** is who the bot talks to, because anybody can find it by name: a
+chat in `TELEGRAM_CHAT_IDS` is a *recipient* — the only kind anything is ever
+sent to; a private chat with somebody in one of those is a *member*, answered
+but never sent alerts; with nothing configured it is *setup*, told only its own
+id; anybody else is *none* — a private chat is not answered, and a group is
+left. Membership is asked of Telegram and remembered for ten minutes. The chat
+registry holds recipients only: it used to take any chat an update came from,
+so a stranger who pressed Start was sent every alert from then on. Owned by
+`src/updates/chat-access.ts`; the registry's half by the state store.
 
 Intake is owned by `src/updates/updates.service.ts`; commands and Buttons by
 `src/updates/commands.service.ts`, declared in `src/updates/commands.ts`.

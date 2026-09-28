@@ -76,7 +76,8 @@ export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
-  my_chat_member?: { chat: TelegramChat };
+  /** The bot's own membership changed: added to a chat, or removed from it. */
+  my_chat_member?: { chat: TelegramChat; new_chat_member?: { status?: string } };
 }
 
 /** One entry of the command menu Telegram shows next to the input field. */

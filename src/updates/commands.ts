@@ -97,7 +97,7 @@ export interface Command {
 const DECLARED = [
   {
     name: 'status',
-    aliases: ['start', 'chatid'],
+    aliases: ['chatid'],
     menu: 'Состояние монитора: отвечает ли Veeam',
     help: [
       'отвечает ли Veeam, авторизована ли служебная учётная запись,',
@@ -108,6 +108,9 @@ const DECLARED = [
   },
   {
     name: 'menu',
+    // What Telegram sends when somebody opens the bot in a private chat and
+    // presses Start: the menu is what the company's other bots answer with.
+    aliases: ['start'],
     menu: 'Показать кнопки меню под полем ввода',
     help: ['показать кнопки меню под полем ввода, если они пропали.'],
     answer: (answers) => answers.menu(),
