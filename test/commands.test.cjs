@@ -137,7 +137,7 @@ test('a command is answered with no polling loop or webhook anywhere near it', a
   assert.equal(typeof commands.onModuleInit, 'undefined', 'nothing for Nest to start');
 });
 
-test('intake registers the chat and its topics, then hands the Update on', async () => {
+test('intake ignores chats not explicitly allowed by TELEGRAM_CHAT_IDS', async () => {
   const w = world();
   const handed = [];
   const intake = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, {
@@ -154,8 +154,8 @@ test('intake registers the chat and its topics, then hands the Update on', async
 
   await intake.handleUpdate(update);
 
-  assert.ok(w.store.chats().some(([id]) => id === String(other.id)), 'чат зарегистрирован');
-  assert.equal(w.topics.list(String(other.id))['Своя тема'], 88, 'тема запомнена');
-  assert.deepEqual(handed, [update], 'и Update передан толкованию как есть');
+  assert.ok(!w.store.chats().some(([id]) => id === String(other.id)), 'чужой чат не запомнен');
+  assert.deepEqual(w.topics.list(String(other.id)), {}, 'чужая тема не запомнена');
+  assert.deepEqual(handed, [], 'Update не передан в команды');
   assert.deepEqual(w.api.sent(), [], 'intake сам ничего не отвечает');
 });

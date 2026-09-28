@@ -210,11 +210,11 @@ test('the monitor account is Veeam settings, not Telegram ones', () => {
 test('with nothing set, every setting has the default it has always had', () => {
   assert.deepEqual(accepted({}), {
     port: 3000,
-    docs: true,
+    docs: false,
     veeam: {
       servers: [{ key: 'localhost', name: 'localhost', baseUrl: 'https://localhost:9419', legacyTls: false }],
       apiVersion: '1.2-rev1',
-      insecureTls: true,
+      insecureTls: false,
       timeoutMs: 30000,
       username: '',
       password: '',

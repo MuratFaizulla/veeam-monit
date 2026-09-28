@@ -18,7 +18,7 @@ services:
       TZ: ${TZ:-Asia/Qyzylorda}
 
     ports:
-      - "${HOST_PORT:-3000}:3000"
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-3000}:3000"
 
     volumes:
       # telegram-state.json lives here and holds the ids of the live messages.

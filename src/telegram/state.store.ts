@@ -1,5 +1,5 @@
 import { Logger, OnModuleDestroy } from '@nestjs/common';
-import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { LiveMessageRef, LiveMessages } from './live-messages';
 import { JobResults } from './job-results';
@@ -84,7 +84,7 @@ export class TelegramStateStore implements OnModuleDestroy {
    */
   constructor(
     private readonly filePath: string,
-    chatIds: string[] = [],
+    chatIds?: string[],
     private readonly firstServer = '',
   ) {
     this.state = this.load();
@@ -92,7 +92,22 @@ export class TelegramStateStore implements OnModuleDestroy {
     this.cooldowns = new Cooldowns(this.state.cooldowns, save);
     this.liveMessages = new LiveMessages(this.state.liveMessages, save);
     this.answerLog = new AnswerLog(this.state.answers, save);
-    for (const id of chatIds) this.seedChat(id, { id: Number(id), type: 'supergroup' });
+    const configured = chatIds ?? [];
+    let pruned = false;
+    if (chatIds) {
+      const allowed = new Set(configured);
+      for (const id of Object.keys(this.state.chats)) {
+        if (allowed.has(id)) continue;
+        delete this.state.chats[id];
+        delete this.state.topics[id];
+        delete this.state.menus?.[id];
+        delete this.state.liveMessages[id];
+        delete this.state.answers[id];
+        pruned = true;
+      }
+    }
+    if (pruned) this.save();
+    for (const id of configured) this.seedChat(id, { id: Number(id), type: 'supergroup' });
   }
 
   /** The debounced write may still be pending when the process stops. */
@@ -290,10 +305,11 @@ export class TelegramStateStore implements OnModuleDestroy {
 
   flush(): void {
     try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
+      mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
       const tmp = `${this.filePath}.tmp`;
-      writeFileSync(tmp, JSON.stringify(this.state, null, 2), 'utf8');
+      writeFileSync(tmp, JSON.stringify(this.state, null, 2), { encoding: 'utf8', mode: 0o600 });
       renameSync(tmp, this.filePath);
+      chmodSync(this.filePath, 0o600);
     } catch (error) {
       this.logger.error(`Telegram state was not persisted: ${(error as Error).message}`);
       return;
@@ -301,6 +317,7 @@ export class TelegramStateStore implements OnModuleDestroy {
     try {
       // A second complete copy survives a damaged primary file on the next boot.
       copyFileSync(this.filePath, `${this.filePath}.bak`);
+      chmodSync(`${this.filePath}.bak`, 0o600);
     } catch (error) {
       this.logger.warn(`Telegram state backup was not written: ${(error as Error).message}`);
     }

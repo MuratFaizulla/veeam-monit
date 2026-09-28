@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { timingSafeEqual } from 'crypto';
 import { AppConfig } from '../config/configuration';
 import { TelegramService } from '../telegram/telegram.service';
 
@@ -33,10 +34,19 @@ abstract class HeaderKeyGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<{ headers: Record<string, unknown> }>();
     const value = request.headers[this.header];
-    if (!this.expected || value !== this.expected) throw new ForbiddenException();
+    if (!this.expected || typeof value !== 'string' || !sameSecret(value, this.expected)) {
+      throw new ForbiddenException();
+    }
     return true;
   }
 }
+
+/** Compare authentication material without leaking a matching prefix in timing. */
+const sameSecret = (actual: string, expected: string): boolean => {
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+};
 
 @Injectable()
 export class TelegramAdminGuard extends HeaderKeyGuard {

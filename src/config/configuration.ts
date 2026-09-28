@@ -18,9 +18,10 @@ export type TelegramRoutingMode = (typeof ROUTING_MODES)[number];
 export interface AppConfig {
   port: number;
   /**
-   * Whether the OpenAPI page is served at /api/docs. On by default: it carries
-   * no secrets — only the names of the headers the guards expect — and a
-   * monitor nobody can drive by hand is a monitor nobody checks.
+   * Whether the OpenAPI page is served at /api/docs. Off by default: even
+   * without values, an API catalogue is useful reconnaissance on a service
+   * that may be exposed for Telegram webhooks. Operators can enable it when
+   * they need the interactive API catalogue.
    */
   docs: boolean;
   veeam: {
@@ -261,11 +262,11 @@ export const readConfig = (env: Environment): AppConfig =>
 
     return {
       port: read.integer('PORT', 3000, { min: 1, max: 65535 }),
-      docs: read.flag('API_DOCS', true),
+      docs: read.flag('API_DOCS', false),
       veeam: {
         servers,
         apiVersion: read.text('VEEAM_API_VERSION', '1.2-rev1'),
-        insecureTls: read.flag('VEEAM_INSECURE_TLS', true),
+        insecureTls: read.flag('VEEAM_INSECURE_TLS', false),
         timeoutMs: read.integer('VEEAM_TIMEOUT_MS', 30000, { min: 1 }),
         username,
         password,

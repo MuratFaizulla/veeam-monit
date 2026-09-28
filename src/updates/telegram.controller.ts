@@ -61,6 +61,8 @@ export class TelegramController {
   }
 
   @Get('status')
+  @UseGuards(TelegramAdminGuard)
+  @ApiSecurity('adminKey')
   @ApiOperation({
     summary: 'Готовность интеграции и здоровье монитора',
     description:
