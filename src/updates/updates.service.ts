@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { TelegramChatAccess } from './chat-access';
 import { BOT_COMMANDS } from './commands';
 import { TelegramCommandsService } from './commands.service';
 import { TelegramStateStore } from '../telegram/state.store';
@@ -39,6 +40,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
     private readonly commands: TelegramCommandsService,
+    private readonly access: TelegramChatAccess,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -85,9 +87,9 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Everything one update implies: the chat is registered, a topic somebody
-   * created by hand is remembered, and the commands module answers whatever
-   * it asks.
+   * Everything one update implies: whether the chat it came from may be
+   * spoken to at all, then — for a configured chat — its facts and any topic
+   * somebody created by hand, and the commands module answers whatever it asks.
    *
    * Called from the webhook endpoint and from the polling loop, which is why
    * the two transports need no further difference anywhere else.
@@ -95,19 +97,45 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   async handleUpdate(update: TelegramUpdate): Promise<void> {
     const message = update.message;
     const chat = message?.chat ?? update.callback_query?.message?.chat ?? update.my_chat_member?.chat;
-    if (chat) this.registerChat(chat);
+    if (!chat) return;
 
-    // The Bot API cannot enumerate forum topics, so a topic the bot did not
-    // create is only ever learned from a message that mentions it.
-    if (message?.forum_topic_created && message.message_thread_id) {
-      this.topics.remember(
-        String(message.chat.id),
-        message.forum_topic_created.name,
-        message.message_thread_id,
-      );
+    const access = await this.access.of(chat);
+    if (access === 'none') return this.turnAway(chat, update);
+
+    if (access === 'recipient') {
+      this.registerChat(chat);
+      // The Bot API cannot enumerate forum topics, so a topic the bot did not
+      // create is only ever learned from a message that mentions it.
+      if (message?.forum_topic_created && message.message_thread_id) {
+        this.topics.remember(
+          String(message.chat.id),
+          message.forum_topic_created.name,
+          message.message_thread_id,
+        );
+      }
     }
 
-    await this.commands.answer(update);
+    await this.commands.answer(update, access);
+  }
+
+  /**
+   * Nothing for a stranger. A private chat is simply not answered — a refusal
+   * would confirm there is something here to refuse. A group the bot was added
+   * to is left, so it cannot sit there reading, or be pointed at by mistake.
+   */
+  private async turnAway(chat: TelegramChat, update: TelegramUpdate): Promise<void> {
+    if (chat.type === 'private') {
+      this.logger.debug(`Ignored a private chat not in the configured groups: ${chat.id}`);
+      return;
+    }
+    const status = update.my_chat_member?.new_chat_member?.status;
+    if (status === 'left' || status === 'kicked') return;
+    this.logger.warn(`Leaving chat ${chat.id} "${chat.title ?? ''}": it is not in TELEGRAM_CHAT_IDS`);
+    try {
+      await this.transport.call('leaveChat', { chat_id: chat.id });
+    } catch (error) {
+      this.logger.warn(`Chat ${chat.id} was not left: ${(error as Error).message}`);
+    }
   }
 
   private registerChat(chat: TelegramChat): void {

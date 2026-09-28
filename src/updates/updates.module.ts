@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MonitorModule } from '../monitor/monitor.module';
 import { TelegramAdminGuard, TelegramEnabledGuard, TelegramWebhookGuard } from './access.guard';
+import { TelegramChatAccess } from './chat-access';
 import { TelegramCommandsService } from './commands.service';
 import { TelegramController } from './telegram.controller';
 import { TelegramModule } from '../telegram/telegram.module';
@@ -25,6 +26,7 @@ import { TelegramUpdatesService } from './updates.service';
   providers: [
     TelegramUpdatesService,
     TelegramCommandsService,
+    TelegramChatAccess,
     TelegramAdminGuard,
     TelegramWebhookGuard,
     TelegramEnabledGuard,

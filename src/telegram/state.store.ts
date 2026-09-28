@@ -72,12 +72,20 @@ export class TelegramStateStore implements OnModuleDestroy {
   readonly liveMessages: LiveMessages;
   readonly answerLog: AnswerLog;
   private readonly results = new Map<string, JobResults>();
+  /** The chats named in configuration: the only ones anything is sent to. */
+  private readonly configured: ReadonlySet<string>;
 
   /**
-   * `chatIds` are the chats named in configuration. They are registered here
-   * rather than by whichever service happens to be constructed first: a
-   * configured chat is usable before any update arrives, and making that depend
-   * on provider order is how a monitor tick can find an empty registry.
+   * `chatIds` are the chats named in configuration, and the only chats this
+   * registry holds. They are registered here rather than by whichever service
+   * happens to be constructed first: a configured chat is usable before any
+   * update arrives, and making that depend on provider order is how a monitor
+   * tick can find an empty registry.
+   *
+   * Nothing else is ever a recipient. The registry used to take any chat an
+   * update came from, so whoever found the bot and wrote to it was sent every
+   * alert and every live slot from then on. A chat remembered that way by an
+   * older version is forgotten here, with its topics and live messages.
    *
    * `firstServer` is the key of the server listed first: the one whose job
    * results a file from before the server list holds.
@@ -92,6 +100,16 @@ export class TelegramStateStore implements OnModuleDestroy {
     this.cooldowns = new Cooldowns(this.state.cooldowns, save);
     this.liveMessages = new LiveMessages(this.state.liveMessages, save);
     this.answerLog = new AnswerLog(this.state.answers, save);
+    this.configured = new Set(chatIds);
+    // Only against a list: an empty one is a service not set up yet, and
+    // wiping what it knew over a variable left blank would be the wrong trade.
+    if (this.configured.size > 0) {
+      for (const id of Object.keys(this.state.chats)) {
+        if (this.configured.has(id)) continue;
+        this.logger.warn(`Telegram chat ${id} is not in TELEGRAM_CHAT_IDS; forgotten`);
+        this.dropChat(id);
+      }
+    }
     for (const id of chatIds) this.seedChat(id, { id: Number(id), type: 'supergroup' });
   }
 
@@ -163,9 +181,14 @@ export class TelegramStateStore implements OnModuleDestroy {
    * Chats
    * ---------------------------------------------------------------- */
 
-  /** Every registered chat, as id/chat pairs. */
+  /** Every chat things are sent to, as id/chat pairs: the configured ones. */
   chats(): Array<[string, TelegramChat]> {
-    return Object.entries(this.state.chats);
+    return Object.entries(this.state.chats).filter(([id]) => this.configured.has(id));
+  }
+
+  /** Whether this chat is one things are sent to. */
+  isConfigured(chatId: string): boolean {
+    return this.configured.has(chatId);
   }
 
   /** Registers a configured chat id, without overwriting what is already known. */
@@ -182,17 +205,19 @@ export class TelegramStateStore implements OnModuleDestroy {
    */
   mergeChat(chat: TelegramChat): { becameForum: boolean } {
     const id = String(chat.id);
+    if (!this.configured.has(id)) return { becameForum: false };
     const previous = this.state.chats[id];
     this.state.chats[id] = { ...previous, ...chat };
     this.save();
     return { becameForum: chat.is_forum === true && previous?.is_forum !== true };
   }
 
-  /** Forgets a chat, every topic mapping belonging to it, and its live slots. */
+  /** Forgets a chat, every topic mapping belonging to it, its live slots and its answers. */
   dropChat(chatId: string): void {
     delete this.state.chats[chatId];
     delete this.state.topics[chatId];
     delete this.state.menus?.[chatId];
+    delete this.state.answers[chatId];
     this.liveMessages.dropChat(chatId);
     this.save();
   }

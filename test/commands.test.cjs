@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CHAT, world, idleMonitor, TelegramCommandsService, TelegramUpdatesService,
+  CHAT, world, idleMonitor, TelegramCommandsService, TelegramUpdatesService, TelegramChatAccess,
 } = require('./world.cjs');
 const { COMMANDS, BOT_COMMANDS } = require('../dist/updates/commands');
 
@@ -101,13 +101,14 @@ test('everything the menu offers is answered, and so are the hidden spellings', 
   }
 
   // Not in the menu, never in /help: /start is what Telegram sends on "Start",
-  // /chatid is what people type when setting the bot up. Both are /status.
-  const status = world();
-  await typed(status, '/status');
-  for (const alias of ['/start', '/chatid']) {
+  // and is answered with the menu, as the company's other bots answer it;
+  // /chatid is what people type when setting the bot up, and is /status.
+  for (const [alias, meant] of [['/start', '/menu'], ['/chatid', '/status']]) {
+    const expected = world();
+    await typed(expected, meant);
     const w = world();
     await typed(w, alias);
-    assert.equal(w.api.sent().at(-1).text, status.api.sent().at(-1).text, `${alias} = /status`);
+    assert.equal(w.api.sent().at(-1).text, expected.api.sent().at(-1).text, `${alias} = ${meant}`);
     assert.ok(!BOT_COMMANDS.some((entry) => `/${entry.command}` === alias), `${alias} не в меню`);
   }
 });
@@ -137,25 +138,111 @@ test('a command is answered with no polling loop or webhook anywhere near it', a
   assert.equal(typeof commands.onModuleInit, 'undefined', 'nothing for Nest to start');
 });
 
-test('intake registers the chat and its topics, then hands the Update on', async () => {
-  const w = world();
+/** Intake over a world, with the commands module replaced by a list of what it was handed. */
+const intakeOf = (w) => {
   const handed = [];
   const intake = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, {
-    answer: async (update) => { handed.push(update); },
-  });
-  const other = { id: -1009999, type: 'supergroup', is_forum: true, title: 'Другая группа' };
+    answer: async (update, access) => { handed.push({ update, access }); },
+  }, new TelegramChatAccess(w.config, w.transport));
+  return { intake, handed };
+};
+
+test('intake registers the configured chat and its topics, then hands the Update on', async () => {
+  const w = world();
+  const { intake, handed } = intakeOf(w);
   const update = {
     update_id: 3,
     message: {
-      message_id: 7, message_thread_id: 88, chat: other,
+      message_id: 7, message_thread_id: 88, chat: FORUM,
       forum_topic_created: { name: 'Своя тема' },
     },
   };
 
   await intake.handleUpdate(update);
 
-  assert.ok(w.store.chats().some(([id]) => id === String(other.id)), 'чат зарегистрирован');
-  assert.equal(w.topics.list(String(other.id))['Своя тема'], 88, 'тема запомнена');
-  assert.deepEqual(handed, [update], 'и Update передан толкованию как есть');
+  assert.equal(w.topics.list(CHAT)['Своя тема'], 88, 'тема запомнена');
+  assert.deepEqual(handed, [{ update, access: 'recipient' }], 'и Update передан толкованию как есть');
   assert.deepEqual(w.api.sent(), [], 'intake сам ничего не отвечает');
+});
+
+test('a group the bot was added to by somebody else is left, and learns nothing', async () => {
+  const w = world();
+  const { intake, handed } = intakeOf(w);
+  const stranger = { id: -1009999, type: 'supergroup', is_forum: true, title: 'Другая группа' };
+
+  await intake.handleUpdate({
+    update_id: 4,
+    my_chat_member: { chat: stranger, new_chat_member: { status: 'member' } },
+  });
+  await intake.handleUpdate({
+    update_id: 5,
+    message: {
+      message_id: 8, message_thread_id: 88, chat: stranger, text: '/digest',
+      forum_topic_created: { name: 'Своя тема' },
+    },
+  });
+
+  assert.deepEqual(w.api.of('leaveChat').map((call) => call.chat_id), [stranger.id, stranger.id]);
+  assert.ok(!w.store.chats().some(([id]) => id === String(stranger.id)), 'не стал получателем');
+  assert.deepEqual(w.topics.list(String(stranger.id)), {}, 'его темы не запомнены');
+  assert.deepEqual(handed, [], 'и ничего не передано толкованию');
+
+  // Being removed from it is the end of it, not another goodbye.
+  await intake.handleUpdate({
+    update_id: 6,
+    my_chat_member: { chat: stranger, new_chat_member: { status: 'left' } },
+  });
+  assert.equal(w.api.of('leaveChat').length, 2);
+});
+
+test('a private chat is answered only for somebody in the configured group, and never sent alerts', async () => {
+  const w = world({}, {
+    getChatMember: (payload) => ({
+      ok: true,
+      result: { status: payload.user_id === 42 ? 'member' : 'left' },
+    }),
+  });
+  const { intake, handed } = intakeOf(w);
+  const colleague = { id: 42, type: 'private', first_name: 'Коллега' };
+  const stranger = { id: 99, type: 'private', first_name: 'Кто-то' };
+
+  await intake.handleUpdate({ update_id: 7, message: { message_id: 1, text: '/start', chat: colleague } });
+  await intake.handleUpdate({ update_id: 8, message: { message_id: 1, text: '/start', chat: stranger } });
+  await intake.handleUpdate({ update_id: 9, message: { message_id: 2, text: '/digest', chat: colleague } });
+
+  assert.deepEqual(handed.map(({ update, access }) => [update.message.chat.id, access]), [[42, 'member'], [42, 'member']]);
+  // Asked of Telegram once, then remembered.
+  assert.equal(w.api.of('getChatMember').filter((call) => call.user_id === 42).length, 1);
+  assert.deepEqual(w.api.of('leaveChat'), [], 'a private chat is not "left"');
+  assert.deepEqual(w.store.chats().map(([id]) => id), [CHAT], 'neither private chat receives anything');
+});
+
+test('a colleague\'s private chat gets the menu and the commands', async () => {
+  const w = world({}, {
+    getChatMember: () => ({ ok: true, result: { status: 'administrator' } }),
+  });
+  const colleague = { id: 42, type: 'private', first_name: 'Коллега' };
+
+  await w.updates.handleUpdate({ update_id: 10, message: { message_id: 3, text: '/start', chat: colleague } });
+
+  const menu = w.api.sent().at(-1);
+  assert.equal(menu.chat_id, '42');
+  assert.match(menu.text, /Меню Veeam Monitor/);
+  assert.ok(menu.reply_markup.keyboard, 'the keyboard under the input field');
+});
+
+test('before any chat is configured, the bot says only the chat\'s id', async () => {
+  const w = world({ TELEGRAM_CHAT_IDS: '' });
+  const newGroup = { id: -1005555, type: 'supergroup', title: 'Новая группа' };
+
+  for (const [index, text] of ['/digest', '/chatid'].entries()) {
+    await w.updates.handleUpdate({ update_id: 20 + index, message: { message_id: 30 + index, text, chat: newGroup } });
+  }
+
+  const sent = w.api.sent();
+  assert.equal(sent.length, 1, '/digest is not answered');
+  assert.match(sent[0].text, /ID этого чата: <code>-1005555<\/code>/);
+  assert.doesNotMatch(sent[0].text, /Veeam отвечает|Учётная запись/, 'nothing about the estate');
+  assert.deepEqual(w.api.of('leaveChat'), [], 'and nobody is left while the bot is being set up');
+  assert.deepEqual(w.store.chats(), []);
 });

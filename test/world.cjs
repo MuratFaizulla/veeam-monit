@@ -12,6 +12,7 @@ const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramUpdatesService } = require('../dist/updates/updates.service');
 const { TelegramCommandsService } = require('../dist/updates/commands.service');
+const { TelegramChatAccess } = require('../dist/updates/chat-access');
 const { announcement, probe } = require('../dist/updates/manual-event');
 const {
   NOTIFICATION_KINDS,
@@ -140,7 +141,8 @@ function world(env = {}, handlers = {}, stateFile) {
  */
 function ear(w, monitor) {
   const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor);
-  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands);
+  const access = new TelegramChatAccess(w.config, w.transport);
+  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands, access);
   return { commands, updates };
 }
 
@@ -287,7 +289,7 @@ module.exports = {
   CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, monitorWorld, job, exchange,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
-  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService,
+  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramChatAccess,
   TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,

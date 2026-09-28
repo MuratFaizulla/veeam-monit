@@ -20,6 +20,7 @@ import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
 import { TelegramTransportService } from '../telegram/transport.service';
+import { Access } from './chat-access';
 import {
   TelegramCallbackQuery,
   TelegramChat,
@@ -39,6 +40,9 @@ const CHECK_COOLDOWN_KEY = 'command:check';
  */
 const READ_COOLDOWN_MS = 5_000;
 const READ_COOLDOWN_KEY = 'command:read';
+
+/** What somebody setting the bot up types to learn the chat's id. */
+const SETUP_WORDS = ['/chatid', '/start', '/status'];
 
 /** Telegram takes at most 100 message ids in one deleteMessages call. */
 const DELETE_BATCH = 100;
@@ -81,11 +85,31 @@ export class TelegramCommandsService implements Answers {
   /**
    * Whatever one Update asks of the bot, answered. A command outside General,
    * a message that is not a command, and a command this bot does not declare
-   * are all answered with silence.
+   * are all answered with silence — and so is everything from a chat the bot
+   * does not talk to (see `Access`).
    */
-  async answer(update: TelegramUpdate): Promise<void> {
+  async answer(update: TelegramUpdate, access: Access = 'recipient'): Promise<void> {
+    if (access === 'none') return;
+    if (access === 'setup') return this.untilConfigured(update.message);
     if (update.callback_query) await this.pressed(update.callback_query);
     else if (update.message) await this.typed(update.message);
+  }
+
+  /**
+   * Before any chat is configured, the one thing said is the chat's id — what
+   * somebody setting the bot up needs, and nothing about the estate.
+   */
+  private async untilConfigured(message: TelegramMessage | undefined): Promise<void> {
+    const word = message?.text?.trim().split(/\s/)[0].toLowerCase().split('@')[0];
+    if (!message || !word || !SETUP_WORDS.includes(word)) return;
+    await this.send(this.whereAnswered({ chat: message.chat, argument: '' }), {
+      lines: [
+        '🤖 <b>Бот ещё не настроен</b>',
+        '',
+        `ID этого чата: <code>${escapeHtml(message.chat.id)}</code>`,
+        'Добавьте его в TELEGRAM_CHAT_IDS и перезапустите сервис.',
+      ],
+    });
   }
 
   private async typed(message: TelegramMessage): Promise<void> {
