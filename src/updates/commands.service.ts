@@ -5,11 +5,21 @@ import { plural, stampOf } from '../telegram/time';
 import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml, truncate } from '../telegram/format';
-import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard, serversKeyboard } from './keyboard';
+import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard } from './keyboard';
+import {
+  isMenu,
+  isSelective,
+  mainMenu,
+  MENU_SIGNATURE,
+  MENU_TEXT,
+  menuPressed,
+  Pressed,
+  serverMenu,
+} from './menu';
 import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
-import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
+import { TelegramTransportService } from '../telegram/transport.service';
 import {
   TelegramCallbackQuery,
   TelegramChat,
@@ -41,8 +51,8 @@ const SUMMARY_BUTTON: ButtonRow = [['📊 Сводка', { kind: 'summary' }]];
 const REFRESH_SUMMARY_BUTTON: ButtonRow = [['🔄 Обновить', { kind: 'summary' }]];
 
 /**
- * What an Update means: a command typed or a Button pressed in General,
- * answered there.
+ * What an Update means: a command typed, a key of the menu pressed or a Button
+ * pressed in General, answered there.
  *
  * Split from `TelegramUpdatesService`, which is how an Update *arrives* — the
  * webhook, the long-polling loop, the startup calls. With both in one class, a
@@ -80,10 +90,22 @@ export class TelegramCommandsService implements Answers {
 
   private async typed(message: TelegramMessage): Promise<void> {
     if (!this.isGeneral(message.chat, message)) return;
+    const text = message.text?.trim() ?? '';
+
+    // A key of the menu under the input field arrives as its label, as if it
+    // had been typed.
+    const key = menuPressed(text, this.monitor.servers());
+    if (key) {
+      const asked: Asked = { chat: message.chat, argument: '', messageId: message.message_id };
+      // The label is chatter of the same kind as the answers, and goes with
+      // them when somebody asks for /clear.
+      this.store.answerLog.remember(String(message.chat.id), message.message_id);
+      await this.send(this.whereAnswered(asked), await this.keyed(key, asked), message.message_id);
+      return;
+    }
 
     // Split rather than tokenised: everything after the command word is one
     // argument, kept in the case it was typed in.
-    const text = message.text?.trim() ?? '';
     const gap = text.search(/\s/);
     const head = gap === -1 ? text : text.slice(0, gap);
     const word = head.toLowerCase().split('@')[0];
@@ -96,7 +118,17 @@ export class TelegramCommandsService implements Answers {
       argument: gap === -1 ? '' : text.slice(gap + 1).trim(),
       messageId: message.message_id,
     };
-    await this.send(this.whereAnswered(asked), await command.answer(this, asked));
+    await this.send(this.whereAnswered(asked), await command.answer(this, asked), message.message_id);
+  }
+
+  /** A key of the menu: one that stands for a command, the way back, or a server's. */
+  private async keyed(key: Pressed, asked: Asked): Promise<Reply> {
+    if (key.kind === 'home') {
+      return { lines: ['🤖 <b>Главное меню</b>'], markup: mainMenu({ selective: true }) };
+    }
+    if (key.kind === 'server') return this.selected(key.name);
+    const command = commandNamed(key.name);
+    return command ? command.answer(this, asked) : this.menu();
   }
 
   /**
@@ -118,46 +150,18 @@ export class TelegramCommandsService implements Answers {
 
     const asked: Asked = { chat: message.chat, argument: '' };
     const answer = await this.act(action, asked);
-    if (!answer) return;
-    if (answer.replaces && (await this.replace(message, answer))) return;
-    await this.send(this.whereAnswered(asked), answer);
-  }
-
-  /**
-   * Rewrites the message whose Button was pressed. False when Telegram would
-   * not — the message is too old to edit, say — and the answer should be sent
-   * as a new one instead.
-   */
-  private async replace(message: TelegramMessage, answer: Reply): Promise<boolean> {
-    try {
-      await this.transport.call('editMessageText', {
-        chat_id: message.chat.id,
-        message_id: message.message_id,
-        text: truncate(answer.lines.join('\n')),
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        reply_markup: answer.markup,
-      });
-      return true;
-    } catch (error) {
-      // Pressing the Button of the server already shown asks for the text the
-      // message already has, which Telegram refuses as a no-op edit.
-      if (error instanceof TelegramApiError && error.isUnchanged) return true;
-      this.logger.debug(`Answer not edited in place: ${(error as Error).message}`);
-      return false;
-    }
+    if (answer) await this.send(this.whereAnswered(asked), answer);
   }
 
   /**
    * A Button stands for a command, and is answered as that command typed with
-   * nothing after it — except a job's own, which carries the job's id, and a
-   * server's, which selects it.
+   * nothing after it — except a job's own, which carries the job's id and the
+   * key of its server.
    */
   private async act(action: Action, asked: Asked): Promise<Reply | undefined> {
     if (action.kind === 'job') {
       return this.reading(() => this.monitor.describeJobById(action.id, action.server));
     }
-    if (action.kind === 'server') return this.selected(action.key);
     return commandPressed(action.kind)?.answer(this, asked);
   }
 
@@ -191,11 +195,38 @@ export class TelegramCommandsService implements Answers {
     };
   }
 
+  /** `/menu` — the menu under the input field, for everybody in the chat. */
+  menu(): Reply {
+    return { lines: MENU_TEXT, markup: mainMenu() };
+  }
+
+  /**
+   * Puts the menu under the input field of every chat that has not been given
+   * this one yet.
+   *
+   * In a group nobody presses Start: the bot was added once, by one person, and
+   * a menu that waited to be asked for would never be seen. Posted once per
+   * layout rather than once per start, so a restart says nothing.
+   */
+  async offerMenu(): Promise<void> {
+    for (const [chatId] of this.store.chats()) {
+      if (this.store.menuOffered(chatId) === MENU_SIGNATURE) continue;
+      try {
+        const { lines, markup } = this.menu();
+        await this.transport.sendMessage({ chatId }, lines.join('\n'), markup);
+        this.store.rememberMenu(chatId, MENU_SIGNATURE);
+      } catch (error) {
+        this.logger.warn(`Menu was not offered in chat ${chatId}: ${(error as Error).message}`);
+      }
+    }
+  }
+
   /**
    * `/servers` — every Veeam server, how it is doing, and which one the live
-   * slots and the commands show. A Button per server selects it.
+   * slots and the commands show. The menu under the input field turns into a
+   * key per server, for whoever asked.
    */
-  servers(note?: string): Reply {
+  servers(): Reply {
     const servers = this.monitor.servers();
     return {
       lines: [
@@ -208,23 +239,33 @@ export class TelegramCommandsService implements Answers {
         '',
         'Живые темы, /digest и /job показывают сервер с ✅.',
         'Оповещения приходят со всех.',
-        ...(note ? ['', note] : []),
+        '',
+        'Выберите сервер кнопкой под полем ввода.',
       ],
-      markup: serversKeyboard(servers),
+      markup: serverMenu(servers),
     };
   }
 
-  /** A server's Button was pressed: select it, and redraw the menu it was pressed in. */
-  private selected(key: string): Reply {
-    const outcome = this.monitor.select(key);
-    const name = escapeHtml(this.monitor.servers().find((server) => server.key === key)?.name ?? key);
-    const note =
+  /**
+   * A server's key was pressed: show that server, and put the main menu back
+   * for whoever pressed it.
+   */
+  private selected(name: string): Reply {
+    const server = this.monitor.servers().find((candidate) => candidate.name === name);
+    const outcome = server ? this.monitor.select(server.key) : 'unknown';
+    const shown = escapeHtml(name);
+    const lines =
       outcome === 'unknown'
-        ? '⚠️ Этого сервера больше нет в настройках.'
+        ? ['⚠️ Этого сервера больше нет в настройках.']
         : outcome === 'already'
-          ? `Уже показан <b>${name}</b>.`
-          : `Переключено на <b>${name}</b>. Живые темы перерисуются в течение минуты.`;
-    return { ...this.servers(note), replaces: true };
+          ? [`🖥 <b>${shown}</b> уже показан.`]
+          : [
+              `✅ <b>Показан сервер ${shown}</b>`,
+              '',
+              'Живые темы, /digest и /job теперь про него; живые темы перерисуются в течение минуты.',
+              'Оповещения по-прежнему приходят со всех серверов.',
+            ];
+    return { lines, markup: mainMenu({ selective: true }) };
   }
 
   summary(): Promise<Reply> {
@@ -245,7 +286,11 @@ export class TelegramCommandsService implements Answers {
     return { lines, markup: mainKeyboard() };
   }
 
-  private async send(destination: TelegramDestination, answer: Reply): Promise<void> {
+  /**
+   * `asked` is the message being answered. A menu for one person must reply to
+   * it, which is how Telegram knows whose keyboard to change.
+   */
+  private async send(destination: TelegramDestination, answer: Reply, asked?: number): Promise<void> {
     try {
       // Cut to Telegram's limit rather than rejected by it: a job card is
       // bounded, but a forum with a hundred topics is not.
@@ -253,11 +298,15 @@ export class TelegramCommandsService implements Answers {
         destination,
         truncate(answer.lines.join('\n')),
         answer.markup,
+        isSelective(answer.markup) ? asked : undefined,
       );
       // Written down here and nowhere else, which is what makes `/clear` reach
       // the chatter and nothing else: alerts and live slots are sent by other
-      // modules and never pass through this method.
-      this.store.answerLog.remember(destination.chatId, messageId, destination.threadId);
+      // modules and never pass through this method. A message that carries the
+      // menu is left out: deleting it could take the keyboard with it.
+      if (!isMenu(answer.markup)) {
+        this.store.answerLog.remember(destination.chatId, messageId, destination.threadId);
+      }
     } catch (error) {
       this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
     }

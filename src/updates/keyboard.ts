@@ -10,8 +10,11 @@ import { TelegramKeyboard } from '../telegram/types';
  * encoding cannot reach one side without the other.
  *
  * Telegram caps `callback_data` at 64 bytes, which is why a job is addressed by
- * its id — a 36-character GUID — and never by its name, and a server by its
- * key, which configuration keeps to 16 ASCII characters for this reason.
+ * its id — a 36-character GUID — and never by its name, beside the key of its
+ * server, which configuration keeps to 16 ASCII characters for this reason.
+ *
+ * These are the buttons *under a message*. The menu under the input field is
+ * `./menu`.
  */
 
 /** What pressing a button asks for. */
@@ -20,9 +23,6 @@ export type Action =
   | { kind: 'check' }
   | { kind: 'help' }
   | { kind: 'status' }
-  | { kind: 'servers' }
-  /** Make this server the Selected one. */
-  | { kind: 'server'; key: string }
   /**
    * One job's card. `server` is the key of the server the job is on; a Button
    * from before there was a list carries none.
@@ -34,8 +34,6 @@ const PREFIX = {
   check: 'a:chk',
   help: 'a:hlp',
   status: 'a:sts',
-  servers: 'a:svs',
-  server: 'a:srv:',
   job: 'a:job:',
 } as const;
 
@@ -51,7 +49,6 @@ export const encode = (action: Action): string | undefined => {
     const server = action.server === undefined ? '' : `${action.server}:`;
     return fits(`${PREFIX.job}${server}${action.id}`);
   }
-  if (action.kind === 'server') return fits(`${PREFIX.server}${action.key}`);
   return PREFIX[action.kind];
 };
 
@@ -62,11 +59,6 @@ export const decode = (data: string | undefined): Action | undefined => {
   if (data === PREFIX.check) return { kind: 'check' };
   if (data === PREFIX.help) return { kind: 'help' };
   if (data === PREFIX.status) return { kind: 'status' };
-  if (data === PREFIX.servers) return { kind: 'servers' };
-  if (data.startsWith(PREFIX.server)) {
-    const key = data.slice(PREFIX.server.length);
-    return key ? { kind: 'server', key } : undefined;
-  }
   if (data.startsWith(PREFIX.job)) {
     const rest = data.slice(PREFIX.job.length);
     const colon = rest.indexOf(':');
@@ -97,7 +89,7 @@ const keyboard = (rows: Array<Array<[string, Action]>>): TelegramKeyboard | unde
 export const mainKeyboard = (): TelegramKeyboard | undefined =>
   keyboard([
     [['📊 Сводка', { kind: 'summary' }], ['🔄 Проверить', { kind: 'check' }]],
-    [['🖥 Серверы', { kind: 'servers' }], ['🤖 Команды', { kind: 'help' }]],
+    [['🤖 Команды', { kind: 'help' }]],
   ]);
 
 /** Buttons that are the whole point of the message: a job each. */
@@ -119,20 +111,3 @@ export const jobsKeyboard = (
 /** Under a job card: ask the same question again, or step back out. */
 export const cardKeyboard = (id: string, server?: string): TelegramKeyboard | undefined =>
   keyboard([[['🔄 Обновить', { kind: 'job', id, server }], ['📊 Сводка', { kind: 'summary' }]]]);
-
-/** Two to a row: a server's name is short, and five servers fit in three rows. */
-const SERVERS_PER_ROW = 2;
-
-/** Under the server menu: one Button per server, the Selected one ticked. */
-export const serversKeyboard = (
-  servers: Array<{ key: string; name: string; selected: boolean }>,
-): TelegramKeyboard | undefined => {
-  const buttons = servers.map(
-    ({ key, name, selected }): [string, Action] => [`${selected ? '✅ ' : ''}${name}`, { kind: 'server', key }],
-  );
-  const rows: Array<Array<[string, Action]>> = [];
-  for (let from = 0; from < buttons.length; from += SERVERS_PER_ROW) {
-    rows.push(buttons.slice(from, from + SERVERS_PER_ROW));
-  }
-  return keyboard([...rows, [['📊 Сводка', { kind: 'summary' }]]]);
-};

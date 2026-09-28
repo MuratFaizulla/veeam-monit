@@ -42,8 +42,8 @@ const routesOf = (states, extra = {}) => ({
 });
 
 /** Two servers, AST listed first, each with its own jobs and its own Veeam. */
-function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes = {}, stateFile } = {}) {
-  const w = world({ ...TWO, ...env }, {}, stateFile);
+function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes = {}, stateFile, handlers = {} } = {}) {
+  const w = world({ ...TWO, ...env }, handlers, stateFile);
   let jobs = { ast, baas };
   const veeamAst = recorded(veeamFake(routesOf(() => jobs.ast, astRoutes), 'https://ast.example:9419'));
   const veeamBaas = recorded(veeamFake(routesOf(() => jobs.baas, baasRoutes), 'https://baas.example:9419'));
@@ -77,6 +77,24 @@ const pressed = (w, data) => w.updates.handleUpdate({
     },
   },
 });
+
+/** A key of the menu under the input field: its label arrives as a message of its own. */
+let keyId = 500;
+const keyed = (w, label, thread = 1) => {
+  keyId += 1;
+  return {
+    id: keyId,
+    done: w.updates.handleUpdate({
+      update_id: Math.floor(Math.random() * 1e6),
+      message: {
+        message_id: keyId, message_thread_id: thread, is_topic_message: true, text: label,
+        chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+      },
+    }),
+  };
+};
+
+const labels = (markup) => markup.keyboard.map((row) => row.map((key) => key.text));
 
 /** Runs a pass once the one a selection started has finished. */
 const settled = async (w) => {
@@ -142,40 +160,105 @@ test('the live slots show the selected server, named on top, and the health list
   assert.ok(!w.veeamBaas.asked.some((req) => req.params?.stateFilter === 'Working'));
 });
 
-test('pressing a server in /servers switches the slots to it, in the same message', async () => {
+test('the menu under the input field turns into the servers, and a server\'s key switches the slots to it', async () => {
   const w = twoServers({
     env: { TELEGRAM_LIVE: 'true' },
     ast: [job('a1', 'SQL Daily', 'Success')],
     baas: [job('b1', 'Files', 'Warning'), job('b2', 'Mail', 'Success')],
   });
   await w.monitor.check();
-
-  await said(w, '/servers');
-  const menu = w.api.sent().at(-1);
-  assert.match(menu.text, /✅ <b>AST<\/b> — 🟢 1 задание, всё в порядке/);
-  assert.match(menu.text, /▫️ <b>BAAS<\/b> — 🟢 2 задания, с предупреждением: 1/);
-  assert.deepEqual(
-    menu.reply_markup.inline_keyboard[0].map((button) => [button.text, button.callback_data]),
-    [['✅ AST', 'a:srv:ast'], ['BAAS', 'a:srv:baas']],
-  );
-
   w.api.reset();
-  await pressed(w, 'a:srv:baas');
+
+  const servers = keyed(w, '🖥 Серверы');
+  await servers.done;
+  const list = w.api.sent().at(-1);
+  assert.match(list.text, /✅ <b>AST<\/b> — 🟢 1 задание, всё в порядке/);
+  assert.match(list.text, /▫️ <b>BAAS<\/b> — 🟢 2 задания, с предупреждением: 1/);
+  assert.deepEqual(labels(list.reply_markup), [['✅ AST', 'BAAS'], ['⬅️ На главную']]);
+  // Only for whoever pressed it: the rest of the group keeps the main menu.
+  assert.equal(list.reply_markup.selective, true);
+  assert.equal(list.reply_parameters.message_id, servers.id);
+
+  const baas = keyed(w, 'BAAS');
+  await baas.done;
   await settled(w);
 
-  const [edited] = w.api.of('editMessageText').filter((edit) => edit.message_id === 9);
-  assert.ok(edited, 'the menu is redrawn where it was pressed');
-  assert.match(edited.text, /✅ <b>BAAS<\/b>/);
-  assert.match(edited.text, /Переключено на <b>BAAS<\/b>/);
+  const switched = w.api.sent().find((message) => /Показан сервер BAAS/.test(message.text));
+  assert.ok(switched, 'the switch is confirmed');
+  assert.deepEqual(labels(switched.reply_markup)[0], ['🖥 Серверы'], 'and the main menu is back');
+  assert.equal(switched.reply_parameters.message_id, baas.id);
   assert.equal(w.store.selectedServer(), 'baas');
 
-  const slots = w.api.of('editMessageText').filter((edit) => edit.message_id !== 9);
+  const slots = w.api.of('editMessageText');
   assert.ok(slots.length > 0, 'the live slots were redrawn');
   for (const slot of slots) assert.ok(slot.text.startsWith('🖥 <b>BAAS</b>\n\n'), slot.text);
   assert.ok(w.veeamBaas.paths().includes('/api/v1/restorePoints'), 'and BAAS is scanned now');
 });
 
+test('the keys of the main menu are answered as the commands they stand for', async () => {
+  const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Failed')] });
+  await w.monitor.check();
+  w.api.reset();
+
+  await keyed(w, '📊 Сводка').done;
+  assert.match(w.api.sent().at(-1).text, /AST · Veeam: сводка по заданиям/);
+
+  const home = keyed(w, '⬅️ На главную');
+  await home.done;
+  const menu = w.api.sent().at(-1);
+  assert.deepEqual(labels(menu.reply_markup), [['🖥 Серверы'], ['📊 Сводка', '🔄 Проверить'], ['🩺 Статус', '🤖 Помощь']]);
+  assert.equal(menu.reply_markup.is_persistent, true);
+  assert.equal(menu.reply_parameters.message_id, home.id);
+
+  // Outside General the keys are ignored, like every command.
+  w.api.reset();
+  await keyed(w, '🩺 Статус', 77).done;
+  assert.deepEqual(w.api.sent(), []);
+});
+
+test('the menu is put under the input field once, not at every start', async () => {
+  const w = twoServers({
+    // A webhook world: long polling would leave a loop running for as long as the test process lives.
+    env: { TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com', TELEGRAM_WEBHOOK_SECRET: 's' },
+    handlers: {
+      getChat: (payload) => ({ ok: true, result: { id: Number(payload.chat_id), type: 'supergroup', is_forum: true } }),
+    },
+  });
+
+  await w.updates.onModuleInit();
+  const offered = w.api.sent().filter((message) => message.reply_markup?.keyboard);
+  assert.equal(offered.length, 1);
+  assert.match(offered[0].text, /Меню Veeam Monitor/);
+  assert.equal(offered[0].reply_markup.selective, undefined, 'for everybody in the group');
+
+  w.api.reset();
+  await w.updates.onModuleInit();
+  assert.deepEqual(w.api.sent().filter((message) => message.reply_markup?.keyboard), [], 'a restart says nothing');
+});
+
+test('/clear takes the pressed keys with the answers, and leaves the menu in place', async () => {
+  const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Success')] });
+  await w.monitor.check();
+
+  const status = keyed(w, '🩺 Статус');
+  await status.done;
+  const servers = keyed(w, '🖥 Серверы');
+  await servers.done;
+  w.api.reset();
+
+  await said(w, '/clear');
+
+  const deleted = [
+    ...w.api.of('deleteMessages').flatMap((call) => call.message_ids),
+    ...w.api.of('deleteMessage').map((call) => call.message_id),
+  ];
+  assert.ok(deleted.includes(status.id) && deleted.includes(servers.id), 'the pressed keys go');
+  // The status answer is a plain one; the server list carries the menu.
+  assert.equal(deleted.filter((id) => id > 1000).length, 1, 'the one answer without a menu goes too');
+});
+
 test('a job\'s Button opens the job on its own server, whichever is selected', async () => {
+  // Buttons under a message are still how a job is opened.
   const w = twoServers({
     ast: [job('a1', 'SQL Daily', 'Failed')],
     baas: [job('b1', 'Files', 'Success')],
@@ -197,7 +280,7 @@ test('a job\'s Button opens the job on its own server, whichever is selected', a
   assert.match(card.text, /SQL Daily/);
 });
 
-test('a server that does not answer says so in the menu, and the others go on', async () => {
+test('a server that does not answer says so in the server list, and the others go on', async () => {
   const w = twoServers({
     ast: [job('a1', 'SQL Daily', 'Success')],
     baasRoutes: {

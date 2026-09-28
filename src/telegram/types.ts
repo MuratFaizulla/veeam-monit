@@ -40,6 +40,30 @@ export interface TelegramKeyboard {
   inline_keyboard: TelegramButton[][];
 }
 
+/** One key of the keyboard under the input field. Pressing it sends its text. */
+export interface TelegramKey {
+  text: string;
+}
+
+/**
+ * The keyboard that takes the place of the phone's own, under the input field.
+ * It stays until another replaces it, whatever is posted in between.
+ */
+export interface TelegramReplyKeyboard {
+  keyboard: TelegramKey[][];
+  is_persistent?: boolean;
+  resize_keyboard?: boolean;
+  input_field_placeholder?: string;
+  /**
+   * Only for the sender of the message this one replies to. In a group, a key
+   * pressed by one person must not change the keyboard of everybody else.
+   */
+  selective?: boolean;
+}
+
+/** What may hang under a message: buttons on it, or a keyboard under the input field. */
+export type TelegramMarkup = TelegramKeyboard | TelegramReplyKeyboard;
+
 /** Somebody pressed a button. The message it hangs under is in `message`. */
 export interface TelegramCallbackQuery {
   id: string;

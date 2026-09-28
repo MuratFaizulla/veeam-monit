@@ -50,6 +50,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
     await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
     await this.publishCommands();
+    await this.commands.offerMenu();
 
     if (this.config.webhookUrl) {
       await this.configureWebhook();

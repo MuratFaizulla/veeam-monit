@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { AppConfig } from '../config/configuration';
-import { TelegramDestination, TelegramKeyboard } from './types';
+import { TelegramDestination, TelegramMarkup } from './types';
 
 export interface TelegramApiResponse<T> {
   ok: boolean;
@@ -62,7 +62,9 @@ interface QueuedMessage {
   destination: TelegramDestination;
   text: string;
   /** Buttons to hang under it, when the message is an answer worth acting on. */
-  markup?: TelegramKeyboard;
+  markup?: TelegramMarkup;
+  /** The message this one answers, shown as a reply. */
+  replyTo?: number;
   attempts: number;
   resolve: (value: number) => void;
   reject: (error: Error) => void;
@@ -148,7 +150,8 @@ export class TelegramTransportService implements OnModuleDestroy {
   sendMessage(
     destination: TelegramDestination,
     text: string,
-    markup?: TelegramKeyboard,
+    markup?: TelegramMarkup,
+    replyTo?: number,
   ): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       if (!this.enabled) {
@@ -162,7 +165,7 @@ export class TelegramTransportService implements OnModuleDestroy {
         queue.items.shift()?.reject(new Error('Telegram queue overflow'));
         this.dropped += 1;
       }
-      queue.items.push({ destination, text, markup, attempts: 0, resolve, reject });
+      queue.items.push({ destination, text, markup, replyTo, attempts: 0, resolve, reject });
       void this.drain(destination.chatId);
     });
   }
@@ -193,6 +196,11 @@ export class TelegramTransportService implements OnModuleDestroy {
             parse_mode: 'HTML',
             disable_web_page_preview: true,
             reply_markup: item.markup,
+            // Sent anyway if the message it answers is gone by then.
+            reply_parameters:
+              item.replyTo === undefined
+                ? undefined
+                : { message_id: item.replyTo, allow_sending_without_reply: true },
           });
           queue.items.shift();
           queue.nextAt = Date.now() + this.config.sendIntervalMs;
