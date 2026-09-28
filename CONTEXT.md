@@ -448,6 +448,16 @@ until somebody presses one in production. An action the running version does
 not recognise — a button on an older message — is acknowledged and ignored
 rather than answered by guess.
 
+The **Menu** is the other neighbour: the keyboard under the input field,
+which stays until another replaces it. A key sends its label as an ordinary
+message, so the label is the address, declared once in `src/updates/menu.ts`
+and read back there. The main menu stands for commands; the server menu is a
+key per **Server** and one back. A key pressed by one person changes only that
+person's keyboard: the answer replies to the key's message and is selective.
+The bot sees these ordinary messages because it administers the group. The
+menu is posted once per layout, not once per start, and a message that carries
+it is never taken back by `/clear`.
+
 The **command menu** is the neighbouring idea: the list registered with
 `setMyCommands` at startup, which Telegram shows beside the input field. It is
 the only place the bot's commands are discoverable without reading `/help`.

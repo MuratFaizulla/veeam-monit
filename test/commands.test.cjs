@@ -43,7 +43,7 @@ test('every declared command is in the menu and has a paragraph in /help', async
 
   assert.deepEqual(
     BOT_COMMANDS.map((entry) => entry.command),
-    ['status', 'servers', 'digest', 'job', 'check', 'topics', 'clear', 'help'],
+    ['status', 'menu', 'servers', 'digest', 'job', 'check', 'topics', 'clear', 'help'],
   );
   for (const { name } of COMMANDS) {
     assert.ok(BOT_COMMANDS.some((entry) => entry.command === name), `/${name} в меню`);
@@ -73,12 +73,11 @@ test('a command with a Button answers the same whether typed or pressed', async 
   const { encode } = require('../dist/updates/keyboard');
   const withButton = COMMANDS.filter((command) => command.button);
 
-  // The five Buttons under the bot's answers that stand for a command. The
-  // other two kinds are not commands: a job's own carries an id, and a
-  // server's selects that server.
+  // The four Buttons under the bot's answers that stand for a command. The
+  // fifth kind, a job's own, carries an id and is not a command.
   assert.deepEqual(
     withButton.map(({ name, button }) => [name, button]),
-    [['status', 'status'], ['servers', 'servers'], ['digest', 'summary'], ['check', 'check'], ['help', 'help']],
+    [['status', 'status'], ['digest', 'summary'], ['check', 'check'], ['help', 'help']],
   );
   for (const { name, button } of withButton) {
     // Two worlds, so the rate limit armed by one cannot answer the other.

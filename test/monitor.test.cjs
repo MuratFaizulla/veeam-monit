@@ -448,7 +448,7 @@ test('/status carries the same health as /check, without running anything', asyn
   assert.match(reply.text, /Учётная запись:<\/b> 🟢 да/);
   // The way to the rest is a button now, not a line telling somebody to type.
   const buttons = reply.reply_markup.inline_keyboard.flat().map((b) => b.text);
-  assert.deepEqual(buttons, ['📊 Сводка', '🔄 Проверить', '🖥 Серверы', '🤖 Команды']);
+  assert.deepEqual(buttons, ['📊 Сводка', '🔄 Проверить', '🤖 Команды']);
 });
 
 test('an approximate name finds the job somebody meant', () => {
@@ -705,10 +705,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   const { encode, decode } = require('../dist/updates/keyboard');
   const { BOT_COMMANDS } = require('../dist/updates/commands');
 
-  for (const action of [
-    { kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }, { kind: 'servers' },
-    { kind: 'server', key: 'veam01baas01' },
-  ]) {
+  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
   }
   // The longest key configuration allows, beside a GUID.
@@ -726,7 +723,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'clear', 'digest', 'help', 'job', 'servers', 'status', 'topics'],
+    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'servers', 'status', 'topics'],
   );
 });
 

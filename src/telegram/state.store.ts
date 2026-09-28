@@ -22,6 +22,8 @@ interface TelegramState {
   jobResults: Record<string, Record<string, string>>;
   /** Key of the server the live slots and commands show; absent means the first. */
   selectedServer?: string;
+  /** chat id -> the menu last put under its input field, so a restart does not post it again. */
+  menus?: Record<string, string>;
   /** dedupeKey -> epoch ms after which the same condition may be reported again. */
   cooldowns: Record<string, number>;
   /** chat id -> slot -> the one message that slot keeps current. */
@@ -142,6 +144,22 @@ export class TelegramStateStore implements OnModuleDestroy {
   }
 
   /* ---------------------------------------------------------------- *
+   * The menu under the input field
+   * ---------------------------------------------------------------- */
+
+  /** What the menu last put under this chat's input field was, as the updates module wrote it. */
+  menuOffered(chatId: string): string | undefined {
+    return this.state.menus?.[chatId];
+  }
+
+  rememberMenu(chatId: string, signature: string): void {
+    const menus = (this.state.menus ??= {});
+    if (menus[chatId] === signature) return;
+    menus[chatId] = signature;
+    this.save();
+  }
+
+  /* ---------------------------------------------------------------- *
    * Chats
    * ---------------------------------------------------------------- */
 
@@ -174,6 +192,7 @@ export class TelegramStateStore implements OnModuleDestroy {
   dropChat(chatId: string): void {
     delete this.state.chats[chatId];
     delete this.state.topics[chatId];
+    delete this.state.menus?.[chatId];
     this.liveMessages.dropChat(chatId);
     this.save();
   }

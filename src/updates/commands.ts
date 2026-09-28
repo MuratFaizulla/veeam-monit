@@ -1,6 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { Action, mainKeyboard } from './keyboard';
-import { TelegramBotCommand, TelegramChat, TelegramKeyboard } from '../telegram/types';
+import { TelegramBotCommand, TelegramChat, TelegramMarkup } from '../telegram/types';
 
 /**
  * The bot's commands, declared once.
@@ -26,13 +26,8 @@ import { TelegramBotCommand, TelegramChat, TelegramKeyboard } from '../telegram/
 /** One Answer, rendered: the lines of one message and the Buttons under it. */
 export interface Reply {
   lines: readonly string[];
-  markup?: TelegramKeyboard;
-  /**
-   * Takes the place of the message whose Button was pressed, rather than
-   * following it: a menu that changed is the same menu, and a second copy of
-   * it under the first would leave two to choose from, one of them wrong.
-   */
-  replaces?: boolean;
+  /** Buttons under the message, or the menu under the input field. */
+  markup?: TelegramMarkup;
 }
 
 /** The question a command or a Button put. */
@@ -52,6 +47,7 @@ export interface Asked {
 /** The Answers a command can give. `TelegramCommandsService` gives them. */
 export interface Answers {
   status(asked: Asked): Reply;
+  menu(): Reply;
   servers(): Reply;
   check(): Promise<Reply>;
   summary(): Promise<Reply>;
@@ -62,10 +58,9 @@ export interface Answers {
 
 /**
  * A Button that stands for a command. A job's own Button is not one: it
- * carries an id, and `/job` is asked with a half-remembered name. Nor is a
- * server's: it selects that server, which no command does.
+ * carries an id, and `/job` is asked with a half-remembered name.
  */
-export type CommandButton = Exclude<Action['kind'], 'job' | 'server'>;
+export type CommandButton = Exclude<Action['kind'], 'job'>;
 
 export interface Command {
   /** What is typed after the slash, and what the menu shows. */
@@ -112,13 +107,18 @@ const DECLARED = [
     answer: (answers, asked) => answers.status(asked),
   },
   {
+    name: 'menu',
+    menu: 'Показать кнопки меню под полем ввода',
+    help: ['показать кнопки меню под полем ввода, если они пропали.'],
+    answer: (answers) => answers.menu(),
+  },
+  {
     name: 'servers',
     menu: 'Выбрать сервер Veeam',
     help: [
       'серверы Veeam и их состояние. Кнопкой выбирается сервер, который',
       'показывают живые темы, <code>/digest</code> и <code>/job</code>. Оповещения приходят со всех.',
     ],
-    button: 'servers',
     answer: (answers) => answers.servers(),
   },
   {
@@ -177,6 +177,9 @@ const DECLARED = [
 ] as const satisfies readonly Command[];
 
 export const COMMANDS: readonly Command[] = DECLARED;
+
+/** The name of every command the bot declares. */
+export type CommandName = (typeof DECLARED)[number]['name'];
 
 /**
  * Fails the build, naming the kind, when a Button stands for no command. Its
