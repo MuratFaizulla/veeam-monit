@@ -3,22 +3,28 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { VeeamReachability } from '../veeam/http.service';
 import { VeeamServers } from '../veeam/servers';
 
-type ServerProbe = { name: string; baseUrl: string } & VeeamReachability;
+type ServerProbe = Pick<VeeamReachability, 'reachable' | 'serverTime'>;
+type HealthResponse = {
+  status: 'ok' | 'degraded';
+  veeam: ServerProbe;
+  servers: ServerProbe[];
+};
+
+const PROBE_CACHE_MS = 5_000;
 
 const SERVER_SCHEMA = {
   type: 'object',
   properties: {
-    name: { type: 'string', example: 'veeam01main' },
-    baseUrl: { type: 'string', example: 'https://veeam.example:9419' },
     reachable: { type: 'boolean' },
     serverTime: { type: 'string', example: '2026-09-16T11:00:00+05:00' },
-    error: { type: 'string', example: 'connect ETIMEDOUT 192.0.2.1:9419' },
   },
 };
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
+  private cached?: { until: number; value: Promise<HealthResponse> };
+
   constructor(private readonly servers: VeeamServers) {}
 
   /**
@@ -48,17 +54,19 @@ export class HealthController {
       },
     },
   })
-  async check(): Promise<{
-    status: 'ok' | 'degraded';
-    veeam: ServerProbe;
-    servers: ServerProbe[];
-  }> {
+  check(): Promise<HealthResponse> {
+    if (this.cached && Date.now() < this.cached.until) return this.cached.value;
+    const value = this.probe();
+    this.cached = { until: Date.now() + PROBE_CACHE_MS, value };
+    return value;
+  }
+
+  private async probe(): Promise<HealthResponse> {
     const servers = await Promise.all(
-      this.servers.all.map(async ({ name, http }) => ({
-        name,
-        baseUrl: http.baseUrl,
-        ...(await http.reachability()),
-      })),
+      this.servers.all.map(async ({ http }) => {
+        const { reachable, serverTime } = await http.reachability();
+        return { reachable, ...(serverTime ? { serverTime } : {}) };
+      }),
     );
     return {
       status: servers.every((server) => server.reachable) ? 'ok' : 'degraded',
