@@ -112,6 +112,9 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       // Once, beside the job list it is united with, and shared by everything
       // that counts running jobs: ▶️, 📈 and the daily Summary.
       const working = authenticated ? await this.working() : undefined;
+      // Said in the health too, and only here: /digest reads the same thing, and
+      // a command asking its own question must not overwrite the cycle's health.
+      if (working?.unavailable) this.health.lastError = working.unavailable;
       let repositories: RepositoryCapacity[] | undefined;
 
       // Once, before anything reads it — the alerts as much as the live slots.
@@ -152,7 +155,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   async summary(): Promise<Answer> {
     const read = await this.jobQuery.jobsNow();
     if (!read.ok) return { text: read.message };
-    const summary = summarise(read.jobs, (await this.working()).byJob);
+    const working = await this.working();
+    const summary = summarise(read.jobs, working.byJob, working.unavailable);
     return {
       // The very same event the daily message sends, rendered instead of
       // routed. Two renderings of one set of figures began to differ within a
@@ -397,13 +401,14 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    *
    * The scan already reads every job configuration, so it is the free answer.
    * But after a restart the Evidence is pending until the first scan finishes,
-   * and a scan can fail outright; the alert used to lose "из 4" for as long as
-   * that lasted. One request per alert is cheap next to that. Best effort: an
+   * a scan can fail outright, and a job created since the last scan is not in
+   * it; the alert used to lose "из 4" for as long as any of that lasted. One request per alert is cheap next to that. Best effort: an
    * alert without the policy is still an alert.
    */
   private async retryPolicyOf(job: Job, evidence: Evidence): Promise<VeeamSchedule | undefined> {
-    if (evidence.status === 'ready') return evidence.schedulesByJob.get(job.id);
-    return (await this.jobQuery.configurationOf(job))?.schedule;
+    // A job created after the last scan is not in it, however ready it is.
+    const scanned = evidence.status === 'ready' ? evidence.schedulesByJob.get(job.id) : undefined;
+    return scanned ?? (await this.jobQuery.configurationOf(job))?.schedule;
   }
 
   private async checkRepositories(): Promise<RepositoryCapacity[]> {
@@ -432,7 +437,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     // The job list and the Working sessions this cycle already read. The list
     // used to be read a second time here, on the one cycle a day that most
     // wanted to be quick, and the sessions a third time.
-    const summary = summarise(jobs, working.byJob);
+    const summary = summarise(jobs, working.byJob, working.unavailable);
     const report = await this.emit(digestEvent(summary));
 
     // Arming before the fetch, as this used to, lost the whole digest for 23

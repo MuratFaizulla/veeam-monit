@@ -257,6 +257,11 @@ same estate at the same moment. The Working sessions are one read a cycle,
 check — shared by ▶️, 📈 and the daily Summary; `/digest` makes the same read.
 They used to be read twice a cycle with two ideas of "Working".
 
+When that read fails the count falls back to job status alone, and the
+Summary says so beside the figure ("только по статусу заданий") instead of
+sending the smaller number as the whole truth; the cycle's health carries the
+error too.
+
 Owned by `src/estate/digest.ts`.
 
 ## Job card

@@ -30,6 +30,13 @@ export interface DigestSummary {
   warning: number;
   failed: number;
   running: number;
+  /**
+   * Why the Working sessions could not be read, when they could not. The
+   * running figure is then counted from job status alone, which misses every
+   * run started by hand on a job switched off — and says so rather than
+   * passing the smaller number off as the whole truth.
+   */
+  runningUnread?: string;
   /** The jobs behind `failed` and `warning`: errors first, then by name. */
   failing: FailingJob[];
 }
@@ -51,6 +58,7 @@ export const addressable = (summary: DigestSummary): Array<{ id: string; name: s
 export const summarise = (
   jobs: Job[],
   working: WorkingJobs,
+  workingUnread?: string,
 ): DigestSummary => {
   const summary: DigestSummary = {
     total: jobs.length,
@@ -58,6 +66,7 @@ export const summarise = (
     warning: 0,
     failed: 0,
     running: 0,
+    runningUnread: workingUnread,
     failing: [],
   };
 
@@ -123,7 +132,12 @@ export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
     ['Успешно', summary.success],
     ['С предупреждением', summary.warning],
     ['С ошибкой', summary.failed],
-    ['Выполняются', summary.running],
+    [
+      'Выполняются',
+      summary.runningUnread === undefined
+        ? summary.running
+        : `${summary.running} (только по статусу заданий: сессии Veeam не прочитаны)`,
+    ],
   ],
   body: bodyOf(summary),
 });

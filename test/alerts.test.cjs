@@ -101,3 +101,15 @@ test('a monitor with no service account says so once, not every cycle', async ()
   const told = w.api.sent().filter((m) => /Мониторинг заданий выключен/.test(m.text));
   assert.equal(told.length, 1);
 });
+
+test('a summary counted without the Working sessions says its running figure is partial', () => {
+  // When the sessions could not be read the count falls back to job status,
+  // which misses every run started by hand on a job switched off. The daily
+  // summary used to send that smaller number as if it were the whole truth.
+  const { summarise, digestEvent } = require('../dist/estate/digest');
+  const jobs = [{ ...job('1', 'A', 'Success'), id: '1', name: 'A', result: 'success', status: 'Working' }];
+  const running = (event) => event.fields.find(([label]) => label === 'Выполняются')[1];
+
+  assert.equal(running(digestEvent(summarise(jobs, new Set()))), 1);
+  assert.match(String(running(digestEvent(summarise(jobs, new Set(), 'timeout')))), /^1 .*по статусу/);
+});

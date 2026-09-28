@@ -259,3 +259,24 @@ test('an alert before any scan has finished still knows the job\'s retry policy'
   const alert = w.api.sent().find((message) => /REMS_DBS03/.test(message.text));
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
 });
+
+test('a job the last scan did not know still gets its retry policy', async () => {
+  // Evidence is ready, but the job was created after the scan: its schedule is
+  // not in it, and the alert used to go without "из 4" until the next scan.
+  let sessions = [];
+  const w = monitorWorld({}, [job('1', 'NEW_JOB', 'Success')], {
+    '/api/v1/jobs': { data: [] },
+    '/api/v1/jobs/1': { id: '1', name: 'NEW_JOB', schedule: RETRY_POLICY },
+    '/api/v1/sessions': () => ({ data: sessions }),
+  });
+  await w.monitor.check();
+  assert.equal(w.evidence.evidence.status, 'ready');
+  w.api.reset();
+
+  sessions = oneRetriedRun(Date.now() - HOUR).slice(1);
+  w.setJobs([job('1', 'NEW_JOB', 'Failed')]);
+  await w.monitor.check();
+
+  const alert = w.api.sent().find((message) => /NEW_JOB/.test(message.text));
+  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+});

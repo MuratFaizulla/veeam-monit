@@ -1018,3 +1018,23 @@ test('🧹 is only among the pages while it is switched on', async () => {
     .pages({ jobs: undefined, authenticated: false, evidence: PENDING, health: liveHealth() });
   assert.equal(on.at(-1).slot, 'orphans');
 });
+
+test('📈 names a job the way every other message does, and a session with no job by itself', async () => {
+  const { workingOf } = require('./world.cjs');
+  const snapshots = snapshotsOf({
+    // Figures, or 📈 lists no names at all.
+    '/api/v1/sessions/s1/taskSessions': { data: [{ type: 'Backup', progress: { processingRate: '10 MB/s', processedSize: 1 } }] },
+    '/api/v1/sessions/s9/taskSessions': { data: [{ type: 'Backup', progress: { processingRate: '20 MB/s', processedSize: 1 } }] },
+  });
+  const working = workingOf([
+    // Veeam names a session after the job as it was called then, or not at all.
+    { id: 's1', jobId: 'job-guid-1', name: 'old name', state: 'Working', creationTime: '2026-09-14T10:00:00Z' },
+    { id: 's9', name: 'Malware Detection', state: 'Working', creationTime: '2026-09-14T10:00:00Z' },
+  ]);
+  const jobs = [{ id: 'job-guid-1', name: 'OPS_MGMT_MS', result: 'success', status: 'Working' }];
+  const pages = await snapshots.pages({ jobs, working, authenticated: true, evidence: PENDING, health: liveHealth() });
+  const performance = pageOf(pages, 'performance');
+  assert.match(performance, /OPS_MGMT_MS/);
+  assert.doesNotMatch(performance, /old name/);
+  assert.match(performance, /Malware Detection/);
+});
