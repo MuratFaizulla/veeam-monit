@@ -25,7 +25,7 @@ export interface Attempt {
   startedAt?: string;
   /** ISO instant it ended; absent while it is still going. */
   endedAt?: string;
-  /** Veeam's result, in whatever case Veeam wrote it. */
+  /** Veeam's result. Lower-cased at the read; lower-cased again here, so any caller may pass it. */
   result?: string;
 }
 

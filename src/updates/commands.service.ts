@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
-import { MONITOR, Monitor, MonitorAnswer } from '../monitor/monitor';
+import { MONITOR, Monitor, Answer } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml, truncate } from '../telegram/format';
 import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard } from './keyboard';
@@ -328,7 +328,7 @@ export class TelegramCommandsService implements Answers {
    * A failure is answered too: an unanswered command reads as a dead bot.
    */
   private async reading(
-    ask: () => Promise<MonitorAnswer>,
+    ask: () => Promise<Answer>,
     tail: ButtonRow = [],
   ): Promise<Reply> {
     if (this.store.cooldowns.isSuppressed(READ_COOLDOWN_KEY)) {
@@ -357,7 +357,7 @@ export class TelegramCommandsService implements Answers {
    * text: a button has to address a job, and the name printed in the message
    * is not an address.
    */
-  private offered(answer: MonitorAnswer, tail: ButtonRow): Reply {
+  private offered(answer: Answer, tail: ButtonRow): Reply {
     const lines = [answer.text];
     if (answer.jobId) return { lines, markup: cardKeyboard(answer.jobId) };
     if (answer.jobs && answer.jobs.length > 0) {

@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { LiveClock } from '../telegram/time';
+import { Clock } from '../telegram/time';
 import { escapeHtml } from '../telegram/format';
 import { Job } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamJob } from '../veeam/types';
-import { MonitorAnswer } from './answer';
+import { Answer } from './answer';
 import { retryWindowOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
@@ -50,7 +50,7 @@ export class JobQueryService {
    * happened, never from a new one, so asking about a job costs two requests
    * rather than the half-minute the scan takes.
    */
-  async describeJob(query: string): Promise<MonitorAnswer> {
+  async describeJob(query: string): Promise<Answer> {
     if (!query.trim()) {
       const read = await this.jobsNow();
       return {
@@ -100,7 +100,7 @@ export class JobQueryService {
    * different job than the one it was labelled with, if the estate changed
    * between the message and the press.
    */
-  async describeJobById(id: string): Promise<MonitorAnswer> {
+  async describeJobById(id: string): Promise<Answer> {
     const read = await this.jobsNow();
     if (!read.ok) return { text: read.message };
     const job = read.jobs.find((candidate) => candidate.id === id);
@@ -112,7 +112,7 @@ export class JobQueryService {
     return this.cardAnswer(job);
   }
 
-  private async cardAnswer(job: Job): Promise<MonitorAnswer> {
+  private async cardAnswer(job: Job): Promise<Answer> {
     return {
       text: renderJobCard(await this.cardFor(job), this.clock()),
       jobId: job.id,
@@ -150,7 +150,7 @@ export class JobQueryService {
     // round trips in sequence is a card nobody waits for.
     const [sessions, configured, names] = await Promise.all([
       this.recentSessions(job),
-      this.jobConfig(job),
+      this.configurationOf(job),
       this.inventory.names(),
     ]);
 
@@ -209,8 +209,11 @@ export class JobQueryService {
    * Read by id rather than taken from the estate scan's copy: that copy keeps
    * only the schedules of all 112 jobs, and holding every job's full storage
    * settings in memory to answer a question nobody may ask is the wrong trade.
+   *
+   * Public because an alert sent before any scan has finished needs the retry
+   * policy from here too. Best effort: undefined when it could not be read.
    */
-  private async jobConfig(job: Job): Promise<VeeamJob | undefined> {
+  async configurationOf(job: Job): Promise<VeeamJob | undefined> {
     try {
       return await this.reader.jobConfiguration(job.id);
     } catch (error) {
@@ -244,7 +247,7 @@ export class JobQueryService {
     }
   }
 
-  private clock(): LiveClock {
+  private clock(): Clock {
     return { now: new Date(), timezone: this.config.timezone };
   }
 }

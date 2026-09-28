@@ -7,13 +7,12 @@ import { Evidence } from '../estate/backup-evidence.service';
 import { Standings, standingsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
 import { RepositoryCapacity } from '../estate/repository-capacity';
-import { todayRuns } from '../estate/schedule-planner';
+import { ScheduledRun, todayRuns } from '../estate/schedule-planner';
 import {
-  LiveClock,
+  Clock,
   LiveHealth,
   LiveRunning,
   LiveSchedule,
-  ScheduledRun,
   renderHealth,
   renderRunning,
   renderSchedule,
@@ -84,7 +83,7 @@ export class LiveSnapshotsService {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
 
-  async pages(cycle: LiveCycle, clock: LiveClock = this.clock()): Promise<LivePage[]> {
+  async pages(cycle: LiveCycle, clock: Clock = this.clock()): Promise<LivePage[]> {
     const { jobs, repositories, evidence } = cycle;
     // Worked out once and read by both slots below, so they cannot disagree
     // about which jobs are in scope or how many were left out.
@@ -113,7 +112,7 @@ export class LiveSnapshotsService {
   }
 
   /** Now, in the timezone the operator reads in. */
-  private clock(): LiveClock {
+  private clock(): Clock {
     return { now: new Date(), timezone: this.config.timezone };
   }
 
@@ -161,7 +160,7 @@ export class LiveSnapshotsService {
   private scheduleState(
     jobs: Job[] | undefined,
     evidence: Evidence,
-    clock: LiveClock,
+    clock: Clock,
   ): LiveSchedule {
     if (!jobs) {
       return {

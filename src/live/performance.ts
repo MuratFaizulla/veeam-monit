@@ -1,5 +1,5 @@
 import { escapeHtml, truncate } from '../telegram/format';
-import { fitted, footerOf, LiveClock } from './format';
+import { fitted, footerOf, Clock } from './format';
 import { ACTIVE_SESSION_STATES } from '../veeam/estate';
 import { VeeamSession, VeeamTaskSession } from '../veeam/types';
 
@@ -114,7 +114,7 @@ export const sortPerformanceJobs = (jobs: PerformanceJob[]): PerformanceJob[] =>
     return a.rateBps - b.rateBps || a.name.localeCompare(b.name);
   });
 
-export const renderPerformance = (snapshot: PerformanceSnapshot, clock: LiveClock): string => {
+export const renderPerformance = (snapshot: PerformanceSnapshot, clock: Clock): string => {
   const footer = footerOf(clock);
   if (snapshot.unavailable) return truncate([
     '📈 <b>VEEAM PERFORMANCE</b>', '', '⚠️ Данные производительности временно недоступны.',
@@ -145,7 +145,7 @@ export const renderPerformance = (snapshot: PerformanceSnapshot, clock: LiveCloc
 /** The slowest few are the point of the slot; the rest is noise beside them. */
 const SLOWEST_SHOWN = 10;
 
-const jobLines = (job: PerformanceJob, clock: LiveClock): string[] => {
+const jobLines = (job: PerformanceJob, clock: Clock): string[] => {
   const mbps = job.rateBps === undefined ? undefined : job.rateBps / 1024 ** 2;
   const icon = mbps === undefined ? '⚪' : mbps < 20 ? '🔴' : mbps < 50 ? '🟠' : mbps < 100 ? '🟡' : '🟢';
   const lines = [

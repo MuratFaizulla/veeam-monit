@@ -11,7 +11,7 @@ import { escapeHtml } from './format';
  */
 
 /** Now, and the zone to write it in. */
-export interface LiveClock {
+export interface Clock {
   now: Date;
   /** IANA zone, or empty for the server's own. */
   timezone: string;
@@ -25,7 +25,7 @@ export interface LiveClock {
  */
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
-const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOptions): string => {
+const parts = (value: Date, clock: Clock, options: Intl.DateTimeFormatOptions): string => {
   const key = `${clock.timezone}|${Object.entries(options).join(',')}`;
   let formatter = formatters.get(key);
   if (!formatter) {
@@ -39,7 +39,7 @@ const parts = (value: Date, clock: LiveClock, options: Intl.DateTimeFormatOption
 };
 
 /** An ISO instant as "14.09.2026, 14:27:39", or the raw string if unparsable. */
-export const moment = (iso: string, clock: LiveClock): string => {
+export const moment = (iso: string, clock: Clock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return parts(date, clock, {
@@ -59,7 +59,7 @@ export const moment = (iso: string, clock: LiveClock): string => {
  * relative age ("5 дней назад") has to be turned back into a date before it can
  * be matched against anything on screen, so it is the wrong shape there.
  */
-export const longMoment = (at: number, clock: LiveClock): string =>
+export const longMoment = (at: number, clock: Clock): string =>
   parts(new Date(at), clock, {
     day: 'numeric',
     month: 'long',
@@ -69,7 +69,7 @@ export const longMoment = (at: number, clock: LiveClock): string =>
     second: '2-digit',
   });
 
-export const stampOf = (value: Date, clock: LiveClock): string =>
+export const stampOf = (value: Date, clock: Clock): string =>
   parts(value, clock, {
     day: '2-digit',
     month: '2-digit',
@@ -78,7 +78,7 @@ export const stampOf = (value: Date, clock: LiveClock): string =>
     second: '2-digit',
   });
 
-export const timeOnly = (iso: string, clock: LiveClock): string => {
+export const timeOnly = (iso: string, clock: Clock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return escapeHtml(iso);
   return parts(date, clock, { hour: '2-digit', minute: '2-digit' });
@@ -89,11 +89,11 @@ export const timeOnly = (iso: string, clock: LiveClock): string => {
  * a question about the operator's clock, not about UTC, so every comparison
  * goes through this rather than through Date's own local-time methods.
  */
-export const dayKey = (value: Date, clock: LiveClock): string =>
+export const dayKey = (value: Date, clock: Clock): string =>
   parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 /** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
-export const dayOf = (iso: string, clock: LiveClock): string => {
+export const dayOf = (iso: string, clock: Clock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return escapeHtml(iso);
   const time = timeOnly(iso, clock);

@@ -1,5 +1,5 @@
 import { escapeHtml, truncate } from '../telegram/format';
-import { bar, fitted, footerOf, LiveClock } from './format';
+import { bar, fitted, footerOf, Clock } from './format';
 import { RepositoryCapacity } from '../estate/repository-capacity';
 
 /**
@@ -15,7 +15,7 @@ const BAR_WIDTH = 20;
 
 export const renderRepositories = (
   repositories: RepositoryCapacity[] | undefined,
-  clock: LiveClock,
+  clock: Clock,
 ): string => {
   const footer = footerOf(clock);
   if (!repositories) {

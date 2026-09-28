@@ -142,7 +142,7 @@ export class VeeamEstateReader {
     return this.authorized<T>({ method: 'GET', path, params });
   }
 
-  private pages<T>(path: string, params: Record<string, unknown> = {}, limit = 100): Promise<T[]> {
+  private pages<T>(path: string, params: Record<string, unknown> = {}, limit?: number): Promise<T[]> {
     return allPages<T>(
       (skip, size) => this.get<VeeamCollection<T>>(path, { ...params, skip, limit: size }),
       limit,

@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, duration, LiveClock, longMoment, plural, stampOf } from '../telegram/time';
+import { dayOf, duration, Clock, longMoment, plural, stampOf } from '../telegram/time';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
@@ -283,7 +283,7 @@ const agoOf = (iso: string | undefined, now: Date): string | undefined => {
   return `${duration(now.getTime() - at)} назад`;
 };
 
-const momentOf = (iso: string | undefined, clock: LiveClock): string | undefined => {
+const momentOf = (iso: string | undefined, clock: Clock): string | undefined => {
   if (!iso) return undefined;
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return undefined;
@@ -291,7 +291,7 @@ const momentOf = (iso: string | undefined, clock: LiveClock): string | undefined
 };
 
 /** "16.09, 00:15:24 (15 ч 24 мин назад)" — the date and how long ago, together. */
-const whenOf = (iso: string | undefined, clock: LiveClock): string | undefined => {
+const whenOf = (iso: string | undefined, clock: Clock): string | undefined => {
   const moment = momentOf(iso, clock);
   if (!moment) return undefined;
   const ago = agoOf(iso, clock.now);
@@ -335,7 +335,7 @@ const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const more = (total: number, shown: number): string[] =>
   total > shown ? [`<i>…и ещё ${total - shown}</i>`] : [];
 
-export const renderJobCard = (card: JobCard, clock: LiveClock): string => {
+export const renderJobCard = (card: JobCard, clock: Clock): string => {
   const lines: string[] = [];
   const subtitle = [
     card.type,

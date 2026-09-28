@@ -238,7 +238,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
 });
 
 test('counts are written in Russian, with the right form for 1, 2 and 5', async () => {
-  const { plural, duration } = require('../dist/live/format');
+  const { plural, duration } = require('../dist/telegram/time');
   const jobs = (n) => `${n} ${plural(n, 'задание', 'задания', 'заданий')}`;
   assert.equal(jobs(1), '1 задание');
   assert.equal(jobs(2), '2 задания');

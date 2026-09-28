@@ -1,7 +1,7 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
-import { MonitorAnswer } from '../estate/answer';
+import { Answer } from '../estate/answer';
 
-export type { MonitorAnswer } from '../estate/answer';
+export type { Answer } from '../estate/answer';
 
 export interface MonitorHealth {
   lastCheckAt: string | null;
@@ -34,11 +34,11 @@ export interface Monitor {
   /** One monitoring pass; `busy` when a pass was already running. */
   check(): Promise<'ran' | 'busy'>;
   /** The Summary, as an Answer. */
-  summary(): Promise<MonitorAnswer>;
+  summary(): Promise<Answer>;
   /** A Job card for a half-remembered name, or the choices when several match. */
-  describeJob(query: string): Promise<MonitorAnswer>;
+  describeJob(query: string): Promise<Answer>;
   /** A Job card for a job a Button addressed by id. */
-  describeJobById(id: string): Promise<MonitorAnswer>;
+  describeJobById(id: string): Promise<Answer>;
 }
 
 /** Nest's handle for `Monitor`: an interface leaves nothing at runtime to inject by. */
