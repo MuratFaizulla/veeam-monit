@@ -145,18 +145,32 @@ export class TelegramLiveService {
       }
     }
 
-    if (current && (await this.edit(chatId, current.messageId, text))) {
-      this.store.liveMessages.remember(chatId, key, {
-        messageId: current.messageId,
-        hash,
-        at: Date.now(),
-        createdAt: current.createdAt,
-        threadId: current.threadId,
-      });
-      return;
-    }
-
     if (current) {
+      const outcome = await this.edit(chatId, current.messageId, text);
+      if (outcome === 'written') {
+        this.store.liveMessages.remember(chatId, key, {
+          messageId: current.messageId,
+          hash,
+          at: Date.now(),
+          createdAt: current.createdAt,
+          threadId: current.threadId,
+        });
+        return;
+      }
+
+      // A failed call is not a lost message. Every failure used to count as
+      // one, so a 429 or a dropped connection — which failed the delete tried
+      // next just the same — posted a second message beside a first that was
+      // still there: the ▶️ topic gained one every hour or two. Kept instead,
+      // and written on the next cycle, because the stored hash still differs.
+      if (outcome !== 'lost') {
+        this.logger.warn(
+          `Live "${slot}" message ${current.messageId} in chat ${chatId} was not refreshed, ` +
+            `kept for the next cycle: ${outcome.message}`,
+        );
+        return;
+      }
+
       this.store.liveMessages.forget(chatId, key);
       // An edit that failed on a message too old to delete leaves it in the
       // chat for good, and only a person can clear it. Said out loud rather
@@ -221,8 +235,13 @@ export class TelegramLiveService {
     return Date.now() - (ref.createdAt ?? 0) > ROTATE_AFTER_MS;
   }
 
-  /** True when the existing message now carries `text`. */
-  private async edit(chatId: string, messageId: number, text: string): Promise<boolean> {
+  /**
+   * Writes `text` into the existing message and says what became of it:
+   * `written`, `lost` when Telegram says the message is deleted or too old to
+   * edit — the only answers a new message fixes — or the error of a call that
+   * merely failed, with the message still there.
+   */
+  private async edit(chatId: string, messageId: number, text: string): Promise<'written' | 'lost' | Error> {
     try {
       await this.transport.call('editMessageText', {
         chat_id: chatId,
@@ -231,12 +250,15 @@ export class TelegramLiveService {
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       });
-      return true;
+      return 'written';
     } catch (error) {
-      // Telegram refuses a no-op edit. The message already says what we wanted
-      // it to say, so the slot is current either way.
-      if (error instanceof TelegramApiError && error.isUnchanged) return true;
-      return false;
+      if (error instanceof TelegramApiError) {
+        // Telegram refuses a no-op edit. The message already says what we
+        // wanted it to say, so the slot is current either way.
+        if (error.isUnchanged) return 'written';
+        if (error.isMessageGone || error.isUneditable) return 'lost';
+      }
+      return error as Error;
     }
   }
 
