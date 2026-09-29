@@ -156,6 +156,60 @@ test('a live message Telegram no longer has is deleted and replaced, not duplica
   assert.equal(w.api.of('createForumTopic').length, 0, 'the topic itself is still known');
 });
 
+test('a live message Telegram failed to edit for a moment is kept, not replaced', async () => {
+  // Every hour or two the ▶️ topic gained a message. An edit that met a 429, a
+  // 5xx or a dropped connection was taken for a message that was gone: the
+  // delete tried next failed the same way, a second message was posted, and
+  // the first — still there, no longer anybody's — stayed. Fifteen in a day.
+  const failures = {
+    'rate limit': () => ({
+      ok: false, error_code: 429, description: 'Too Many Requests: retry after 3', parameters: { retry_after: 3 },
+    }),
+    'bad gateway': () => ({ ok: false, error_code: 502, description: 'Bad Gateway' }),
+    'dropped connection': () => { throw new Error('socket hang up'); },
+  };
+  for (const [name, failure] of Object.entries(failures)) {
+    let failing = false;
+    const fail = () => (failing ? failure() : undefined);
+    const w = world({ TELEGRAM_LIVE: 'true' }, { editMessageText: fail, deleteMessage: fail });
+    await w.live.publish('running', '▶️ первый');
+    const first = w.store.liveMessages.of(CHAT, 'running').messageId;
+
+    failing = true;
+    w.api.reset();
+    await w.live.publish('running', '▶️ второй');
+    assert.deepEqual(w.api.sent(), [], `${name}: no second message`);
+    assert.deepEqual(w.api.of('deleteMessage'), [], `${name}: the first is not deleted`);
+    assert.equal(w.store.liveMessages.of(CHAT, 'running').messageId, first, `${name}: the slot keeps it`);
+
+    failing = false;
+    w.api.reset();
+    await w.live.publish('running', '▶️ второй');
+    assert.deepEqual(
+      w.api.of('editMessageText').map((edit) => edit.message_id), [first],
+      `${name}: the next cycle writes the same message`,
+    );
+    assert.deepEqual(w.api.sent(), [], `${name}: still one message`);
+  }
+});
+
+test('a live message Telegram will no longer let the bot edit is replaced', async () => {
+  let old = false;
+  const w = world({ TELEGRAM_LIVE: 'true' }, {
+    editMessageText: () =>
+      old ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
+  });
+  await w.live.publish('running', '▶️ первый');
+  const first = w.store.liveMessages.of(CHAT, 'running').messageId;
+
+  old = true;
+  w.api.reset();
+  await w.live.publish('running', '▶️ второй');
+
+  assert.equal(w.api.sent().length, 1, 'a message the bot can write to takes over');
+  assert.notEqual(w.store.liveMessages.of(CHAT, 'running').messageId, first);
+});
+
 test('pinning and heartbeat rewrites come from the slot declaration', async () => {
   const { LIVE_SLOTS } = require('../dist/live/slots');
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);

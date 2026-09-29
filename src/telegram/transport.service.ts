@@ -56,6 +56,14 @@ export class TelegramApiError extends Error {
   get isMessageGone(): boolean {
     return /message to (edit|delete) not found/i.test(this.description);
   }
+
+  /**
+   * Telegram will not let this message be edited any more: it is too old.
+   * Unlike a 429 or a 5xx, asking again later changes nothing.
+   */
+  get isUneditable(): boolean {
+    return /message can't be edited/i.test(this.description);
+  }
 }
 
 interface QueuedMessage {
