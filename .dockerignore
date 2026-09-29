@@ -9,6 +9,7 @@ node_modules
 dist
 logs
 data
+certs
 telegram-routes.json
 
 .git

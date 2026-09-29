@@ -273,6 +273,65 @@ test('a server that does not speak the configured API version is spoken to in th
   }
 });
 
+test('a Veeam with its own self-signed certificate is trusted by that certificate, and by nothing else', async (t) => {
+  // What both production servers present: "Veeam Backup Server Certificate",
+  // signed by itself, with no host name in it. A CA bundle cannot help — the
+  // name check fails anyway — so the only way to verify it is to pin it.
+  const { selfSigned } = require('./world.cjs');
+  const own = selfSigned();
+  const other = selfSigned();
+  if (!own || !other) return t.skip('openssl is not installed');
+  const https = require('node:https');
+  const { X509Certificate } = require('node:crypto');
+  const { VeeamHttpService } = require('../dist/veeam/http.service');
+  const server = https.createServer({ key: own.key, cert: own.cert }, (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ serverTime: '2026-09-29T18:00:00+05:00' }));
+  });
+  await new Promise((listening) => server.listen(0, '127.0.0.1', listening));
+  const veeam = (pem) => new VeeamHttpService({
+    name: 'self-signed', baseUrl: `https://127.0.0.1:${server.address().port}`,
+    apiVersion: '1.2-rev1', insecureTls: false, timeoutMs: 5000,
+    ...(pem ? { tls: { pem, fingerprint: new X509Certificate(pem).fingerprint256 } } : {}),
+  });
+  try {
+    assert.equal((await veeam(own.cert).reachability()).reachable, true, 'its own certificate is enough');
+    const impostor = await veeam(other.cert).reachability();
+    assert.equal(impostor.reachable, false, 'another certificate is refused');
+    assert.match(impostor.error, /VEEAM_TLS_CERTS/, 'and the refusal says what to set');
+    assert.equal((await veeam(undefined).reachability()).reachable, false, 'nothing self-signed is trusted unpinned');
+  } finally {
+    server.close();
+  }
+});
+
+test('/api/health answers inside the container probe even when Veeam swallows the connection', async () => {
+  // What a firewall that drops packets looks like from here: the connection is
+  // taken and nothing ever comes back. The probe waited out the monitor's own
+  // 30 seconds, Docker gave up after 5, and a working container was reported
+  // unhealthy for as long as Veeam was out of reach.
+  const net = require('node:net');
+  const { VeeamHttpService } = require('../dist/veeam/http.service');
+  const { HealthController } = require('../dist/http/health.controller');
+  const sockets = [];
+  const silent = net.createServer((socket) => sockets.push(socket));
+  await new Promise((listening) => silent.listen(0, '127.0.0.1', listening));
+  const http = new VeeamHttpService({
+    name: 'silent', baseUrl: `http://127.0.0.1:${silent.address().port}`,
+    apiVersion: '1.2-rev1', insecureTls: false, timeoutMs: 30_000,
+  });
+  try {
+    const startedAt = Date.now();
+    const health = await new HealthController({ all: [{ http }] }).check();
+    assert.ok(Date.now() - startedAt < 5_000, `answered in ${Date.now() - startedAt} ms`);
+    assert.equal(health.status, 'degraded');
+    assert.equal(health.servers[0].reachable, false);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    silent.close();
+  }
+});
+
 test('only a refusal of the version is read as one, and the newest version it names wins', () => {
   const { spokenVersion } = require('../dist/veeam/http.service');
   assert.equal(

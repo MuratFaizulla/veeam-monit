@@ -17,6 +17,10 @@ data/
 .vite/
 telegram-routes.json
 
+# The Veeam certificates an installation pins (VEEAM_TLS_CERTS). Not secret,
+# but they belong to one installation, like .env.
+certs/
+
 # Editor and OS noise
 .vscode/
 .idea/

@@ -285,7 +285,29 @@ const exchange = (env = {}) =>
     },
   });
 
+/**
+ * A throwaway self-signed certificate of the kind Veeam ships with: the name on
+ * it is not the host's. Made by openssl at test time, so no private key is ever
+ * committed; undefined where openssl is not installed.
+ */
+function selfSigned(name = 'Veeam Backup Server Certificate') {
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'veeam-tls-'));
+  const keyFile = path.join(dir, 'key.pem');
+  const certFile = path.join(dir, 'cert.pem');
+  try {
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+      '-keyout', keyFile, '-out', certFile, '-days', '1', '-subj', `/CN=${name}`,
+    ], { stdio: 'ignore' });
+  } catch {
+    return undefined;
+  }
+  return { certFile, key: fs.readFileSync(keyFile, 'utf8'), cert: fs.readFileSync(certFile, 'utf8') };
+}
+
 module.exports = {
+  selfSigned,
   CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, monitorWorld, job, exchange,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,

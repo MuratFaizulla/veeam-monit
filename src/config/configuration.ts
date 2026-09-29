@@ -1,3 +1,5 @@
+import { X509Certificate } from 'crypto';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { LiveSlot } from '../live/slots';
 import {
@@ -127,7 +129,35 @@ export interface VeeamEndpoint {
    * VEEAM_LEGACY_TLS names the server; the fix that lasts is on the server.
    */
   legacyTls: boolean;
+  /**
+   * The one certificate this server is trusted by, when VEEAM_TLS_CERTS pins
+   * it. VBR ships a self-signed certificate named "Veeam Backup Server
+   * Certificate", with no host name in it: no CA bundle can vouch for that,
+   * and the name check would fail anyway. Pinning trusts exactly it instead.
+   */
+  tls?: PinnedCertificate;
 }
+
+/** A certificate a server is trusted by, and its SHA-256 fingerprint as Node prints it. */
+export interface PinnedCertificate {
+  pem: string;
+  fingerprint: string;
+}
+
+/** The certificate in `file`, or what is wrong with the file. */
+const certificateIn = (file: string): PinnedCertificate | string => {
+  let pem: string;
+  try {
+    pem = readFileSync(file, 'utf8');
+  } catch {
+    return 'could not be read';
+  }
+  try {
+    return { pem, fingerprint: new X509Certificate(pem).fingerprint256 };
+  } catch {
+    return 'is not a PEM certificate';
+  }
+};
 
 const MINUTE = 60_000;
 
@@ -248,9 +278,24 @@ export const readConfig = (env: Environment): AppConfig =>
         `VEEAM_LEGACY_TLS names "${named}", which is not one of the Veeam servers`,
       );
     }
+    // name=path, the file holding the certificate that server presents.
+    const pins = new Map<VeeamEndpoint, PinnedCertificate>();
+    for (const entry of read.list('VEEAM_TLS_CERTS', /^[^=]+=.+$/, 'name=path entries')) {
+      const equals = entry.indexOf('=');
+      const named = entry.slice(0, equals).trim();
+      const endpoint = configured.find((candidate) => isNamed(candidate, named));
+      if (!endpoint) {
+        refuse(`VEEAM_TLS_CERTS names "${named}", which is not one of the Veeam servers`);
+        continue;
+      }
+      const certificate = certificateIn(entry.slice(equals + 1).trim());
+      if (typeof certificate === 'string') refuse(`VEEAM_TLS_CERTS: the file for ${named} ${certificate}`);
+      else pins.set(endpoint, certificate);
+    }
     const servers = configured.map((endpoint) => ({
       ...endpoint,
       legacyTls: legacyTls.some((named) => isNamed(endpoint, named)),
+      ...(pins.has(endpoint) ? { tls: pins.get(endpoint) } : {}),
     }));
 
     const webhookUrl = read.url('TELEGRAM_WEBHOOK_URL', '', { httpsOnly: true });
