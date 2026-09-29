@@ -282,13 +282,7 @@ export class TelegramLiveService {
     const fixedThread = specOf(slot).fixedThread;
     const configured = fixedThread ? this.config[fixedThread] : 0;
     const thread = configured > 0 ? configured : remembered ?? 0;
-    const name = this.config.liveTopics[slot];
-
-    const messageId = await this.topics.send(chat, name, text, thread);
-    return {
-      messageId,
-      threadId: thread > 0 ? thread : this.store.threadId(String(chat.id), name),
-    };
+    return this.topics.send(chat, this.config.liveTopics[slot], text, thread);
   }
 
   /** Pinning is optional: missing administrator rights must not break updates. */
@@ -304,14 +298,18 @@ export class TelegramLiveService {
     }
   }
 
-  /** Best effort: an orphaned status message is noise, not a failure. */
+  /**
+   * Best effort: an orphaned status message is noise, not a failure. True when
+   * the message is no longer in the chat — including when it was already gone,
+   * deleted by somebody or together with its topic, which is what was wanted.
+   */
   private async remove(chatId: string, messageId: number): Promise<boolean> {
     try {
       await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
       return true;
-    } catch {
-      /* already gone, or older than Telegram lets a bot delete */
-      return false;
+    } catch (error) {
+      /* older than Telegram lets a bot delete, or the call itself failed */
+      return error instanceof TelegramApiError && error.isMessageGone;
     }
   }
 

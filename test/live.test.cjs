@@ -193,6 +193,66 @@ test('a live message Telegram failed to edit for a moment is kept, not replaced'
   }
 });
 
+/**
+ * A forum whose topics can be deleted the way a person deletes one: the topic
+ * goes, and every message in it goes with it.
+ */
+const deletableForum = () => {
+  const threadOf = new Map();
+  const deleted = new Set();
+  let next = 5000;
+  const gone = (what) => ({ ok: false, error_code: 400, description: `Bad Request: message to ${what} not found` });
+  const lost = (payload) => deleted.has(threadOf.get(payload.message_id));
+  return {
+    delete: (thread) => deleted.add(thread),
+    handlers: {
+      sendMessage: (payload) => {
+        if (deleted.has(payload.message_thread_id)) {
+          return { ok: false, error_code: 400, description: 'Bad Request: message thread not found' };
+        }
+        threadOf.set((next += 1), payload.message_thread_id);
+        return { ok: true, result: { message_id: next } };
+      },
+      editMessageText: (payload) => (lost(payload) ? gone('edit') : undefined),
+      editMessageReplyMarkup: (payload) => (lost(payload) ? gone('edit') : undefined),
+      deleteMessage: (payload) => (lost(payload) ? gone('delete') : undefined),
+    },
+  };
+};
+
+test('a live topic somebody deleted comes back by itself, holding its message', async () => {
+  const forum = deletableForum();
+  const w = monitorWorld(LIVE, [running('SQL Daily')], {}, forum.handlers);
+  await w.monitor.check();
+  const slots = Object.entries(w.telegram.liveTopics).filter(([slot]) => w.store.liveMessages.of(CHAT, slot));
+  const before = Object.fromEntries(slots.map(([slot, name]) => [slot, w.store.threadId(CHAT, name)]));
+
+  // Every one of them, including the ones whose content has not changed and
+  // are only looked at again on the heartbeat, a few minutes later.
+  for (const thread of Object.values(before)) forum.delete(thread);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 10 * 60_000;
+  try {
+    w.api.reset();
+    await w.monitor.check();
+  } finally {
+    Date.now = realNow;
+  }
+
+  for (const [slot, name] of slots) {
+    const thread = w.store.threadId(CHAT, name);
+    assert.ok(thread && thread !== before[slot], `${name}: the topic is created again`);
+    assert.equal(w.store.liveMessages.of(CHAT, slot).threadId, thread, `${name}: the slot remembers the new topic`);
+    assert.ok(
+      w.api.sent().some((message) => message.message_thread_id === thread),
+      `${name}: and its message is in it`,
+    );
+  }
+  assert.equal(w.api.of('createForumTopic').length, slots.length, 'one topic each, not two');
+  const runningNow = w.api.sent().find((message) => message.message_thread_id === w.store.threadId(CHAT, '▶️ Running now'));
+  assert.match(runningNow.text, /SQL Daily/, 'with what it was showing');
+});
+
 test('a live message Telegram will no longer let the bot edit is replaced', async () => {
   let old = false;
   const w = world({ TELEGRAM_LIVE: 'true' }, {

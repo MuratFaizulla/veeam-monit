@@ -109,20 +109,24 @@ export class TelegramTopicsService {
    * distinction is what stops a third topic: a slot remembering a renamed
    * topic that was then deleted used to drop the mapping of the living topic
    * with the configured name, and re-resolving created another one.
+   *
+   * Says where the message landed, which after a recovery is not the thread
+   * asked for. A live slot used to remember the one it asked for — the deleted
+   * topic — and the next message it posted went there first.
    */
   async send(
     chat: TelegramChat,
     topic: string | null,
     text: string,
     fixedThread = 0,
-  ): Promise<number> {
+  ): Promise<{ messageId: number; threadId?: number }> {
     const destination =
       fixedThread > 0 && chat.is_forum
         ? { chatId: String(chat.id), threadId: fixedThread, topic: topic ?? undefined }
         : await this.destination(chat, topic);
 
     try {
-      return await this.transport.sendMessage(destination, text);
+      return { messageId: await this.transport.sendMessage(destination, text), threadId: destination.threadId };
     } catch (error) {
       if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
       const name = destination.topic ? topicName(destination.topic) : undefined;
@@ -130,10 +134,8 @@ export class TelegramTopicsService {
         this.forget(destination.chatId, name);
       }
       const retry = await this.destination(chat, topic);
-      return this.transport.sendMessage(
-        retry.threadId === destination.threadId ? { chatId: destination.chatId } : retry,
-        text,
-      );
+      const landed = retry.threadId === destination.threadId ? { chatId: destination.chatId } : retry;
+      return { messageId: await this.transport.sendMessage(landed, text), threadId: landed.threadId };
     }
   }
 
