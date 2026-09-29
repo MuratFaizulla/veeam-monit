@@ -426,18 +426,23 @@ not an address.
 
 ## Answer log
 
-The message ids of **Answers** the bot has sent, per chat and topic, so
-`/clear` has something to take back.
+The message ids of everything said in General, per chat, so `/clear` has
+something to take back. Named for what it first held — the bot's **Answers** —
+it now also holds what people type there, the menu keys they press, the
+messages that carry the **Menu**, and events the notifier posts to General.
+`/clear` used to take back the Answers alone, and left a column of "/digest"
+and "/status" with nothing after them.
 
 It exists because the Bot API offers no way to clear a chat: a bot can delete a
 message only by id, cannot enumerate history, and loses the right after 48
 hours. The set it can ever remove is therefore exactly the set it wrote down as
-it sent — which is why only `TelegramCommandsService.send` records, and alerts
-and **Live slot** messages, sent by other modules, are structurally out of
-reach rather than excluded by a rule somebody has to remember.
+it went. Three places write: the commands module for what is said in General
+and what it answers there, and the notifier for an event that landed in
+General. An alert in its topic and a **Live slot** message are never written,
+so they are out of reach rather than excluded by a rule somebody has to
+remember.
 
-Scoped by thread: clearing one topic must not reach into the next, where
-somebody may be mid-conversation.
+Scoped by thread: General is its own scope, not "everything".
 
 Newest 500 per chat, entries older than 48 hours dropped on read.
 
@@ -468,8 +473,11 @@ and read back there. The main menu stands for commands; the server menu is a
 key per **Server** and one back. A key pressed by one person changes only that
 person's keyboard: the answer replies to the key's message and is selective.
 The bot sees these ordinary messages because it administers the group. The
-menu is posted once per layout, not once per start, and a message that carries
-it is never taken back by `/clear`.
+keyboard lives as long as the message that put it there, so the bot keeps that
+message: it remembers the newest menu for everybody and looks at it every few
+minutes. When Telegram says it is gone, or the layout changed, the menu is
+posted again; a restart or a failed look posts nothing. `/clear` takes the old
+menus with everything else in General and ends by posting a fresh one.
 
 The **command menu** is the neighbouring idea: the list registered with
 `setMyCommands` at startup, which Telegram shows beside the input field. It is

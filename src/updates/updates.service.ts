@@ -33,6 +33,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   private polling = false;
   private stopping = false;
   private updateOffset = 0;
+  private menuTimer?: NodeJS.Timeout;
 
   constructor(
     config: ConfigService,
@@ -52,7 +53,12 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
     await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
     await this.publishCommands();
-    await this.commands.offerMenu();
+    await this.commands.keepMenu();
+    // Looked at again as often as a live slot's heartbeat, so a menu deleted
+    // by hand is back within the same few minutes as a deleted live message.
+    clearInterval(this.menuTimer);
+    this.menuTimer = setInterval(() => void this.commands.keepMenu(), this.config.liveRefreshMs);
+    this.menuTimer.unref?.();
 
     if (this.config.webhookUrl) {
       await this.configureWebhook();
@@ -64,6 +70,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     this.stopping = true;
     this.polling = false;
+    clearInterval(this.menuTimer);
   }
 
   /**

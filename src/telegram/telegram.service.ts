@@ -135,7 +135,10 @@ export class TelegramService {
         // Sends to the resolved topic, and retries once in General if the topic
         // turned out to be gone — somebody deleting a topic in the group must
         // not silently stop the alerts that were routed to it.
-        await this.topics.send(chat, decision.topic, text);
+        const posted = await this.topics.send(chat, decision.topic, text);
+        // An event that landed in General is General's, and /clear takes it
+        // back with the rest; one in its topic is the record and stays.
+        if (posted.threadId === undefined) this.store.answerLog.remember(id, posted.messageId);
         sent += 1;
       } catch (error) {
         failed += 1;
