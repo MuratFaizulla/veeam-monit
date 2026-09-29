@@ -187,6 +187,26 @@ test('old TLS is offered only to the servers named for it', () => {
   refused({ VEEAM_SERVERS: 'https://a.example:9419', VEEAM_LEGACY_TLS: 'b' }, /VEEAM_LEGACY_TLS names "b"/);
 });
 
+test('a server is pinned to the certificate in its file, and a pin that cannot apply is refused', (t) => {
+  const { selfSigned } = require('./world.cjs');
+  const own = selfSigned();
+  if (!own) return t.skip('openssl is not installed');
+  const { X509Certificate } = require('node:crypto');
+  const servers = 'https://veeam01ast01.t-cloud.kz:9419,BAAS=https://veam01baas01.t-cloud.kz:9419';
+
+  const config = accepted({ VEEAM_SERVERS: servers, VEEAM_TLS_CERTS: `baas=${own.certFile}` });
+  const [ast, baas] = config.veeam.servers;
+  assert.equal(ast.tls, undefined);
+  assert.equal(baas.tls.fingerprint, new X509Certificate(own.cert).fingerprint256);
+  assert.match(baas.tls.pem, /BEGIN CERTIFICATE/);
+
+  // Each of these would leave a server unverified, or unreachable, with
+  // nothing to say the setting did not apply.
+  refused({ VEEAM_SERVERS: servers, VEEAM_TLS_CERTS: `other=${own.certFile}` }, /VEEAM_TLS_CERTS names "other"/);
+  refused({ VEEAM_SERVERS: servers, VEEAM_TLS_CERTS: 'baas=/no/such/file.pem' }, /VEEAM_TLS_CERTS: .*baas.* could not be read/);
+  refused({ VEEAM_SERVERS: servers, VEEAM_TLS_CERTS: `baas=${__filename}` }, /VEEAM_TLS_CERTS: .*baas.* is not a PEM certificate/);
+});
+
 test('the server list refuses what it could not tell apart or reach', () => {
   refused(
     { VEEAM_SERVERS: 'https://a.example:9419', VEEAM_BASE_URL: 'https://b.example:9419' },

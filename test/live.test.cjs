@@ -874,7 +874,9 @@ test('a point left behind by a failed run is not counted as a backup', async () 
 });
 
 test('a point finished by a successful retry counts, whatever id it carries', async () => {
-  const w = exchange();
+  // The zone the time below is written in, named rather than taken from the
+  // machine: on one in UTC the same point reads "22 августа … 20:31:12".
+  const w = exchange({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' });
   await w.monitor.check();
 
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));

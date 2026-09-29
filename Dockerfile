@@ -3,7 +3,7 @@
 # Build and runtime are separated so the image that ships carries no compiler,
 # no test runner and no Nest CLI — only what `node dist/main.js` actually opens.
 
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 # Copied on their own so the install layer survives every change to src/.
 COPY package.json package-lock.json ./
@@ -17,12 +17,12 @@ RUN npm run build
 
 # A second install, without devDependencies. Pruning the first one in place
 # would leave its layer in the image anyway.
-FROM node:20-alpine AS runtime-deps
+FROM node:22-alpine AS runtime-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:20-alpine
+FROM node:22-alpine
 # The bot writes Russian dates in a named zone (TELEGRAM_TIMEZONE), and the
 # container's own clock is read whenever that is empty. Both need the zone
 # database, which the base image does not carry.

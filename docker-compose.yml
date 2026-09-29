@@ -27,6 +27,18 @@ services:
       # already reported on.
       - ./data:/app/data
       - ./logs:/app/logs
+      # The Veeam certificates VEEAM_TLS_CERTS pins, as /app/certs/<name>.pem.
+      # Read-only: the service trusts them and has no business changing them.
+      - ./certs:/app/certs:ro
+
+    # Docker keeps everything the container prints, and by default keeps all of
+    # it forever. The service writes its own rotated log to ./logs as well, so
+    # thirty megabytes here are plenty.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     # Veeam usually sits outside Docker. If a Veeam server URL points at the host
     # this container runs on, address it as host.docker.internal — `localhost`

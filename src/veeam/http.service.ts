@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, isAxiosError } from 'axios';
 import { Agent } from 'https';
+import { PeerCertificate } from 'tls';
 import { AppConfig, VeeamEndpoint } from '../config/configuration';
 import { VeeamApiError } from './api.error';
 import { VeeamTokenResponse } from './types';
@@ -8,7 +9,22 @@ import { VeeamTokenResponse } from './types';
 /** Where one server is, and how to talk to it. */
 export type VeeamConnection = Pick<AppConfig['veeam'], 'apiVersion' | 'insecureTls' | 'timeoutMs'> &
   Pick<VeeamEndpoint, 'name' | 'baseUrl'> &
-  Partial<Pick<VeeamEndpoint, 'legacyTls'>>;
+  Partial<Pick<VeeamEndpoint, 'legacyTls' | 'tls'>>;
+
+/**
+ * The identity check of a pinned server: the certificate it presents must be
+ * the pinned one, whatever name it carries. It stands in for the host name
+ * check, which a certificate named "Veeam Backup Server Certificate" never
+ * passes, and runs inside the handshake — before a password is sent.
+ */
+export const pinnedIdentity =
+  (fingerprint: string) =>
+  (_host: string, certificate: PeerCertificate): Error | undefined =>
+    certificate.fingerprint256 === fingerprint
+      ? undefined
+      : Object.assign(new Error(`certificate ${certificate.fingerprint256} is not the pinned ${fingerprint}`), {
+          code: 'CERT_NOT_PINNED',
+        });
 
 /** One answer to "is the backup server there": reachable, and the proof either way. */
 export interface VeeamReachability {
@@ -26,6 +42,8 @@ export interface RawRequest {
   params?: Record<string, unknown>;
   data?: unknown;
   headers?: Record<string, string>;
+  /** Shorter than the server's own timeout, for a caller that must answer sooner. */
+  timeoutMs?: number;
 }
 
 /**
@@ -50,9 +68,12 @@ export class VeeamHttpService {
     // Named, so a line of the request log says which server it was.
     this.logger = new Logger(`${VeeamHttpService.name} ${config.name}`);
 
-    if (this.config.insecureTls) {
+    const pinned = this.config.tls;
+    if (pinned) {
+      this.logger.log(`TLS pinned to the certificate ${pinned.fingerprint}`);
+    } else if (this.config.insecureTls) {
       this.logger.warn(
-        `TLS verification is disabled for ${this.config.baseUrl}. Set VEEAM_INSECURE_TLS=false once the certificate is trusted.`,
+        `TLS verification is disabled for ${this.config.baseUrl}. Pin its certificate with VEEAM_TLS_CERTS and set VEEAM_INSECURE_TLS=false.`,
       );
     }
     if (this.config.legacyTls) {
@@ -64,10 +85,13 @@ export class VeeamHttpService {
     this.http = axios.create({
       baseURL: this.config.baseUrl,
       timeout: this.config.timeoutMs,
-      // VBR uses a self-signed certificate out of the box; the agent is what
-      // makes that tolerable without touching NODE_TLS_REJECT_UNAUTHORIZED.
+      // VBR uses a self-signed certificate out of the box. Pinned, it is the
+      // only certificate trusted for this server; unpinned, it is refused
+      // unless VEEAM_INSECURE_TLS turns verification off for everything.
       httpsAgent: new Agent({
-        rejectUnauthorized: !this.config.insecureTls,
+        ...(pinned
+          ? { ca: pinned.pem, checkServerIdentity: pinnedIdentity(pinned.fingerprint) }
+          : { rejectUnauthorized: !this.config.insecureTls }),
         // Security level 0 puts SHA-1 signatures back into the handshake. An
         // old Windows server that wants them resets the connection when they
         // are missing, which reads as ECONNRESET and says nothing about why.
@@ -94,12 +118,16 @@ export class VeeamHttpService {
    * Never throws: being unreachable is the answer, not a failure to produce
    * one. Both callers wanted exactly this and each had written its own copy of
    * the path, the try/catch and the shape of the result.
+   *
+   * `timeoutMs` is for a caller with a deadline of its own: the health probe,
+   * which Docker gives five seconds, not the monitor's thirty.
    */
-  async reachability(): Promise<VeeamReachability> {
+  async reachability(timeoutMs?: number): Promise<VeeamReachability> {
     try {
       const result = await this.request<{ serverTime?: string }>({
         method: 'GET',
         path: '/api/v1/serverTime',
+        timeoutMs,
       });
       return { reachable: true, serverTime: result?.serverTime };
     } catch (error) {
@@ -152,6 +180,7 @@ export class VeeamHttpService {
       url: req.path,
       params: req.params,
       data: req.data,
+      ...(req.timeoutMs === undefined ? {} : { timeout: req.timeoutMs }),
       headers: {
         ...(req.headers ?? {}),
         'x-api-version': version,
@@ -165,7 +194,7 @@ export class VeeamHttpService {
       response = await this.http.request<T>(options);
     } catch (error) {
       this.logTiming(req, Date.now() - startedAt, null, null);
-      throw this.transportError(error, req.path);
+      throw this.transportError(error, req.path, req.timeoutMs ?? this.config.timeoutMs);
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -232,15 +261,15 @@ export class VeeamHttpService {
   }
 
   /** The request never reached Veeam: DNS, TLS, timeout, connection refused. */
-  private transportError(error: unknown, path: string): VeeamApiError {
+  private transportError(error: unknown, path: string, timeoutMs: number): VeeamApiError {
     let message = `Failed to reach the Veeam server at ${this.config.baseUrl}`;
 
     if (isAxiosError(error)) {
       const code = error.code ?? '';
       if (code === 'ECONNABORTED') {
-        message = `The Veeam server did not respond within ${this.config.timeoutMs} ms`;
+        message = `The Veeam server did not respond within ${timeoutMs} ms`;
       } else if (code.includes('CERT') || code === 'DEPTH_ZERO_SELF_SIGNED_CERT') {
-        message = `TLS handshake with ${this.config.baseUrl} failed (${code}). Trust the certificate or set VEEAM_INSECURE_TLS=true`;
+        message = `TLS handshake with ${this.config.baseUrl} failed (${code}). Pin its certificate with VEEAM_TLS_CERTS, or set VEEAM_INSECURE_TLS=true`;
       } else if (code) {
         message = `${message} (${code})`;
       }

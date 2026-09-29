@@ -11,6 +11,12 @@ type HealthResponse = {
 };
 
 const PROBE_CACHE_MS = 5_000;
+/**
+ * Inside the container probe's five seconds. The probe used to wait out the
+ * monitor's thirty, so a Veeam behind a firewall that drops packets made a
+ * working container unhealthy.
+ */
+const PROBE_TIMEOUT_MS = 3_000;
 
 const SERVER_SCHEMA = {
   type: 'object',
@@ -64,7 +70,7 @@ export class HealthController {
   private async probe(): Promise<HealthResponse> {
     const servers = await Promise.all(
       this.servers.all.map(async ({ http }) => {
-        const { reachable, serverTime } = await http.reachability();
+        const { reachable, serverTime } = await http.reachability(PROBE_TIMEOUT_MS);
         return { reachable, ...(serverTime ? { serverTime } : {}) };
       }),
     );
