@@ -236,25 +236,87 @@ test('the menu is put under the input field once, not at every start', async () 
   assert.deepEqual(w.api.sent().filter((message) => message.reply_markup?.keyboard), [], 'a restart says nothing');
 });
 
-test('/clear takes the pressed keys with the answers, and leaves the menu in place', async () => {
-  const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Success')] });
-  await w.monitor.check();
+test('/clear empties General of everything the bot saw there, and ends on the menu', async () => {
+  // It used to take back only the bot's own answers. What people typed stayed —
+  // a column of "/digest" and "/status" with nothing after them — and so did
+  // every message carrying the menu, and the events posted to General.
+  const w = twoServers({
+    env: { TELEGRAM_ROUTING_MODE: 'single', TELEGRAM_SEVERITIES: 'info,success,warning,critical' },
+    ast: [job('a1', 'SQL Daily', 'Success')],
+  });
+  const forum = { id: Number(CHAT), type: 'supergroup', is_forum: true };
+  let next = 700;
+  const inGeneral = (text) => {
+    next += 1;
+    return w.updates.handleUpdate({
+      update_id: next,
+      message: { message_id: next, message_thread_id: 1, is_topic_message: true, text, chat: forum },
+    });
+  };
 
-  const status = keyed(w, '🩺 Статус');
-  await status.done;
-  const servers = keyed(w, '🖥 Серверы');
-  await servers.done;
+  await inGeneral('/status');
+  await inGeneral('всем привет');
+  await inGeneral('🖥 Серверы');
+  await inGeneral('⬅️ На главную');
+  await w.service.notify({ kind: 'infrastructure', severity: 'info', subject: 'monitor', title: 'Мониторинг запущен' });
+  // And an alert, which lives in its own topic and is not General's to clear.
+  await w.service.notify({ kind: 'job', severity: 'critical', subject: 'SQL Daily', title: 'SQL Daily: ОШИБКА' });
+  const before = w.api.calls
+    .filter((call) => call.method === 'sendMessage')
+    .map((call, index) => ({ id: 1001 + index, thread: call.payload.message_thread_id }));
   w.api.reset();
 
-  await said(w, '/clear');
+  await inGeneral('/clear');
 
   const deleted = [
     ...w.api.of('deleteMessages').flatMap((call) => call.message_ids),
     ...w.api.of('deleteMessage').map((call) => call.message_id),
   ];
-  assert.ok(deleted.includes(status.id) && deleted.includes(servers.id), 'the pressed keys go');
-  // The status answer is a plain one; the server list carries the menu.
-  assert.equal(deleted.filter((id) => id > 1000).length, 1, 'the one answer without a menu goes too');
+  for (const id of [701, 702, 703, 704, 705]) assert.ok(deleted.includes(id), `what people said goes: ${id}`);
+  for (const { id, thread } of before) {
+    if (thread === undefined) assert.ok(deleted.includes(id), `the bot's message ${id} in General goes`);
+    else assert.ok(!deleted.includes(id), `the message ${id} in topic ${thread} stays`);
+  }
+
+  const last = w.api.sent().at(-1);
+  assert.equal(w.api.sent().length, 1, 'one message is left in General');
+  assert.match(last.text, /Убрано/);
+  assert.ok(last.reply_markup.keyboard, 'and it puts the menu back under the input field');
+  assert.equal(last.reply_markup.selective, undefined, 'for everybody');
+  assert.equal(w.store.menuOf(CHAT).messageId, 1001 + before.length, 'it is the menu the bot now keeps');
+});
+
+test('the menu comes back by itself when its message is deleted, and only then', async () => {
+  let answer = 'there';
+  const w = twoServers({
+    handlers: {
+      editMessageReplyMarkup: () => ({
+        there: { ok: false, error_code: 400, description: "Bad Request: message can't be edited" },
+        gone: { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' },
+        flaky: { ok: false, error_code: 502, description: 'Bad Gateway' },
+      })[answer],
+    },
+  });
+  const menus = () => w.api.sent().filter((message) => message.reply_markup?.keyboard);
+
+  await w.commands.keepMenu();
+  assert.equal(menus().length, 1, 'posted when the chat has none');
+  const first = w.store.menuOf(CHAT).messageId;
+
+  for (const state of ['there', 'flaky']) {
+    answer = state;
+    w.api.reset();
+    await w.commands.keepMenu();
+    assert.deepEqual(menus(), [], `${state}: left alone`);
+    assert.equal(w.store.menuOf(CHAT).messageId, first);
+  }
+
+  answer = 'gone';
+  w.api.reset();
+  await w.commands.keepMenu();
+  assert.equal(menus().length, 1, 'deleted: posted again');
+  assert.equal(menus()[0].reply_markup.selective, undefined, 'for everybody');
+  assert.notEqual(w.store.menuOf(CHAT).messageId, first);
 });
 
 test('a job\'s Button opens the job on its own server, whichever is selected', async () => {

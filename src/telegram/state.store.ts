@@ -7,6 +7,13 @@ import { AnswerLog, AnswerRef } from './answer-log';
 import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';
 
+/** The menu under a chat's input field: which layout, and the message that put it there. */
+export interface MenuRef {
+  signature: string;
+  /** Unknown for a menu an older version posted, which did not keep it. */
+  messageId?: number;
+}
+
 interface TelegramState {
   version: 1;
   /** Chats the bot may post to, keyed by chat id. */
@@ -22,8 +29,11 @@ interface TelegramState {
   jobResults: Record<string, Record<string, string>>;
   /** Key of the server the live slots and commands show; absent means the first. */
   selectedServer?: string;
-  /** chat id -> the menu last put under its input field, so a restart does not post it again. */
-  menus?: Record<string, string>;
+  /**
+   * chat id -> the menu under its input field and the message that put it
+   * there. A bare string is what versions that did not keep the message wrote.
+   */
+  menus?: Record<string, string | MenuRef>;
   /** dedupeKey -> epoch ms after which the same condition may be reported again. */
   cooldowns: Record<string, number>;
   /** chat id -> slot -> the one message that slot keeps current. */
@@ -165,15 +175,14 @@ export class TelegramStateStore implements OnModuleDestroy {
    * The menu under the input field
    * ---------------------------------------------------------------- */
 
-  /** What the menu last put under this chat's input field was, as the updates module wrote it. */
-  menuOffered(chatId: string): string | undefined {
-    return this.state.menus?.[chatId];
+  /** The menu last put under this chat's input field, and the message it came with if known. */
+  menuOf(chatId: string): MenuRef | undefined {
+    const menu = this.state.menus?.[chatId];
+    return typeof menu === 'string' ? { signature: menu } : menu;
   }
 
-  rememberMenu(chatId: string, signature: string): void {
-    const menus = (this.state.menus ??= {});
-    if (menus[chatId] === signature) return;
-    menus[chatId] = signature;
+  rememberMenu(chatId: string, signature: string, messageId: number): void {
+    (this.state.menus ??= {})[chatId] = { signature, messageId };
     this.save();
   }
 

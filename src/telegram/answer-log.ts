@@ -1,21 +1,23 @@
 /**
- * The Answer log: which answers the bot sent, per chat and topic, so `/clear`
- * has something to take back.
+ * The Answer log: the messages said in General, per chat, so `/clear` has
+ * something to take back. Named for what it first held — the bot's answers —
+ * and now everything there: what people typed, the keys they pressed, the
+ * bot's answers and menus, and the events it posts to General.
  *
  * The Bot API cannot enumerate a chat's history and cannot clear it: a bot may
  * delete a message only if it knows the id, so the ids it will ever be able to
  * delete are exactly the ones it wrote down at the time.
  *
- * Alerts and live slot messages are deliberately not here. An alert is the
- * record of something that happened and deleting it destroys that record; a
- * live message is the slot, and deleting it orphans the id the slot is kept
- * under. `/clear` is for the chatter, which is what actually piles up.
+ * Alerts in their topics and live slot messages are not here. An alert is the
+ * record of something that happened; a live message is the slot, and deleting
+ * it orphans the id the slot is kept under. `/clear` is for General, which is
+ * where the chatter piles up.
  *
  * Holds a record owned by the state store and calls `save` after each change;
  * it knows nothing about files. A test hands it a plain object.
  */
 
-/** One message the bot sent as an answer — a command reply or a button's result. */
+/** One message said in General, by anybody. */
 export interface AnswerRef {
   messageId: number;
   /** The forum topic it was sent to; absent means General. */
@@ -39,9 +41,9 @@ export class AnswerLog {
     private readonly save: () => void,
   ) {}
 
-  /** Records an answer so `/clear` has something to take back. */
+  /** Records a message so `/clear` has something to take back. Once per message. */
   remember(chatId: string, messageId: number, threadId?: number): void {
-    const kept = this.fresh(chatId);
+    const kept = this.fresh(chatId).filter((answer) => answer.messageId !== messageId);
     kept.push({ messageId, threadId, at: Date.now() });
     this.byChat[chatId] = kept.slice(-ANSWERS_KEPT);
     this.save();
