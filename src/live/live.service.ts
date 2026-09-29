@@ -122,28 +122,10 @@ export class TelegramLiveService {
 
     // Unchanged content is not rewritten, or a bot that is merely alive would
     // edit two messages a minute forever. The heartbeat still refreshes it now
-    // and then, so a frozen "обновлено" is evidence the monitor stopped.
-    const spec = specOf(slot);
-    let current = previous;
-    if (current && current.hash === hash) {
-      if (Date.now() - current.at < this.config.liveRefreshMs) return;
-
-      // A pinned slot is never rewritten on the heartbeat, because moving its
-      // timestamp is churn the whole room sees. That left it with no reason to
-      // ever look at its message again — so when somebody deleted the message
-      // by hand, the topic stayed empty for good and nothing anywhere noticed.
-      // Asked about instead of written to: this changes nothing and still says
-      // whether the message is there.
-      if (!spec.heartbeat) {
-        if (await this.present(chatId, current.messageId)) {
-          this.store.liveMessages.remember(chatId, key, { ...current, at: Date.now() });
-          return;
-        }
-        this.logger.warn(`Live "${slot}" message ${current.messageId} is gone from chat ${chatId}, posting a new one`);
-        this.store.liveMessages.forget(chatId, key);
-        current = undefined;
-      }
-    }
+    // and then, so a frozen "обновлено" is evidence the monitor stopped — and
+    // a message somebody deleted, or took with its topic, is noticed.
+    const current = previous;
+    if (current && current.hash === hash && Date.now() - current.at < this.config.liveRefreshMs) return;
 
     if (current) {
       const outcome = await this.edit(chatId, current.messageId, text);
@@ -199,28 +181,6 @@ export class TelegramLiveService {
       createdAt: now,
       threadId: posted.threadId,
     });
-    if (spec.pinned) await this.pin(chatId, posted.messageId);
-  }
-
-  /**
-   * Whether Telegram still holds this message, asked without changing it.
-   *
-   * An empty markup edit on a message that has none is refused as "not
-   * modified", which is the answer: the message is there. A message that is
-   * gone answers "not found" instead. Anything else says nothing about the
-   * message and is read as "still there", because the cost of being wrong that
-   * way is one late refresh, and the cost of the other way is a duplicate.
-   */
-  private async present(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.transport.call('editMessageReplyMarkup', {
-        chat_id: chatId,
-        message_id: messageId,
-      });
-      return true;
-    } catch (error) {
-      return !(error instanceof TelegramApiError && error.isMessageGone);
-    }
   }
 
   /**
@@ -283,19 +243,6 @@ export class TelegramLiveService {
     const configured = fixedThread ? this.config[fixedThread] : 0;
     const thread = configured > 0 ? configured : remembered ?? 0;
     return this.topics.send(chat, this.config.liveTopics[slot], text, thread);
-  }
-
-  /** Pinning is optional: missing administrator rights must not break updates. */
-  private async pin(chatId: string, messageId: number): Promise<void> {
-    try {
-      await this.transport.call('pinChatMessage', {
-        chat_id: chatId,
-        message_id: messageId,
-        disable_notification: true,
-      });
-    } catch (error) {
-      this.logger.debug(`Performance message could not be pinned in ${chatId}: ${(error as Error).message}`);
-    }
   }
 
   /**
