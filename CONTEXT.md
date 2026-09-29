@@ -126,13 +126,15 @@ A topic holding exactly one message, edited in place rather than appended to.
 State, not events. 🗂 Restore points is the exception that holds two, because
 the list does not fit in Telegram's limit.
 
-Declared once in `src/live/slots.ts`: whether it is **pinned**,
-whether it gets a **heartbeat** rewrite when its content has not changed, and
-whether it addresses a thread somebody created by hand. The slot names come from
-that declaration, including the type and the config record.
+Declared once in `src/live/slots.ts`, with whether it addresses a thread
+somebody created by hand. The slot names come from that declaration, including
+the type and the config record.
 
-Pinned and heartbeat are opposites today and should stay that way: rewriting a
-pinned message to move its timestamp is churn the whole room sees.
+Every slot gets the **heartbeat**: an unchanged message is still rewritten every
+few minutes, so a frozen "Обновлено" means the monitor stopped, and a message
+somebody deleted is noticed. Nothing is pinned. A slot posts a fresh message
+every 36 hours, and each pin left a "pinned …" notice in the topic that
+outlived its message and could not be removed by the bot.
 
 Every slot ends on one footer line, "Обновлено …", written by `footerOf` and
 recognised by `isFooter` in `src/live/format.ts`. The live module leaves that

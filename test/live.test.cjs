@@ -270,27 +270,25 @@ test('a live message Telegram will no longer let the bot edit is replaced', asyn
   assert.notEqual(w.store.liveMessages.of(CHAT, 'running').messageId, first);
 });
 
-test('pinning and heartbeat rewrites come from the slot declaration', async () => {
-  const { LIVE_SLOTS } = require('../dist/live/slots');
+test('no live message is pinned, so replacing one leaves no notice behind', async () => {
+  // 📈 and 💾 used to pin their message. Every 36 hours the slot posts a fresh
+  // one and pinned that too, and each pin left a "Veeam pinned …" line in the
+  // topic that outlived the message: "pinned Deleted message", one every day
+  // and a half, which the bot cannot remove. The topic holds a single message
+  // anyway, so the pin only repeated it.
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await w.monitor.check();
 
-  const pinned = w.api.of('pinChatMessage').map((p) => p.message_id);
-  const sentIds = w.api.calls
-    .filter((c) => c.method === 'sendMessage')
-    .map((c, i) => ({ i, id: 1001 + i }));
-  assert.equal(
-    pinned.length,
-    Object.values(LIVE_SLOTS).filter((s) => s.pinned).length,
-    'exactly the slots declared pinned are pinned',
-  );
-  assert.ok(sentIds.length > pinned.length, 'and the rest are not');
-
-  // A pinned slot is never rewritten just to move its timestamp: that is churn
-  // the whole room sees. The declaration is what says so.
-  for (const [name, spec] of Object.entries(LIVE_SLOTS)) {
-    assert.equal(spec.pinned, !spec.heartbeat, `${name}: pinned and heartbeat are opposites`);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 37 * 3_600_000;
+  try {
+    await w.monitor.check();
+  } finally {
+    Date.now = realNow;
   }
+
+  assert.ok(w.api.of('deleteMessage').length > 0, 'the messages were replaced');
+  assert.deepEqual(w.api.of('pinChatMessage'), [], 'and nothing was ever pinned');
 });
 
 test('a slot too long for one message owns a second, and drops it when it shrinks', async () => {
@@ -977,38 +975,32 @@ test('an unread scan says so rather than showing an empty estate', async () => {
  * A message somebody deleted by hand
  * ------------------------------------------------------------------ */
 
-test('a pinned slot notices its message was deleted, and posts a new one', async () => {
-  // 💾 is pinned and therefore never rewritten on the heartbeat, which left it
-  // with no reason to look at its message again. Somebody clearing the chat by
-  // hand emptied the topic for good: nothing had changed, so nothing looked.
-  let present = true;
-  const w = world({ TELEGRAM_LIVE: 'true', liveRefreshMs: 0 }, {
-    // Telegram's own two answers: an empty markup edit on a message that has
-    // none is refused as "not modified", and a message that is gone as "not found".
-    editMessageReplyMarkup: () => ({
-      ok: false,
-      error_code: 400,
-      description: present
-        ? 'Bad Request: message is not modified'
-        : 'Bad Request: message to edit not found',
-    }),
+test('an unchanged slot notices its message was deleted, on the heartbeat', async () => {
+  // 💾 used to skip the heartbeat, which left it with no reason to look at its
+  // message again: somebody clearing the chat by hand emptied the topic for
+  // good. Every slot now rewrites an unchanged message now and then, and that
+  // write is what finds it gone.
+  let gone = false;
+  const w = world({ TELEGRAM_LIVE: 'true' }, {
+    editMessageText: () =>
+      gone ? { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' } : undefined,
   });
-
-  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
+  const text = '💾 <b>REPOSITORIES</b>\nRepo01 — 40%';
+  await w.live.publish('repositories', text);
   const first = w.store.liveMessages.of(CHAT, 'repositories').messageId;
 
-  // Unchanged content while the message is still there: asked about, not
-  // rewritten, so the pinned message keeps its timestamp.
+  gone = true;
   w.api.reset();
-  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
-  assert.deepEqual(w.api.sent(), [], 'ничего не отправлено заново');
-  assert.equal(w.store.liveMessages.of(CHAT, 'repositories').messageId, first);
+  await w.live.publish('repositories', text);
+  assert.deepEqual(w.api.calls, [], 'unchanged and recent: nothing is asked of Telegram');
 
-  // Now it is gone.
-  present = false;
-  w.api.reset();
-  await w.live.publish('repositories', '💾 <b>REPOSITORIES</b>\nRepo01 — 40%');
-
+  const realNow = Date.now;
+  Date.now = () => realNow() + 10 * 60_000;
+  try {
+    await w.live.publish('repositories', text);
+  } finally {
+    Date.now = realNow;
+  }
   assert.equal(w.api.sent().length, 1, 'слот восстановился сам');
   assert.notEqual(w.store.liveMessages.of(CHAT, 'repositories').messageId, first);
 });
@@ -1040,8 +1032,8 @@ test('a slot returns to the topic it was in, not to the one now configured', asy
 
 test('every live slot ends on the footer the live module leaves out of the comparison', () => {
   // A slot whose last line is not recognised as the footer hashes its own
-  // timestamp, never compares as unchanged, and is rewritten every cycle —
-  // for a pinned slot, in front of the whole room. Two renderers used to
+  // timestamp, never compares as unchanged, and is rewritten every cycle.
+  // Two renderers used to
   // spell the footer themselves; this is what keeps that from coming back.
   const { isFooter } = require('../dist/live/format.js');
   const { renderRepositories } = require('../dist/live/repositories.js');
