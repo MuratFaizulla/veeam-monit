@@ -27,6 +27,8 @@ export interface ServerStatus {
   /** Null until the server has been asked once. */
   reachable: boolean | null;
   authenticated: boolean | null;
+  /** Its IP address, once a connection has resolved it. */
+  address?: string;
   /** From the last cycle that read its job list; absent until one has. */
   jobs?: { total: number; failed: number; warning: number };
   lastError: string | null;

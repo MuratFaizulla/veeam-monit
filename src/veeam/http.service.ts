@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, isAxiosError } from 'axios';
+import { lookup as resolve, LookupAddress } from 'dns';
 import { Agent } from 'https';
+import { isIP } from 'net';
 import { PeerCertificate } from 'tls';
 import { AppConfig, VeeamEndpoint } from '../config/configuration';
 import { VeeamApiError } from './api.error';
@@ -25,6 +27,10 @@ export const pinnedIdentity =
       : Object.assign(new Error(`certificate ${certificate.fingerprint256} is not the pinned ${fingerprint}`), {
           code: 'CERT_NOT_PINNED',
         });
+
+/** Every address a lookup gave, once each: one for a server with a single A record. */
+const addressesOf = (address: string | LookupAddress[]): string =>
+  typeof address === 'string' ? address : [...new Set(address.map((entry) => entry.address))].join(', ');
 
 /** One answer to "is the backup server there": reachable, and the proof either way. */
 export interface VeeamReachability {
@@ -63,6 +69,8 @@ export class VeeamHttpService {
    * run different Veeam builds, and each speaks the API of its own build.
    */
   private apiVersion: string;
+  /** What the server's name resolved to when the last connection was opened. */
+  private resolved?: string;
 
   constructor(private readonly config: VeeamConnection) {
     // Named, so a line of the request log says which server it was.
@@ -96,6 +104,14 @@ export class VeeamHttpService {
         // old Windows server that wants them resets the connection when they
         // are missing, which reads as ECONNRESET and says nothing about why.
         ...(this.config.legacyTls ? { ciphers: 'DEFAULT@SECLEVEL=0' } : {}),
+        // Every connection resolves the name through here, which is how the
+        // health message knows the address the server is actually reached at
+        // without asking DNS a second time.
+        lookup: (hostname, options, callback) =>
+          resolve(hostname, options, (error, address, family) => {
+            this.resolved = error ? undefined : addressesOf(address);
+            callback(error, address, family);
+          }),
       }),
       // Statuses are inspected by hand so failures carry the Veeam error body.
       validateStatus: () => true,
@@ -106,6 +122,17 @@ export class VeeamHttpService {
 
   get baseUrl(): string {
     return this.config.baseUrl;
+  }
+
+  /**
+   * Where the server is on the network: the address the URL gives, or what its
+   * name resolved to when the last connection was opened. Undefined before the
+   * first connection, and while the name does not resolve — the error then
+   * says so.
+   */
+  get address(): string | undefined {
+    const host = new URL(this.config.baseUrl).hostname.replace(/^\[(.*)\]$/, '$1');
+    return isIP(host) ? host : this.resolved;
   }
 
   /**

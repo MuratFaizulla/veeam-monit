@@ -160,6 +160,24 @@ test('the live slots show the selected server, named on top, and the health list
   assert.ok(!w.veeamBaas.asked.some((req) => req.params?.stateFilter === 'Working'));
 });
 
+test('the health gives every server\'s IP address beside its name', async () => {
+  const w = twoServers({
+    env: { TELEGRAM_LIVE: 'true' },
+    ast: [job('a1', 'SQL Daily', 'Success')],
+    baas: [job('b1', 'Files', 'Success')],
+  });
+  // What each connection resolved the names to.
+  w.veeamAst.address = '10.10.0.162';
+  w.veeamBaas.address = '192.168.201.123';
+
+  await w.monitor.check();
+
+  const health = texts(w).find((slot) => /Серверы:/.test(slot));
+  assert.match(health, /<b>Сервер:<\/b> <code>https:\/\/ast\.example:9419<\/code>\n<b>IP:<\/b> <code>10\.10\.0\.162<\/code>/);
+  assert.match(health, /<b>AST<\/b> · <code>10\.10\.0\.162<\/code> — показан здесь/);
+  assert.match(health, /🟢 BAAS · <code>192\.168\.201\.123<\/code>/);
+});
+
 test('the menu under the input field turns into the servers, and a server\'s key switches the slots to it', async () => {
   const w = twoServers({
     env: { TELEGRAM_LIVE: 'true' },

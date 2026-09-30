@@ -127,6 +127,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       selected: watch === shown,
       reachable: watch.reachable,
       authenticated: watch.authenticated,
+      address: watch.estate.http.address,
       jobs: watch.jobs,
       lastError: watch.lastError,
     }));
@@ -480,15 +481,17 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         reachable: watch.reachable === true,
         authenticated: watch.authenticated,
         serverUrl: estate.baseUrl,
+        serverAddress: estate.http.address,
         serverTime: watch.lastServerTime,
         error: watch.lastError,
         trackedJobs: this.store.jobResultsOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
-        servers: this.servers().map(({ name, selected, reachable, authenticated }) => ({
+        servers: this.servers().map(({ name, selected, reachable, authenticated, address }) => ({
           name,
           selected,
           reachable,
           authenticated,
+          address,
         })),
       },
     });
