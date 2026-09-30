@@ -55,9 +55,16 @@ export const retryWindowOf = (schedule: VeeamSchedule | undefined): number => {
   return (wait + RUN_ALLOWANCE_MINUTES) * 60_000;
 };
 
-/** How many attempts Veeam is allowed, or undefined when it will not retry. */
+/**
+ * How many attempts Veeam is allowed, or undefined when it will not retry.
+ *
+ * Veeam retries only the runs it starts itself: a job set to start by hand
+ * ran because somebody started it, and nothing retries it, whatever its retry
+ * settings say.
+ */
 export const retriesAllowed = (schedule: VeeamSchedule | undefined): number | undefined => {
   const retry = schedule?.retry;
+  if (schedule?.runAutomatically === false) return undefined;
   if (!retry?.isEnabled || !retry.retryCount) return undefined;
   // retryCount is retries after the first attempt; an operator counts attempts.
   return retry.retryCount + 1;

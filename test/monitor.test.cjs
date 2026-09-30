@@ -1269,6 +1269,27 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   assert.equal(night.sent.length, 2);
 });
 
+test('a job only a hand can start is promised no retry, and not waited on', async () => {
+  // Veeam retries only the runs it starts itself. Both of these ran because
+  // somebody started them, whatever their retry settings say.
+  const byHand = retriedNight({ schedule: { ...RETRY_FOUR, runAutomatically: false } });
+  const switchedOff = retriedNight({ status: 'Disabled' });
+
+  for (const night of [byHand, switchedOff]) {
+    await night.check();
+    night.attempt(1);
+    await night.check();
+    night.later(DAY);
+    await night.check();
+
+    assert.equal(night.sent.length, 1, 'одно сообщение, без «повторов больше не будет» полчаса спустя');
+    assert.equal(night.sent[0].title, 'OPS_ERP_EMM_DB1: ОШИБКА');
+    assert.equal(fieldOf(night.sent[0], 'Попытка'), undefined, 'повтора не обещано');
+    assert.equal(night.memory.retrying.of('1'), undefined);
+  }
+  assert.equal(fieldOf(switchedOff.sent[0], 'Статус'), 'выключено в Veeam');
+});
+
 test('a run Veeam stopped retrying early is called over once the wait has passed', async () => {
   const night = retriedNight();
   await night.check();

@@ -239,7 +239,11 @@ wait since the last one has not run out, "повторов больше не б�
 either has, and "повтор уже идёт" when the next attempt is running as the
 failure is read. That answer is `standingOf`, by the same rule that folds the
 attempts; an attempt with no end yet is the next attempt of the failed run
-it follows, never the end of it.
+it follows, never the end of it. Veeam retries only the runs it starts
+itself, so a job set to start by hand, or switched off in Veeam, has no
+attempts to promise whatever its retry settings say (`retriesAllowed`). A
+scheduled job somebody started by hand cannot be told apart: the REST API does
+not say who started a session.
 
 A failure is announced when the result changes, which is after the first
 attempt, so that alert alone always said "1 из 4". A run announced while

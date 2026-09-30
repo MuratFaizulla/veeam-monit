@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Evidence } from '../estate/backup-evidence.service';
 import { FailedObject, JobSession } from '../estate/job-card';
-import { iconOf, isBadResult, isRunning, statusOf } from '../estate/job-state';
+import { iconOf, isBadResult, isDisabled, isRunning, statusOf } from '../estate/job-state';
 import { RunStanding, standingOf } from '../estate/runs';
 import { ServerEstate } from '../estate/server-estates';
 import { JobResults } from '../telegram/job-results';
@@ -180,7 +180,12 @@ export class JobAlerts {
   private async runOf(job: Job, evidence: Evidence): Promise<JobRun> {
     const sessions = await this.server.jobs.recentSessions(job);
     const schedule = await this.retryPolicyOf(job, evidence);
-    return { sessions, standing: standingOf(sessions, schedule, this.now()) };
+    // A job switched off in Veeam keeps its schedule, and runs only because
+    // somebody started it by hand — which Veeam never retries. Promising
+    // "Veeam повторит" and then waiting half an hour to take it back was what
+    // a failed manual run got.
+    const retried = schedule && isDisabled(job) ? { ...schedule, runAutomatically: false } : schedule;
+    return { sessions, standing: standingOf(sessions, retried, this.now()) };
   }
 
   /**
