@@ -305,6 +305,38 @@ test('a Veeam with its own self-signed certificate is trusted by that certificat
   }
 });
 
+test('a server named in its URL is known by the address its name resolved to on connecting', async (t) => {
+  // What the health message shows beside the name: the address a firewall
+  // rule is written for. It comes from the connection itself, so it is the
+  // address the bot really went to, and costs no DNS question of its own.
+  const { selfSigned } = require('./world.cjs');
+  const own = selfSigned();
+  if (!own) return t.skip('openssl is not installed');
+  const https = require('node:https');
+  const { X509Certificate } = require('node:crypto');
+  const { VeeamHttpService } = require('../dist/veeam/http.service');
+  const server = https.createServer({ key: own.key, cert: own.cert }, (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ serverTime: '2026-09-30T10:00:00+05:00' }));
+  });
+  await new Promise((listening) => server.listen(0, '127.0.0.1', listening));
+  const veeam = (host) => new VeeamHttpService({
+    name: 'named', baseUrl: `https://${host}:${server.address().port}`,
+    apiVersion: '1.2-rev1', insecureTls: false, timeoutMs: 5000,
+    tls: { pem: own.cert, fingerprint: new X509Certificate(own.cert).fingerprint256 },
+  });
+  try {
+    const named = veeam('localhost');
+    assert.equal(named.address, undefined, 'nothing is claimed before the first connection');
+    assert.equal((await named.reachability()).reachable, true);
+    assert.match(named.address, /127\.0\.0\.1/, 'the address the name resolved to');
+
+    assert.equal(veeam('127.0.0.1').address, '127.0.0.1', 'a URL that is an address is its own answer');
+  } finally {
+    server.close();
+  }
+});
+
 test('/api/health answers inside the container probe even when Veeam swallows the connection', async () => {
   // What a firewall that drops packets looks like from here: the connection is
   // taken and nothing ever comes back. The probe waited out the monitor's own

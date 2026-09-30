@@ -110,6 +110,8 @@ export interface LiveHealth {
   /** Null when no monitor account is configured at all. */
   authenticated: boolean | null;
   serverUrl: string;
+  /** The IP address `serverUrl` leads to, once a connection has resolved it. */
+  serverAddress?: string;
   /** Veeam's own clock, as returned by /api/v1/serverTime. */
   serverTime?: string;
   error?: string | null;
@@ -125,6 +127,8 @@ export interface LiveServerHealth {
   /** Null until the server has been asked once. */
   reachable: boolean | null;
   authenticated: boolean | null;
+  /** Its IP address, once a connection has resolved it. */
+  address?: string;
 }
 
 export interface RunningJob {
@@ -176,6 +180,12 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
   }
 
   lines.push('', `<b>Сервер:</b> <code>${escapeHtml(health.serverUrl)}</code>`);
+  // The address is what a network engineer is asked to open, and the name in
+  // the URL is not something a firewall rule is written for. Left out when the
+  // URL already is the address.
+  if (health.serverAddress && !health.serverUrl.includes(health.serverAddress)) {
+    lines.push(`<b>IP:</b> <code>${escapeHtml(health.serverAddress)}</code>`);
+  }
 
   if (health.reachable) {
     lines.push(
@@ -197,10 +207,10 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
   if (health.servers && health.servers.length > 1) {
     lines.push('', '<b>Серверы:</b>');
     for (const server of health.servers) {
-      const name = escapeHtml(server.name);
-      lines.push(
-        `${serverIcon(server)} ${server.selected ? `<b>${name}</b> — показан здесь` : name}`,
-      );
+      const name = server.selected ? `<b>${escapeHtml(server.name)}</b>` : escapeHtml(server.name);
+      const where =
+        server.address && server.address !== server.name ? ` · <code>${escapeHtml(server.address)}</code>` : '';
+      lines.push(`${serverIcon(server)} ${name}${where}${server.selected ? ' — показан здесь' : ''}`);
     }
   }
 
