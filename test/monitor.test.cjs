@@ -1075,7 +1075,10 @@ const MINUTE = 60_000;
 const at = (ms) => new Date(ms).toISOString();
 const VDDK =
   'Processing EMMDB1-T3Q4 Error: Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )\r\n' +
-  'Logon attempt with parameters [VC/ESX: [10.11.1.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]';
+  'Logon attempt with parameters [VC/ESX: [10.11.1.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]\r\n' +
+  'Failed to open disk for read.\r\n' +
+  "Failed to upload disk 'vddkConnSpec>'\r\n" +
+  'Agent failed to process method {DataTransfer.SyncDisk}.';
 
 /**
  * EMM_DB1 with Veeam's retry policy, driven attempt by attempt. `attempt(n)`
@@ -1237,9 +1240,11 @@ test('a retry that works is a recovery that says which attempt did it', async ()
 test('Veeam\'s ways of saying a machine failed are read as the machine and the reason', () => {
   const { machineLine } = require('../dist/veeam/estate-reader.service');
 
+  // Two lines of it: the connection parameters are not a reason, and what
+  // follows the second is the agent's call stack.
   assert.deepEqual(machineLine(VDDK), {
     machine: 'EMMDB1-T3Q4',
-    reason: 'Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )',
+    reason: 'Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.',
   });
   // The second line is the one that says it was DNS.
   assert.deepEqual(
