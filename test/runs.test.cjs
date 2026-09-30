@@ -280,3 +280,128 @@ test('a job the last scan did not know still gets its retry policy', async () =>
   const alert = w.api.sent().find((message) => /NEW_JOB/.test(message.text));
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
 });
+
+/* ------------------------------------------------------------------ *
+ * Session history: read whole once, then only its last days
+ *
+ * The Evidence needs every session Veeam keeps. Read whole on every scan, that
+ * was twenty pages of up to seven seconds on veeam01main — the heaviest
+ * queries the bot sent — to learn about the hundred-odd sessions since the
+ * scan before.
+ * ------------------------------------------------------------------ */
+
+const { SessionHistory } = require('../dist/estate/session-history');
+const { monitorAccount, VeeamEstateReader } = require('./world.cjs');
+
+const DAY = 24 * HOUR;
+
+/** A Veeam keeping `sessions`, answering `createdAfterFilter` as Veeam does. */
+const keeping = (sessions) => {
+  const veeam = {
+    sessions,
+    asked: [],
+    down: false,
+  };
+  const fake = veeamFake({
+    '/api/v1/sessions': (req) => {
+      veeam.asked.push(req.params?.createdAfterFilter);
+      if (veeam.down) throw new Error('connect ETIMEDOUT 203.0.113.162:9419');
+      const after = req.params?.createdAfterFilter;
+      return {
+        data: after
+          ? veeam.sessions.filter((session) => Date.parse(session.creationTime) > Date.parse(after))
+          : veeam.sessions,
+      };
+    },
+  });
+  return { veeam, history: new SessionHistory(new VeeamEstateReader(fake, monitorAccount())) };
+};
+
+const session = (id, begun, over = {}) => ({
+  id, jobId: '1', sessionType: 'BackupJob', creationTime: iso(begun), result: { result: 'None' }, ...over,
+});
+
+/** Runs `body` with the clock moved on by `ms`. */
+const later = async (ms, body) => {
+  const realNow = Date.now;
+  Date.now = () => realNow() + ms;
+  try {
+    return await body();
+  } finally {
+    Date.now = realNow;
+  }
+};
+
+test('the session history is read whole once, then only its last days, merged in by id', async () => {
+  const now = Date.now();
+  const going = session('going', now - HOUR, { state: 'Working' });
+  const july = session('july', now - 90 * DAY, { endTime: iso(now - 90 * DAY + HOUR), result: { result: 'Success' } });
+  const { veeam, history } = keeping([going, july]);
+
+  assert.equal((await history.read()).length, 2);
+  assert.equal(veeam.asked[0], undefined, 'the first read is whole');
+
+  // The run that was going has failed since, and another has begun.
+  veeam.sessions = [
+    { ...going, state: 'Stopped', endTime: iso(now), result: { result: 'Failed' } },
+    session('next', now + MINUTE, { jobId: '2', state: 'Working' }),
+    july,
+  ];
+  const read = new Map((await history.read()).map((kept) => [kept.id, kept]));
+
+  const since = Date.parse(veeam.asked[1]);
+  assert.ok(Math.abs(since - (now - 2 * DAY)) < MINUTE, `reaching two days before the previous read: ${veeam.asked[1]}`);
+  assert.deepEqual([...read.keys()].sort(), ['going', 'july', 'next']);
+  assert.equal(read.get('going').result.result, 'failed', 'the run that was going is read again, with its end');
+  assert.equal(read.get('going').endTime, iso(now));
+  assert.equal(read.get('july').result.result, 'success', 'and July is kept without being asked for');
+});
+
+test('a day on, the session history is read whole again, and what Veeam dropped is gone', async () => {
+  const now = Date.now();
+  const { veeam, history } = keeping([session('recent', now - HOUR), session('expired', now - 95 * DAY)]);
+  await history.read();
+
+  // Past its history retention, Veeam no longer has it; only a whole read can tell.
+  veeam.sessions = [session('recent', now - HOUR)];
+  const read = await later(DAY + MINUTE, () => history.read());
+
+  assert.equal(veeam.asked[1], undefined, 'read whole');
+  assert.deepEqual(read.map((kept) => kept.id), ['recent']);
+});
+
+test('a session history read Veeam did not answer loses nothing, and the next one reaches back as far', async () => {
+  const now = Date.now();
+  const { veeam, history } = keeping([session('kept', now - HOUR)]);
+  await history.read();
+
+  veeam.down = true;
+  await assert.rejects(() => later(2 * HOUR, () => history.read()), /ETIMEDOUT/);
+  veeam.down = false;
+  const read = await later(4 * HOUR, () => history.read());
+
+  assert.equal(veeam.asked[2], veeam.asked[1], 'from the last read that worked, not the one that failed');
+  assert.deepEqual(read.map((kept) => kept.id), ['kept']);
+});
+
+test('the Evidence reads the whole session history on its first scan only', async () => {
+  const w = world();
+  const asked = [];
+  const evidence = evidenceOf(w, veeamFake({
+    '/api/v1/jobs': { data: [] },
+    '/api/v1/backups': { data: [] },
+    '/api/v1/restorePoints': { data: [] },
+    '/api/v1/sessions': (req) => {
+      asked.push(req.params?.createdAfterFilter);
+      return { data: [] };
+    },
+  }));
+
+  await evidence.refresh(true, []);
+  await later(3 * HOUR, () => evidence.refresh(true, []));
+
+  assert.equal(asked.length, 2, 'one read per scan');
+  assert.equal(asked[0], undefined, 'the first whole');
+  assert.ok(asked[1], 'the next only what is new');
+  assert.equal(evidence.evidence.status, 'ready');
+});

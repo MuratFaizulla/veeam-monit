@@ -5,6 +5,7 @@ import { Job } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamJob, VeeamSchedule, VeeamSession } from '../veeam/types';
 import { failureStreakOf, retryWindowOf } from './runs';
+import { SessionHistory } from './session-history';
 
 /**
  * What one reading of the estate established.
@@ -14,6 +15,8 @@ import { failureStreakOf, retryWindowOf } from './runs';
  * every session that wrote one, and every job configuration that says whether a
  * job was supposed to run at all. Reading that costs around twenty requests and
  * half a minute, so it happens on its own slow cadence and the answer is kept.
+ * The sessions, once the heaviest part of it, come from the SessionHistory,
+ * which reads only what is new between whole reads.
  *
  * It used to be kept as nine mutable fields on the monitor. Everything a reader
  * had to know — which fields it may read, that `scannedAt === 0` means "no
@@ -116,6 +119,7 @@ export class BackupEvidenceService {
   private current: Evidence = { status: 'pending', reason: NOT_READ };
   /** The next refresh reads again, whatever the cadence says. */
   private renewing = false;
+  private readonly history: SessionHistory;
 
   constructor(
     config: ConfigService,
@@ -124,6 +128,7 @@ export class BackupEvidenceService {
   ) {
     this.logger = new Logger(`${BackupEvidenceService.name}${server ? ` ${server}` : ''}`);
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
+    this.history = new SessionHistory(reader, server);
   }
 
   /** What the readers answer from. Never throws, never blocks. */
@@ -216,7 +221,7 @@ export class BackupEvidenceService {
       // September having transferred 6.8 GB of 22.4, and the point it left made
       // the job look backed up that night when its last good copy was from 23
       // August. The verdict lives only in the sessions.
-      const sessions = await this.reader.sessions();
+      const sessions = await this.history.read();
       const runsOfJob = runWindows(sessions);
       const resultOfSession = new Map(
         sessions
