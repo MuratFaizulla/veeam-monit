@@ -211,7 +211,12 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
       const name = server.selected ? `<b>${escapeHtml(server.name)}</b>` : escapeHtml(server.name);
       const where =
         server.address && server.address !== server.name ? ` · <code>${escapeHtml(server.address)}</code>` : '';
-      lines.push(`${serverIcon(server)} ${name}${where}${server.selected ? ' — показан здесь' : ''}`);
+      // Which server is shown is said by colour, 🟢 against ⚪ — unless a
+      // server is in trouble, which matters more than which one is shown and
+      // is said in red, and in words, since red now covers more than one thing.
+      const trouble = troubleOf(server);
+      const icon = trouble ? '🔴' : server.selected ? '🟢' : '⚪';
+      lines.push(`${icon} ${name}${where}${trouble ? ` — ${trouble}` : ''}`);
     }
   }
 
@@ -227,6 +232,14 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
   lines.push(footerOf(clock, serverClock));
 
   return truncate(lines.join('\n'));
+};
+
+/** What keeps a server from being watched, or nothing while it is watched or not asked yet. */
+const troubleOf = (server: { reachable: boolean | null; authenticated: boolean | null }): string | undefined => {
+  if (server.reachable === false) return 'не отвечает';
+  if (server.reachable && server.authenticated === false) return 'вход не выполнен';
+  if (server.reachable && server.authenticated === null) return 'учётная запись не настроена';
+  return undefined;
 };
 
 /** 🟢 answering and signed in, 🟡 answering only, 🔴 not answering, ⚪ not asked yet. */
