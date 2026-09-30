@@ -168,7 +168,7 @@ const DEFAULT_VEEAM_URL = 'https://localhost:9419';
  * of callback data, with room to spare for the prefix.
  */
 const KEY_LENGTH = 16;
-/** Long enough for "veeam01main-baas", short enough for a row of buttons. */
+/** Long enough for "veeam01-datacenter-a", short enough for a row of buttons. */
 const NAME_LENGTH = 32;
 
 /**

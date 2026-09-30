@@ -11,10 +11,10 @@ const READS_AT_ONCE = 5;
  * still needs, each read once: a finished session's outcomes never change.
  *
  * A reading asks for every failed session that wrote a point still on disk,
- * reaching back as far as the points do: 373 of them on veeam01main on 30
- * September. Read on every scan, that would be the same answers every time;
- * read once each, a scan costs only the sessions that failed since the one
- * before.
+ * reaching back as far as the points do: 373 of them on the busiest server
+ * on 30 September. Read on every scan, that would be the same answers every
+ * time; read once each, a scan costs only the sessions that failed since the
+ * one before.
  *
  * One per server, like the Evidence it serves.
  */

@@ -75,7 +75,7 @@ test('performance renderer escapes names and never exceeds Telegram limit', () =
 const clock = { now: new Date('2026-09-30T05:52:00Z'), timezone: 'Asia/Qyzylorda' };
 
 test('📈 counts job runs only, and names Veeam\'s own sessions apart', () => {
-  // veeam02baas had a malware scan going and nothing else: ▶️ said nothing
+  // veeam02 had a malware scan going and nothing else: ▶️ said nothing
   // was running while 📈 said "Активных заданий: 1".
   const idle = renderPerformance(
     { jobs: [], activeCount: 0, statisticsAvailable: true, serviceSessions: ['Malware Detection'] },

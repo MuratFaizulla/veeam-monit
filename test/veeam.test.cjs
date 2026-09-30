@@ -245,7 +245,7 @@ test('a server that does not speak the configured API version is spoken to in th
   const http = require('node:http');
   const { VeeamHttpService } = require('../dist/veeam/http.service');
   const asked = [];
-  // An older Veeam, exactly as veeam02baas answered a 1.2 client.
+  // An older Veeam, exactly as veeam02 answered a 1.2 client.
   const old = http.createServer((req, res) => {
     asked.push(req.headers['x-api-version']);
     res.setHeader('Content-Type', 'application/json');
@@ -393,9 +393,9 @@ const VDDK =
   "Failed to upload disk 'vddkConnSpec>'\r\n" +
   'Agent failed to process method {DataTransfer.SyncDisk}.';
 const DNS =
-  'Processing comp01vc01.site1.mgmt.example.net Error: Cannot get service content.\r\n' +
-  "Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cloud.example.com:443/sdk'\r\n" +
-  'Logon attempt with parameters [VC/ESX: [vc01cloud.example.com];Port: 443;Login: [svc@example.com]]';
+  'Processing comp01vc01.mgmt.example.com Error: Cannot get service content.\r\n' +
+  "Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01.example.com:443/sdk'\r\n" +
+  'Logon attempt with parameters [VC/ESX: [vc01.example.com];Port: 443;Login: [svc@example.com]]';
 
 test('Veeam\'s ways of saying a machine failed are read as the machine and the reason', () => {
 
@@ -411,8 +411,8 @@ test('Veeam\'s ways of saying a machine failed are read as the machine and the r
     { machine: 'EMM1-Dy2M', reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'" },
   );
   assert.deepEqual(
-    machineLine('Failed to create processing task for VM dc02.example.com Error: Failed to retrieve object hierarchy: exception ID d1dd9757'),
-    { machine: 'dc02.example.com', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
+    machineLine('Failed to create processing task for VM dom002.example.com Error: Failed to retrieve object hierarchy: exception ID d1dd9757'),
+    { machine: 'dom002.example.com', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
   );
   assert.deepEqual(
     machineLine('Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
@@ -433,7 +433,7 @@ test('a session\'s message is shown as a machine and its reason, never with the 
   );
   assert.equal(
     sessionText(DNS),
-    "comp01vc01.site1.mgmt.example.net — Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cloud.example.com:443/sdk'",
+    "comp01vc01.mgmt.example.com — Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01.example.com:443/sdk'",
   );
   // A name with no reason stays as Veeam wrote it: "Processing" is what says
   // the name is a machine.
@@ -449,8 +449,8 @@ test('a session\'s message is shown as a machine and its reason, never with the 
 
 test('a session blames a machine only when it names one and says why', () => {
   assert.deepEqual(blameOf(DNS), {
-    machine: 'comp01vc01.site1.mgmt.example.net',
-    reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cloud.example.com:443/sdk'",
+    machine: 'comp01vc01.mgmt.example.com',
+    reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01.example.com:443/sdk'",
   });
   assert.equal(blameOf('Processing APPDB1-T3Q4'), undefined, 'a name alone blames nobody');
   assert.equal(blameOf('Error: Выдано исключение типа "AgentClosedException".'), undefined, 'a reason alone names nobody');

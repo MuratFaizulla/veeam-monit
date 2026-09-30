@@ -170,11 +170,11 @@ test('a variable left empty means its default, whatever its kind', () => {
 
 test('several Veeam servers are listed once, each named or named after its host', () => {
   const config = accepted({
-    VEEAM_SERVERS: ' https://veeam01main.example.com:9419/ , BAAS = https://veeam02baas.example.com:9419 ,',
+    VEEAM_SERVERS: ' https://veeam01.example.com:9419/ , BAAS = https://veeam02.example.com:9419 ,',
   });
   assert.deepEqual(config.veeam.servers, [
-    { key: 'veeam01main', name: 'veeam01main', baseUrl: 'https://veeam01main.example.com:9419', legacyTls: false },
-    { key: 'baas', name: 'BAAS', baseUrl: 'https://veeam02baas.example.com:9419', legacyTls: false },
+    { key: 'veeam01', name: 'veeam01', baseUrl: 'https://veeam01.example.com:9419', legacyTls: false },
+    { key: 'baas', name: 'BAAS', baseUrl: 'https://veeam02.example.com:9419', legacyTls: false },
   ]);
 
   // A key is what a Button carries beside a job id in 64 bytes, so it is ASCII
@@ -186,11 +186,11 @@ test('several Veeam servers are listed once, each named or named after its host'
 
 test('old TLS is offered only to the servers named for it', () => {
   const config = accepted({
-    VEEAM_SERVERS: 'https://veeam01main.example.com:9419,BAAS=https://veeam02baas.example.com:9419',
+    VEEAM_SERVERS: 'https://veeam01.example.com:9419,BAAS=https://veeam02.example.com:9419',
     VEEAM_LEGACY_TLS: 'baas',
   });
   assert.deepEqual(config.veeam.servers.map((server) => [server.name, server.legacyTls]), [
-    ['veeam01main', false],
+    ['veeam01', false],
     ['BAAS', true],
   ]);
   // A name that matches nothing would be a server left refusing the handshake,
@@ -203,7 +203,7 @@ test('a server is pinned to the certificate in its file, and a pin that cannot a
   const own = selfSigned();
   if (!own) return t.skip('openssl is not installed');
   const { X509Certificate } = require('node:crypto');
-  const servers = 'https://veeam01main.example.com:9419,BAAS=https://veeam02baas.example.com:9419';
+  const servers = 'https://veeam01.example.com:9419,BAAS=https://veeam02.example.com:9419';
 
   const config = accepted({ VEEAM_SERVERS: servers, VEEAM_TLS_CERTS: `baas=${own.certFile}` });
   const [ast, baas] = config.veeam.servers;

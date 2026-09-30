@@ -129,7 +129,7 @@ test('a token somebody already replaced is simply retried with the new one', asy
  * ------------------------------------------------------------------ */
 
 test('a server without task sessions still says which machine failed and why, from the session log', async () => {
-  // veeam02baas, REST API 1.1: the task sessions answer 404, and the log is
+  // veeam02, REST API 1.1: the task sessions answer 404, and the log is
   // the only place a machine's outcome is written.
   const reader = new VeeamEstateReader(
     veeamFake({
@@ -138,8 +138,8 @@ test('a server without task sessions still says which machine failed and why, fr
         { status: 'Succeeded', title: 'Job started at 9/29/2026 8:47:52 PM' },
         { status: 'Failed', title: 'Processing Test_sd' },
         { status: 'Failed', title: 'Processing vApp_sdot_new Error: Failed to process the following VMs: Test_sd' },
-        { status: 'Failed', title: 'Failed to create processing task for VM dc02.example.com Error: Failed to retrieve object hierarchy' },
-        { status: 'Failed', title: 'Virtual Machine dc01.mgmt.example.net is unavailable and will be skipped from processing' },
+        { status: 'Failed', title: 'Failed to create processing task for VM dom002.example.com Error: Failed to retrieve object hierarchy' },
+        { status: 'Failed', title: 'Virtual Machine dc01.mgmt.example.com is unavailable and will be skipped from processing' },
         { status: 'Succeeded', title: 'Processing Argus' },
         { status: 'Failed', title: 'Job finished with error at 9/29/2026 8:50:28 PM' },
       ] },
@@ -150,11 +150,11 @@ test('a server without task sessions still says which machine failed and why, fr
   assert.deepEqual(await reader.machineResults('s1'), [
     { name: 'Test_sd', result: 'failed', reason: undefined },
     { name: 'vApp_sdot_new', result: 'failed', reason: 'Failed to process the following VMs: Test_sd' },
-    { name: 'dc02.example.com', result: 'failed', reason: 'Failed to retrieve object hierarchy' },
+    { name: 'dom002.example.com', result: 'failed', reason: 'Failed to retrieve object hierarchy' },
     {
-      name: 'dc01.mgmt.example.net',
+      name: 'dc01.mgmt.example.com',
       result: 'failed',
-      reason: 'Virtual Machine dc01.mgmt.example.net is unavailable and will be skipped from processing',
+      reason: 'Virtual Machine dc01.mgmt.example.com is unavailable and will be skipped from processing',
     },
     { name: 'Argus', result: 'success', reason: undefined },
   ]);

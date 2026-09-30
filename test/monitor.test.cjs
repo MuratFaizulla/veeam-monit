@@ -701,7 +701,7 @@ test('a button and its reader cannot disagree about what it means', () => {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
   }
   // The longest key configuration allows, beside a GUID.
-  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01main-baa' };
+  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01-backup-a' };
   assert.deepEqual(decode(encode(job)), job, 'сервер и GUID помещаются в 64 байта Telegram');
   // A job's Button from before there was a list names no server.
   assert.deepEqual(decode('a:job:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
