@@ -27,5 +27,17 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.20.4",
     "typescript": "^5.7.2"
+  },
+  "//": [
+    "overrides: fixed versions of packages NestJS 10 pins with known advisories.",
+    "Nest 12 carries them itself but is ESM-only; drop these on moving to it."
+  ],
+  "overrides": {
+    "body-parser": "1.20.8",
+    "file-type": "21.3.4",
+    "js-yaml": "4.3.2",
+    "lodash": "4.18.1",
+    "multer": "2.4.0",
+    "qs": "6.16.0"
   }
 }

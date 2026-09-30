@@ -171,6 +171,13 @@ const KEY_LENGTH = 16;
 /** Long enough for "veeam01ast01-baas", short enough for a row of buttons. */
 const NAME_LENGTH = 32;
 
+/**
+ * Shortest admin key or webhook secret accepted. The webhook endpoint faces
+ * the internet whenever it is used, and a short key can be guessed one
+ * request at a time; `openssl rand -hex 32` gives sixty-four characters.
+ */
+const SECRET_LENGTH = 32;
+
 /** The server's name when none is given: the first label of its host name. */
 const hostLabel = (baseUrl: string): string => new URL(baseUrl).hostname.split('.')[0] || baseUrl;
 
@@ -304,6 +311,18 @@ export const readConfig = (env: Environment): AppConfig =>
       !webhookUrl || Boolean(webhookSecret),
       'TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_WEBHOOK_URL is set',
     );
+    // Empty closes what the key guards; set, it must be long enough not to be
+    // guessed. The message never repeats the value: it would land in the log.
+    const adminKey = read.text('TELEGRAM_ADMIN_KEY', '');
+    for (const [key, value] of [
+      ['TELEGRAM_ADMIN_KEY', adminKey],
+      ['TELEGRAM_WEBHOOK_SECRET', webhookSecret],
+    ]) {
+      read.require(
+        value === '' || value.length >= SECRET_LENGTH,
+        `${key} must be at least ${SECRET_LENGTH} characters long; make one with: openssl rand -hex 32`,
+      );
+    }
 
     return {
       port: read.integer('PORT', 3000, { min: 1, max: 65535 }),
@@ -320,7 +339,7 @@ export const readConfig = (env: Environment): AppConfig =>
         botToken: read.text('TELEGRAM_BOT_TOKEN', ''),
         webhookUrl,
         webhookSecret,
-        adminKey: read.text('TELEGRAM_ADMIN_KEY', ''),
+        adminKey,
         chatIds: read.list('TELEGRAM_CHAT_IDS', /^-?\d+$/, 'numeric chat IDs'),
         monitorIntervalMs: read.integer('TELEGRAM_MONITOR_INTERVAL_MS', 60000, { min: 0 }),
         stateFile: read.text('TELEGRAM_STATE_FILE', join(process.cwd(), 'data', 'telegram-state.json')),

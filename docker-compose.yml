@@ -5,6 +5,22 @@ services:
     container_name: veeam-telegram-monitor
     restart: unless-stopped
 
+    # The process runs as `node` and writes nowhere but ./data and ./logs, so it
+    # is given nothing more: no capability, no way to gain a privilege, and no
+    # file of its own it could rewrite. Whatever got into it would find the
+    # image as it was built.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Around 80 MB in use. A leak or a runaway read stops here rather than
+    # taking the host's memory with it.
+    mem_limit: 512m
+    pids_limit: 200
+
     # The real secrets stay in .env on the host and are handed to the container
     # at start. They are never copied into the image — see .dockerignore.
     env_file: .env

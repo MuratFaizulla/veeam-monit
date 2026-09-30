@@ -286,7 +286,7 @@ test('the keys of the main menu are answered as the commands they stand for', as
 test('the menu is put under the input field once, not at every start', async () => {
   const w = twoServers({
     // A webhook world: long polling would leave a loop running for as long as the test process lives.
-    env: { TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com', TELEGRAM_WEBHOOK_SECRET: 's' },
+    env: { TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com', TELEGRAM_WEBHOOK_SECRET: 'webhook-secret-for-tests-0123456789' },
     handlers: {
       getChat: (payload) => ({ ok: true, result: { id: Number(payload.chat_id), type: 'supergroup', is_forum: true } }),
     },
