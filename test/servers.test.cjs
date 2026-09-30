@@ -151,8 +151,9 @@ test('the live slots show the selected server, named on top, and the health list
   assert.ok(slots.length > 0);
   for (const slot of slots) assert.ok(slot.startsWith('🖥 <b>AST</b>\n\n'), slot);
   const health = slots.find((slot) => /Серверы:/.test(slot));
-  assert.match(health, /<b>AST<\/b> — показан здесь/);
-  assert.match(health, /🟢 BAAS/);
+  assert.match(health, /🟢 <b>AST<\/b>\n/, 'выбранный — зелёным');
+  assert.match(health, /⚪ BAAS\n/, 'остальные — серым');
+  assert.doesNotMatch(health, /показан здесь/);
 
   // The Evidence scan is paid for by the server shown, and only by it.
   assert.ok(w.veeamAst.paths().includes('/api/v1/restorePoints'));
@@ -206,8 +207,24 @@ test('the health gives every server\'s IP address beside its name', async () => 
 
   const health = texts(w).find((slot) => /Серверы:/.test(slot));
   assert.match(health, /<b>Сервер:<\/b> <code>https:\/\/ast\.example:9419<\/code>\n<b>IP:<\/b> <code>10\.10\.0\.162<\/code>/);
-  assert.match(health, /<b>AST<\/b> · <code>10\.10\.0\.162<\/code> — показан здесь/);
-  assert.match(health, /🟢 BAAS · <code>192\.168\.201\.123<\/code>/);
+  assert.match(health, /🟢 <b>AST<\/b> · <code>10\.10\.0\.162<\/code>\n/);
+  assert.match(health, /⚪ BAAS · <code>192\.168\.201\.123<\/code>\n/);
+});
+
+test('a server in trouble is red in the health whichever is shown, and says what the trouble is', async () => {
+  const w = twoServers({
+    env: { TELEGRAM_LIVE: 'true' },
+    ast: [job('a1', 'SQL Daily', 'Success')],
+    baasRoutes: { '/api/v1/serverTime': () => { throw new Error('connect ECONNREFUSED'); } },
+  });
+
+  await w.monitor.check();
+
+  // Grey would read as "fine, just not shown"; the one that fell over while
+  // another was selected is the one somebody needs to see here.
+  const health = texts(w).find((slot) => /Серверы:/.test(slot));
+  assert.match(health, /🟢 <b>AST<\/b>\n/);
+  assert.match(health, /🔴 BAAS — не отвечает\n/);
 });
 
 test('the menu under the input field turns into the servers, and a server\'s key switches the slots to it', async () => {
