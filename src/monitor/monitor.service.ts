@@ -17,6 +17,7 @@ import { attemptOf, retriesAllowed, retryWindowOf } from '../estate/runs';
 import { JobSession } from '../estate/job-card';
 import { escapeHtml, renderEvent } from '../telegram/format';
 import { dayOf } from '../telegram/time';
+import { jobStatusWord, jobTypeWord, resultWord } from '../telegram/words';
 import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
@@ -533,11 +534,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       subject: name,
       title,
       fields: [
-        ['Результат', result.toUpperCase()],
-        ['Было', previous ? previous.toUpperCase() : '—'],
+        ['Результат', resultWord(result)],
+        ['Было', resultWord(previous) ?? '—'],
         ['Попытка', this.attemptLabel(sessions, schedule)],
-        ['Тип', job.type],
-        ['Статус', job.status],
+        ['Тип', jobTypeWord(job.type)],
+        ['Статус', jobStatusWord(job.status)],
         ['Последний запуск', when(job.lastRun)],
         ['Следующий запуск', when(job.nextRun)],
         ['Объектов', job.objectsCount],

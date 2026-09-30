@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { VeeamApiError } from '../veeam/api.error';
 import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamServer } from '../veeam/servers';
 import { VeeamSession } from '../veeam/types';
@@ -207,9 +208,23 @@ export class LiveSnapshotsService {
         unavailable: cycle.working.unavailable,
       };
     }
-    const sessions = cycle.working?.sessions ?? [];
+    // Job runs only. Veeam's own sessions — a malware scan, a configuration
+    // backup — are Working too, and counting them had 📈 report "Активных
+    // заданий: 1" beside a ▶️ that said nothing was running.
+    const all = cycle.working?.sessions ?? [];
+    const known = new Set((cycle.jobs ?? []).map((job) => job.id));
+    const sessions = all.filter((session) =>
+      session.sessionType
+        ? /Job$/.test(session.sessionType)
+        : session.jobId !== undefined && known.has(session.jobId),
+    );
+    const serviceSessions = all
+      .filter((session) => !sessions.includes(session))
+      .map((session) => session.name ?? session.sessionType ?? 'без имени');
 
-    if (!sessions.length) return { jobs: [], activeCount: 0, statisticsAvailable: true };
+    if (!sessions.length) {
+      return { jobs: [], activeCount: 0, statisticsAvailable: true, serviceSessions };
+    }
 
     // A session of one of our jobs goes by the Job's name, as it does in every
     // other message; a session with no job behind it — Malware Detection —
@@ -222,17 +237,21 @@ export class LiveSnapshotsService {
     };
 
     const jobs: PerformanceJob[] = [];
+    let unsupported = false;
     let next = 0;
     const worker = async (): Promise<void> => {
       while (next < sessions.length) {
         const session = sessions[next++];
         if (!session.id) continue;
         try {
-          const tasks = await cycle.server.reader.taskSessions(session.id);
+          const tasks = unsupported ? [] : await cycle.server.reader.taskSessions(session.id);
           jobs.push(named(aggregatePerformance(session, tasks), session));
         } catch (error) {
+          // A Veeam whose REST API has no task sessions (1.1) answers 404 for
+          // every one of them, every minute: that is not "temporarily".
+          if (error instanceof VeeamApiError && error.upstreamStatus === 404) unsupported = true;
           // One inaccessible session must not hide all other performance data.
-          this.logger.warn(`Performance task sessions ${session.id} skipped: ${(error as Error).message}`);
+          else this.logger.warn(`Performance task sessions ${session.id} skipped: ${(error as Error).message}`);
           jobs.push(named(aggregatePerformance(session, []), session));
         }
       }
@@ -247,7 +266,13 @@ export class LiveSnapshotsService {
     this.logger.debug(
       `Performance refreshed: active=${sessions.length} detailed=${jobs.filter((job) => job.rateBps !== undefined).length}`,
     );
-    return { jobs, activeCount: sessions.length, statisticsAvailable };
+    return {
+      jobs,
+      activeCount: sessions.length,
+      statisticsAvailable,
+      statisticsUnsupported: unsupported,
+      serviceSessions,
+    };
   }
 
   /**

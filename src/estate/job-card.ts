@@ -1,5 +1,6 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, duration, Clock, longMoment, plural, stampOf } from '../telegram/time';
+import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '../telegram/time';
+import { jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './backup-evidence.service';
@@ -285,7 +286,7 @@ const agoOf = (iso: string | undefined, now: Date): string | undefined => {
   return `${duration(now.getTime() - at)} назад`;
 };
 
-const momentOf = (iso: string | undefined, clock: Clock): string | undefined => {
+const stampOfIso = (iso: string | undefined, clock: Clock): string | undefined => {
   if (!iso) return undefined;
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return undefined;
@@ -294,20 +295,15 @@ const momentOf = (iso: string | undefined, clock: Clock): string | undefined => 
 
 /** "16.09, 00:15:24 (15 ч 24 мин назад)" — the date and how long ago, together. */
 const whenOf = (iso: string | undefined, clock: Clock): string | undefined => {
-  const moment = momentOf(iso, clock);
+  const moment = stampOfIso(iso, clock);
   if (!moment) return undefined;
   const ago = agoOf(iso, clock.now);
   return ago ? `${moment} (${ago})` : moment;
 };
 
-/** "раз в сутки", "примерно раз в 7.0 сут". Null cadence says nothing. */
-const cadenceLabel = (days: number | null | undefined): string | undefined => {
-  if (!days || !Number.isFinite(days)) return undefined;
-  if (days >= 0.9 && days <= 1.1) return 'примерно раз в сутки';
-  if (days >= 6.5 && days <= 7.5) return 'примерно раз в неделю';
-  if (days < 0.9) return `примерно раз в ${duration(days * 86_400_000)}`;
-  return `примерно раз в ${days.toFixed(1)} сут`;
-};
+/** "примерно раз в сутки", "примерно раз в 5 дней". Null cadence says nothing. */
+const cadenceLabel = (days: number | null | undefined): string | undefined =>
+  days && Number.isFinite(days) ? `примерно ${everyLabel(days)}` : undefined;
 
 const label = (name: string, value: string | undefined): string | undefined =>
   value === undefined ? undefined : `<b>${name}:</b> ${value}`;
@@ -340,7 +336,7 @@ const more = (total: number, shown: number): string[] =>
 export const renderJobCard = (card: JobCard, clock: Clock): string => {
   const lines: string[] = [];
   const subtitle = [
-    card.type,
+    jobTypeWord(card.type),
     card.objects === undefined
       ? undefined
       : `${card.objects} ${plural(card.objects, 'объект', 'объекта', 'объектов')}`,
@@ -364,7 +360,11 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
 
   lines.push(
     ...[
-      `${iconOf(card.lastResult)} <b>Последний результат:</b> ${escapeHtml(card.lastResult.toUpperCase())}`,
+      // A running job has no result yet — Veeam says NONE — and the ▶️ line
+      // above has already said why.
+      inFlight && card.lastResult === 'none'
+        ? undefined
+        : `${iconOf(card.lastResult)} <b>Последний результат:</b> ${escapeHtml(resultWord(card.lastResult) ?? 'нет данных')}`,
       label('Запуск', whenOf(card.lastRun, clock)),
       label('Длительность', newest && !inFlight ? spanOf(newest) : undefined),
       label(
@@ -426,8 +426,8 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
     const { runs, points, machines, newest: freshest, oldest } = card.depth;
     lines.push(
       `Запусков в хранении: <b>${runs}</b> · точек: ${points} · машин: ${machines}`,
-      `Новейшая: ${longMoment(freshest, clock)}`,
-      `Старейшая: ${longMoment(oldest, clock)}`,
+      `Новейшая: ${momentOf(freshest, clock)}`,
+      `Старейшая: ${momentOf(oldest, clock)}`,
     );
     const cadence = cadenceLabel(card.cadenceDays);
     if (cadence) lines.push(`Периодичность: ${cadence}`);
@@ -452,7 +452,7 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
     for (const run of finished.slice(0, RUNS_SHOWN)) {
       const first = run.attempts[run.attempts.length - 1];
       const last = run.attempts[0];
-      const when = momentOf(first.startedAt, clock) ?? '—';
+      const when = stampOfIso(first.startedAt, clock) ?? '—';
       const span = spanOf({ startedAt: first.startedAt, endedAt: last.endedAt });
       const tries = run.attempts.length > 1 ? ` · попыток: ${run.attempts.length}` : '';
       // The reason only on the runs that went wrong, and from the attempt that

@@ -1,9 +1,10 @@
 import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
 import { dayKey, dayOf, duration, Clock, moment, plural, stampOf, timeOnly } from '../telegram/time';
+import { jobTypeWord } from '../telegram/words';
 import { ScheduledRun } from '../estate/schedule-planner';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
-export { dayOf, Clock, longMoment, plural } from '../telegram/time';
+export { dayOf, Clock, everyLabel, momentOf, plural } from '../telegram/time';
 
 /**
  * Renders the two always-current status messages.
@@ -358,11 +359,14 @@ const jobBlock = (job: RunningJob, clock: Clock): string[] => {
   const details: string[] = [];
   if (job.percent !== undefined) details.push(bar(job.percent));
   if (job.startedAt) {
-    details.push(`старт ${timeOnly(job.startedAt, clock)}`);
+    // The time alone only while it is today's: a job going since the 26th
+    // read "старт 23:11" and looked like it had started last night.
+    const today = dayKey(new Date(job.startedAt), clock) === dayKey(clock.now, clock);
+    details.push(`старт ${today ? timeOnly(job.startedAt, clock) : dayOf(job.startedAt, clock)}`);
     const elapsed = clock.now.getTime() - Date.parse(job.startedAt);
     if (Number.isFinite(elapsed) && elapsed > 0) details.push(`идёт ${duration(elapsed)}`);
   }
-  if (job.type) details.push(escapeHtml(job.type));
+  if (job.type) details.push(escapeHtml(jobTypeWord(job.type) ?? job.type));
   if (job.disabled) details.push('⚠️ выключено в Veeam');
 
   return details.length ? [head, details.join(' · ')] : [head];

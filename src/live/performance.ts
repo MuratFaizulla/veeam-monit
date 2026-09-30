@@ -1,5 +1,6 @@
 import { escapeHtml, truncate } from '../telegram/format';
-import { fitted, footerOf, Clock } from './format';
+import { bottleneckWord } from '../telegram/words';
+import { dayOf, fitted, footerOf, Clock } from './format';
 import { ACTIVE_SESSION_STATES } from '../veeam/estate';
 import { VeeamSession, VeeamTaskSession } from '../veeam/types';
 
@@ -23,8 +24,16 @@ export interface PerformanceJob {
 
 export interface PerformanceSnapshot {
   jobs: PerformanceJob[];
+  /** Job runs in progress; Veeam's own sessions are `serviceSessions`. */
   activeCount: number;
   statisticsAvailable: boolean;
+  /**
+   * The server has no task sessions to read (REST API 1.1): no rate or size
+   * will ever come, which is a different sentence from "not read this time".
+   */
+  statisticsUnsupported?: boolean;
+  /** Veeam's own sessions in progress — a malware scan, a configuration backup — by name. */
+  serviceSessions?: string[];
   unavailable?: string;
 }
 
@@ -114,28 +123,43 @@ export const sortPerformanceJobs = (jobs: PerformanceJob[]): PerformanceJob[] =>
     return a.rateBps - b.rateBps || a.name.localeCompare(b.name);
   });
 
+const TITLE = '📈 <b>Скорость выполняющихся заданий</b>';
+
 export const renderPerformance = (snapshot: PerformanceSnapshot, clock: Clock): string => {
   const footer = footerOf(clock);
+  const service = snapshot.serviceSessions?.length
+    ? `<i>Служебные сессии Veeam: ${escapeHtml(snapshot.serviceSessions.join(', '))}</i>`
+    : null;
   if (snapshot.unavailable) return truncate([
-    '📈 <b>VEEAM PERFORMANCE</b>', '', '⚠️ Данные производительности временно недоступны.',
-    escapeHtml(snapshot.unavailable), '', footer,
+    TITLE, '', '⚠️ Скорость не прочитана.', escapeHtml(snapshot.unavailable), '', footer,
   ].join('\n'));
-  if (!snapshot.activeCount) return truncate([
-    '📈 <b>VEEAM PERFORMANCE</b>', '', '✅ Сейчас активных заданий нет.', '', footer,
-  ].join('\n'));
-  if (!snapshot.statisticsAvailable) return truncate([
-    '📈 <b>VEEAM PERFORMANCE</b>', '', `⚠️ Активных заданий: ${snapshot.activeCount}`,
-    'Данные производительности временно недоступны.', '', footer,
-  ].join('\n'));
+  if (!snapshot.activeCount) return truncate(
+    [TITLE, '', '✅ Сейчас задания не выполняются.', ...(service ? ['', service] : []), '', footer].join('\n'),
+  );
 
+  // The jobs are listed whether or not their rate could be read: which job is
+  // running, since when and how far along is worth having without it.
+  const note = snapshot.statisticsAvailable
+    ? null
+    : snapshot.statisticsUnsupported
+      ? 'ℹ️ Скорость и объёмы этот Veeam не сообщает: у его REST API (1.1) их нет. Вернутся после обновления Veeam до 12.1 или новее.'
+      : 'ℹ️ Скорость и объёмы сейчас не прочитаны.';
   const sorted = sortPerformanceJobs(snapshot.jobs);
   const summary = bottleneckSummary(sorted);
   return truncate(
     fitted(Math.min(SLOWEST_SHOWN, sorted.length), (shown) => {
-      const lines = ['📈 <b>VEEAM PERFORMANCE</b>', '', '🐢 <b>Самые медленные активные задания</b>', ''];
+      const lines = [
+        TITLE,
+        '',
+        ...(note ? [note, ''] : []),
+        snapshot.statisticsAvailable ? '🐢 <b>Самые медленные сначала</b>' : '<b>Выполняются</b>',
+        '',
+      ];
       for (const job of sorted.slice(0, shown)) lines.push(...jobLines(job, clock), '');
-      lines.push(`Активных заданий: ${snapshot.activeCount}`, `Показано самых медленных: ${shown}`);
-      if (summary) lines.push('', `Узкие места: ${escapeHtml(summary)}`);
+      lines.push(`<b>Выполняется заданий:</b> ${snapshot.activeCount}`);
+      if (shown < snapshot.activeCount) lines.push(`<b>Показаны самые медленные:</b> ${shown}`);
+      if (summary) lines.push(`<b>Узкие места:</b> ${escapeHtml(summary)}`);
+      if (service) lines.push(service);
       lines.push('', footer);
       return lines.join('\n');
     }),
@@ -148,25 +172,29 @@ const SLOWEST_SHOWN = 10;
 const jobLines = (job: PerformanceJob, clock: Clock): string[] => {
   const mbps = job.rateBps === undefined ? undefined : job.rateBps / 1024 ** 2;
   const icon = mbps === undefined ? '⚪' : mbps < 20 ? '🔴' : mbps < 50 ? '🟠' : mbps < 100 ? '🟡' : '🟢';
+  const going = `идёт ${formatPerformanceDuration(job.creationTime, clock.now)}`;
   const lines = [
     `${icon} <b>${escapeHtml(job.name)}</b>`,
-    `${formatRate(job.rateBps)} · идёт ${formatPerformanceDuration(job.creationTime, clock.now)}`,
+    // "нет данных · идёт 3 д" read as if the job itself had no data.
+    job.rateBps === undefined ? going : `${formatRate(job.rateBps)} · ${going}`,
   ];
   if (job.creationTime && clock.now.getTime() - Date.parse(job.creationTime) >= 86_400_000) {
-    lines.push(`старт ${shortDate(job.creationTime, clock.timezone)}`);
+    lines.push(`старт ${dayOf(job.creationTime, clock)}`);
   }
   if (job.processedSize !== undefined) lines.push(`Обработано: ${formatBytes(job.processedSize)}`);
   if (job.readSize !== undefined) lines.push(`Прочитано: ${formatBytes(job.readSize)}`);
   if (job.transferredSize !== undefined) lines.push(`Передано: ${formatBytes(job.transferredSize)}`);
   if (job.progressPercent !== undefined) lines.push(`Прогресс: ${Math.round(job.progressPercent)}%`);
-  lines.push(`Узкое место: ${escapeHtml(job.bottleneck ?? 'Не определено')}`);
+  if (job.bottleneck) lines.push(`Узкое место: ${escapeHtml(bottleneckWord(job.bottleneck) ?? job.bottleneck)}`);
   return lines;
 };
 
 const bottleneckSummary = (jobs: PerformanceJob[]): string => {
   const counts = new Map<string, number>();
   for (const job of jobs) if (job.bottleneck) counts.set(job.bottleneck, (counts.get(job.bottleneck) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => `${name} ${count}`).join(' · ');
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => `${bottleneckWord(name) ?? name} — ${count}`)
+    .join(' · ');
 };
 const trim = (value: number): string => value.toFixed(value >= 100 ? 0 : 1).replace(/\.0$/, '');
-const shortDate = (iso: string, timezone: string): string => new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));

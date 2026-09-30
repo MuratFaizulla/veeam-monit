@@ -72,7 +72,7 @@ test('the first cycle seeds job results silently and the next one reports change
   const sent = w.api.sent();
   assert.equal(sent.length, 1);
   assert.match(sent[0].text, /SQL Daily/);
-  assert.match(sent[0].text, /FAILED/);
+  assert.match(sent[0].text, /Результат:<\/b> ошибка/);
   assert.match(sent[0].text, /Agent failed to process method/);
   assert.equal(w.api.of('createForumTopic').at(-1).name, 'SQL Daily');
 });
@@ -489,7 +489,8 @@ test('/job answers about one job, which no live topic can', async () => {
   const reply = w.api.sent().at(-1);
   assert.equal(reply.message_thread_id, undefined, 'answered in General');
   assert.match(reply.text, /OPS_Exchange/);
-  assert.match(reply.text, /Последний результат:<\/b> FAILED/);
+  assert.match(reply.text, /Последний результат:<\/b> ошибка/);
+  assert.match(reply.text, /<i>бэкап ВМ/, 'the kind of job in words, not Veeam\'s "Backup"');
   assert.match(reply.text, /Точки восстановления/);
   assert.match(reply.text, /Последние запуски/);
 });
@@ -515,9 +516,10 @@ test('/digest counts every job and names the ones that went wrong', async () => 
   assert.match(reply.text, /Всего заданий:<\/b> 3/);
   assert.match(reply.text, /Успешно:<\/b> 1/);
   // The same rendering the daily message uses: a plain list in a <pre> block,
-  // labelled by Veeam's own word for the result.
-  assert.match(reply.text, /FAILED — SQL Daily/);
-  assert.match(reply.text, /WARNING — Exchange/);
+  // marked with the icons every other message uses for the two results.
+  assert.match(reply.text, /🔴 SQL Daily/);
+  assert.match(reply.text, /🟡 Exchange/);
+  assert.doesNotMatch(reply.text, /FAILED|WARNING/);
 });
 
 test('a summary asked for in General is answered in General', async () => {

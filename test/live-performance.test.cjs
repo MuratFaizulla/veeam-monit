@@ -71,3 +71,45 @@ test('performance renderer escapes names and never exceeds Telegram limit', () =
   assert.match(text, /&lt;job &amp; 0&gt;/);
   assert.doesNotMatch(text, /<job & 0>/);
 });
+
+const clock = { now: new Date('2026-09-30T05:52:00Z'), timezone: 'Asia/Qyzylorda' };
+
+test('📈 counts job runs only, and names Veeam\'s own sessions apart', () => {
+  // veeam02baas had a malware scan going and nothing else: ▶️ said nothing
+  // was running while 📈 said "Активных заданий: 1".
+  const idle = renderPerformance(
+    { jobs: [], activeCount: 0, statisticsAvailable: true, serviceSessions: ['Malware Detection'] },
+    clock,
+  );
+  assert.match(idle, /Сейчас задания не выполняются/);
+  assert.match(idle, /Служебные сессии Veeam: Malware Detection/);
+  assert.doesNotMatch(idle, /VEEAM PERFORMANCE/);
+});
+
+test('📈 on a Veeam with no task sessions lists what runs and says why there is no rate', () => {
+  const text = renderPerformance({
+    jobs: [{ id: 's1', name: 'KTZH_SDOT_AST', creationTime: '2026-09-29T15:00:00Z', progressPercent: 40 }],
+    activeCount: 1,
+    statisticsAvailable: false,
+    statisticsUnsupported: true,
+  }, clock);
+  assert.match(text, /REST API \(1\.1\)/, 'not "временно недоступны": it never will be');
+  assert.match(text, /<b>KTZH_SDOT_AST<\/b>\nидёт 14 ч 52 мин/, 'the job is still listed, with no "нет данных" beside it');
+  assert.match(text, /Прогресс: 40%/);
+  assert.doesNotMatch(text, /временно|нет данных|Не определено/);
+});
+
+test('📈 says where a transfer is slow in words, and when a long one began', () => {
+  const text = renderPerformance({
+    jobs: [{
+      id: 's1', name: 'CUST_Mining_vm', creationTime: '2026-09-26T18:11:00Z',
+      rateBps: 5 * 1024 ** 2, bottleneck: 'Source',
+    }],
+    activeCount: 1,
+    statisticsAvailable: true,
+  }, clock);
+  assert.match(text, /Узкое место: источник \(диски ВМ\)/);
+  assert.match(text, /Узкие места:<\/b> источник \(диски ВМ\) — 1/);
+  assert.match(text, /старт 26\.09 в 23:11/);
+  assert.doesNotMatch(text, /Показаны самые медленные/, 'nothing was left out');
+});

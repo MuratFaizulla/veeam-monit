@@ -1,6 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { Standings } from '../estate/job-standing';
-import { dayOf, fitted, footerOf, Clock, longMoment, plural } from './format';
+import { dayOf, everyLabel, fitted, footerOf, Clock, momentOf, plural } from './format';
 
 /**
  * "What is not actually protected right now."
@@ -209,10 +209,9 @@ const riskLine = (risk: ProtectionRisk, clock: Clock): string => {
     // The moment itself, not only how long ago: this is the state a restore
     // would actually return the machine to, and somebody deciding whether that
     // is survivable needs the date in front of them, not an arithmetic problem.
-    const when =
-      risk.lastPoint === undefined ? '' : ` — ${longMoment(risk.lastPoint, clock)}`;
+    const when = risk.lastPoint === undefined ? '' : ` (${momentOf(risk.lastPoint, clock)})`;
     reasons.push(`${age(risk.ageDays)} без ${risk.byRuns ? 'успешного запуска' : 'точки'}${when}`);
-    if (risk.intervalDays !== null) reasons.push(`обычно ${cadence(risk.intervalDays)}`);
+    if (risk.intervalDays !== null) reasons.push(`обычно ${everyLabel(risk.intervalDays)}`);
     if (risk.lastRun) reasons.push(`последний запуск ${dayOf(risk.lastRun, clock)}`);
   }
 
@@ -236,20 +235,6 @@ const age = (days: number): string => {
   }
   const whole = Math.floor(days);
   return `${whole} ${plural(whole, 'день', 'дня', 'дней')}`;
-};
-
-/** How often a job runs. "обычно раз в 1 день" is a sentence nobody says. */
-const cadence = (days: number): string => {
-  if (days < 1) {
-    const hours = Math.max(1, Math.round(days * 24));
-    if (hours === 1) return 'раз в час';
-    if (hours < 24) return `раз в ${hours} ${plural(hours, 'час', 'часа', 'часов')}`;
-    return 'раз в сутки';
-  }
-  const whole = Math.round(days);
-  if (whole === 1) return 'раз в сутки';
-  if (whole === 7) return 'раз в неделю';
-  return `раз в ${whole} ${plural(whole, 'день', 'дня', 'дней')}`;
 };
 
 const trim = (value: number): string => String(Number(value.toFixed(1)));

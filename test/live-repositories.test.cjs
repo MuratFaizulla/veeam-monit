@@ -23,8 +23,16 @@ test('repository live view renders usage, capacity, free space and online state'
   assert.match(text, /82%/);
   assert.match(text, /100 TB/);
   assert.match(text, /18 TB/);
-  assert.match(text, /ONLINE/);
+  assert.match(text, /🟢 Доступен/);
   assert.match(text, /1\. Repository/);
+  assert.match(text, /Заполненность репозиториев/);
+});
+
+test('a repository whose state Veeam does not report says nothing about it', () => {
+  // veeam02baas (REST API 1.1) reports no state: every repository read
+  // "⚪ Статус: UNKNOWN".
+  const text = render([{ id: 'r1', name: 'SITE2_NAS_BACKUP', capacityGB: 40 * 1024, freeGB: 22 * 1024 }], clock);
+  assert.doesNotMatch(text, /UNKNOWN|Статус|Доступен/);
 });
 
 test('repository live view tolerates unknown metrics and stays under Telegram limit', () => {
@@ -36,7 +44,7 @@ test('repository live view tolerates unknown metrics and stays under Telegram li
   const text = render(repositories, clock);
   assert.ok(text.length <= 4096);
   assert.match(text, /нет данных/);
-  assert.match(text, /UNKNOWN|ONLINE|OFFLINE/);
+  assert.match(text, /Доступен|Недоступен/);
 });
 
 test('repository usage prefers capacity minus free when Veeam usedSpaceGB is logical', () => {
