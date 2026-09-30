@@ -37,6 +37,57 @@ const SCAN_PAGE = 500;
 /** A session log's record status, as the result a task session would carry. */
 const LOG_OUTCOME: Record<string, string> = { succeeded: 'success', warning: 'warning', failed: 'failed' };
 
+/** How one machine of a session ended. */
+export interface MachineResult {
+  name: string;
+  /** Lower-cased, as every result this reader hands out. */
+  result: string;
+  /** Why it went wrong, in Veeam's words and without its boilerplate; absent when Veeam gave none. */
+  reason?: string;
+}
+
+/**
+ * Veeam's ways of writing that one machine went wrong, from its task messages,
+ * its session messages and its session logs alike:
+ *
+ *   Processing EMMDB1-T3Q4 Error: Failed to open VDDK disk […]
+ *   Failed to create processing task for VM t-dom002 Error: Failed to retrieve object hierarchy […]
+ *   Virtual Machine dc01alm01 is unavailable and will be skipped from processing
+ *   Error: Выдано исключение типа "…AgentClosedException".
+ *
+ * A bare "Processing <machine>" names the machine and gives no reason. Any
+ * other text is a reason with no machine named in it.
+ */
+const MACHINE_LINES: Array<{ pattern: RegExp; reasonIsLine?: boolean }> = [
+  { pattern: /^Processing (.+?)(?:\s+Error:\s*([\s\S]*))?$/ },
+  { pattern: /^Failed to create processing task for VM (.+?)\s+Error:\s*([\s\S]*)$/ },
+  { pattern: /^Virtual Machine (.+?)(?: \([0-9a-f-]{36}\))? is unavailable\b/, reasonIsLine: true },
+];
+
+/**
+ * The machine one line of Veeam's is about, and the reason it gives.
+ *
+ * The reason keeps what explains the failure — "Cannot get service content. /
+ * Soap fault. Temporary failure in name resolution…" is two lines, and the
+ * second is the one that says DNS — and drops the line that only repeats the
+ * connection parameters, service account included.
+ */
+export const machineLine = (text: string): { machine?: string; reason?: string } => {
+  const line = text.trim();
+  for (const { pattern, reasonIsLine } of MACHINE_LINES) {
+    const found = pattern.exec(line);
+    if (found) return { machine: found[1], reason: reasonOf(reasonIsLine ? line : found[2]) };
+  }
+  return { reason: reasonOf(line.replace(/^Error:\s*/, '')) };
+};
+
+const reasonOf = (text: string | undefined): string | undefined =>
+  (text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^Logon attempt with parameters/.test(line))
+    .join(' / ') || undefined;
+
 /**
  * Everything the service reads from Veeam, by name.
  *
@@ -106,33 +157,42 @@ export class VeeamEstateReader {
 
   /**
    * How each machine of one session ended, by machine name, lower-cased.
+   * `machineResults` without the reasons, which is all the Evidence needs.
+   */
+  async machineOutcomes(sessionId: string): Promise<Map<string, string>> {
+    return new Map((await this.machineResults(sessionId)).map(({ name, result }) => [name, result]));
+  }
+
+  /**
+   * How each machine of one session ended, and in Veeam's words why.
    *
    * From the task sessions where the server has them. A server on REST API
    * 1.1 answers that path with 404, and the session log is the only other
-   * place the outcome is written: one "Processing <machine>" record each,
-   * whose status is the machine's.
+   * place the outcome is written: one record per machine, whose status is the
+   * machine's.
    */
-  async machineOutcomes(sessionId: string): Promise<Map<string, string>> {
+  async machineResults(sessionId: string): Promise<MachineResult[]> {
     try {
       const tasks = await this.taskSessions(sessionId);
-      return new Map(
-        tasks
-          .filter((task): task is VeeamTaskSession & { name: string } => Boolean(task.name))
-          .map((task) => [task.name, task.result?.result ?? '']),
-      );
+      return tasks
+        .filter((task): task is VeeamTaskSession & { name: string } => Boolean(task.name))
+        .map((task) => ({
+          name: task.name,
+          result: task.result?.result ?? '',
+          reason: machineLine(task.result?.message ?? '').reason,
+        }));
     } catch (error) {
       if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;
     }
     const path = `${SESSIONS}/${encodeURIComponent(sessionId)}/logs`;
     const log = await this.get<{ records?: VeeamLogRecord[]; data?: VeeamLogRecord[] }>(path, { limit: 1000 });
-    const outcomes = new Map<string, string>();
+    const results = new Map<string, MachineResult>();
     for (const record of log.records ?? log.data ?? []) {
-      // "Processing vApp_sdot_new Error: Failed to process the following VMs: Test_sd"
-      const machine = /^Processing (.+?)(?:\s+Error:[\s\S]*)?$/.exec(record.title ?? '')?.[1];
-      const outcome = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
-      if (machine && outcome) outcomes.set(machine, outcome);
+      const { machine, reason } = machineLine(record.title ?? '');
+      const result = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
+      if (machine && result) results.set(machine, { name: machine, result, reason });
     }
-    return outcomes;
+    return [...results.values()];
   }
 
   /** One job's whole configuration — storage and machines included, which the collection leaves out. */

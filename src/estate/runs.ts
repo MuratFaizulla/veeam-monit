@@ -93,6 +93,50 @@ export const runsOf = <T extends Attempt>(newestFirst: T[], windowMs: number): R
 export const attemptOf = (newestFirst: Attempt[], windowMs: number): number =>
   runsOf(newestFirst, windowMs)[0]?.attempts.length ?? 1;
 
+/** Where a job's newest run stands: which attempt it is on, and whether Veeam will try again. */
+export interface RunStanding {
+  /** Which attempt of its run the newest session is. */
+  attempt: number;
+  /** Attempts the job's policy allows; undefined when Veeam does not retry. */
+  allowed?: number;
+  /** When Veeam is due to try again, epoch ms. Undefined when it will not. */
+  retryAt?: number;
+  /** The last moment a retry can start and still belong to this run, epoch ms. */
+  retryBy?: number;
+}
+
+/**
+ * Where the newest run stands, `now` being epoch ms.
+ *
+ * "Попытка 1 из 4" said nothing about what came next, and it was the only
+ * thing an alert ever said: a failure is announced when the result changes,
+ * which is after the first attempt, and the three retries after it change
+ * nothing. Whether Veeam will try again is what decides between waiting and
+ * going to look, so it is answered here, by the same rule that folds the
+ * attempts: a run that failed is retried while it has attempts left and the
+ * wait since its last one has not run out.
+ */
+export const standingOf = (
+  newestFirst: Attempt[],
+  schedule: VeeamSchedule | undefined,
+  now: number,
+): RunStanding => {
+  const windowMs = retryWindowOf(schedule);
+  const allowed = retriesAllowed(schedule);
+  const run = runsOf(newestFirst, windowMs)[0];
+  if (!run) return { attempt: 1, allowed };
+  const attempt = run.attempts.length;
+  const ended = Date.parse(run.attempts[0].endedAt ?? '');
+  const retrying =
+    run.result === 'failed' &&
+    allowed !== undefined &&
+    attempt < allowed &&
+    Number.isFinite(ended) &&
+    now - ended <= windowMs;
+  const wait = (schedule?.retry?.awaitMinutes ?? DEFAULT_AWAIT_MINUTES) * 60_000;
+  return { attempt, allowed, ...(retrying ? { retryAt: ended + wait, retryBy: ended + windowMs } : {}) };
+};
+
 /**
  * Consecutive runs that failed, counted back from the newest.
  *
