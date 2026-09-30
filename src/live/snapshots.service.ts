@@ -300,6 +300,7 @@ export class LiveSnapshotsService {
       return {
         jobs: [],
         without: 0,
+        elsewhere: 0,
         excludedDisabled: 0,
         excludedUnscheduled: 0,
         failedPoints: 0,
@@ -312,12 +313,14 @@ export class LiveSnapshotsService {
 
     const listed: JobDepth[] = [];
     let without = 0;
+    let elsewhere = 0;
     // Which jobs are in scope, and how many were left out, is decided once and
     // shared with 🛡 Protection; the two messages state the same numbers because
     // they are the same numbers.
     for (const job of standings.judged) {
       if (!job.depth) {
-        without += 1;
+        if (job.byRuns) elsewhere += 1;
+        else without += 1;
         continue;
       }
       listed.push({ name: job.name, ...job.depth, intervalDays: job.cadenceDays });
@@ -334,6 +337,7 @@ export class LiveSnapshotsService {
     return {
       jobs: listed,
       without,
+      elsewhere,
       excludedDisabled: standings.excludedDisabled,
       excludedUnscheduled: standings.excludedUnscheduled,
       failedPoints: evidence.failedPoints,

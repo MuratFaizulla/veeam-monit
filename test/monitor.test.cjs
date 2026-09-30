@@ -376,7 +376,7 @@ test('a job is only excused on positive evidence, never on a gap', async () => {
   const { standingsOf } = require('../dist/estate/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
-    unscheduled: new Set(['known-manual']), streakByJob: new Map(), depthByJob: new Map(),
+    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(),
     orphanChains: [], totalPoints: 0, failedPoints: 0,
   };
 

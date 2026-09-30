@@ -34,6 +34,11 @@ export interface JobStanding {
   lastRun?: string;
   /** Run timestamps, newest first; empty when the job has no usable point. */
   runs: number[];
+  /**
+   * Whether `runs` are its good runs rather than its restore points: a
+   * replica, or a job whose points Veeam keeps outside the list the scan reads.
+   */
+  byRuns: boolean;
   /** How often it runs, in days; null when its history is too short to tell. */
   cadenceDays: number | null;
   /** Consecutive failed runs, counted back from its newest session. */
@@ -83,6 +88,7 @@ export const standingsOf = (jobs: Job[], evidence: ScannedEvidence): Standings =
       type: job.type,
       lastRun: job.lastRun,
       runs: evidence.runsByJob.get(job.id) ?? [],
+      byRuns: evidence.provenByRuns.has(job.id),
       cadenceDays: evidence.cadenceByJob.get(job.id) ?? null,
       failures: evidence.streakByJob.get(job.id) ?? 0,
       depth: evidence.depthByJob.get(job.id),

@@ -94,16 +94,18 @@ export const attemptOf = (newestFirst: Attempt[], windowMs: number): number =>
   runsOf(newestFirst, windowMs)[0]?.attempts.length ?? 1;
 
 /**
- * Consecutive runs that did not succeed, counted back from the newest.
+ * Consecutive runs that failed, counted back from the newest.
  *
- * Stops at the first run that succeeded, which is what makes "three in a row"
- * mean a job that is still broken rather than one that failed thrice at some
- * point. A run that ended in a warning did not succeed.
+ * Stops at the first run that did not fail, which is what makes "three in a
+ * row" mean a job that is still broken rather than one that failed thrice at
+ * some point. A run that ended in a warning did not fail: it left a restore
+ * point behind. Counting it made TTC-ODOO, a job Veeam reports as successful,
+ * read "7 неудачных запусков подряд" for a week of snapshot-removal warnings.
  */
 export const failureStreakOf = (newestFirst: Attempt[], windowMs: number): number => {
   let streak = 0;
   for (const run of runsOf(newestFirst, windowMs)) {
-    if (run.result === 'success') break;
+    if (run.result !== 'failed') break;
     streak += 1;
   }
   return streak;

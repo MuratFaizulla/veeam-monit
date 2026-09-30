@@ -181,6 +181,7 @@ export class JobQueryService {
       depth: scanned?.depthByJob.get(job.id),
       cadenceDays: scanned ? scanned.cadenceByJob.get(job.id) ?? null : undefined,
       pointsUnavailable: evidence.status === 'ready' ? undefined : evidence.reason,
+      pointsElsewhere: scanned?.provenByRuns.has(job.id),
     };
   }
 

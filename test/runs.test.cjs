@@ -226,16 +226,19 @@ test('a gap wider than the window starts a new run', () => {
   assert.equal(attemptOf([attempt('05:00', '05:10', 'Failed'), attempt('03:00', '03:30', 'Failed')], WINDOW), 1);
 });
 
-test('the streak counts runs that did not succeed, a warning among them, back to a success', () => {
+test('the streak counts failed runs back to one that did not fail, and a warning did not', () => {
   const sessions = [
-    attempt('09:00', '09:10', 'Warning'),
+    attempt('09:00', '09:10', 'Failed'),
     attempt('07:00', '07:10', 'Failed'),
     attempt('06:45', '06:50', 'Failed'),
-    attempt('05:00', '05:10', 'Success'),
+    attempt('05:00', '05:10', 'Warning'),
     attempt('03:00', '03:10', 'Failed'),
   ];
-  assert.equal(failureStreakOf(sessions, WINDOW), 2, 'warning and one retried failure; the success stops it');
+  assert.equal(failureStreakOf(sessions, WINDOW), 2, 'one failure, one retried failure; the warning stops it');
   assert.equal(failureStreakOf([], WINDOW), 0);
+  // TTC-ODOO: a week of snapshot-removal warnings, each run leaving a point.
+  const warned = ['09:00', '07:00', '05:00'].map((start) => attempt(start, start.replace(':00', ':20'), 'Warning'));
+  assert.equal(failureStreakOf(warned, WINDOW), 0, 'warnings are not failures');
 });
 
 test('an alert before any scan has finished still knows the job\'s retry policy', async () => {
@@ -382,6 +385,46 @@ test('a session history read Veeam did not answer loses nothing, and the next on
 
   assert.equal(veeam.asked[2], veeam.asked[1], 'from the last read that worked, not the one that failed');
   assert.deepEqual(read.map((kept) => kept.id), ['kept']);
+});
+
+test('on a Veeam whose points name no session, the runs are the sessions on the clock, and the log says who failed', async () => {
+  // veam01baas01, REST API 1.1: no sessionId on a point and no task sessions.
+  // Every machine's point used to be a run of its own, and the topic read
+  // "пропущено 390535 запусков" of a job that ran once a night.
+  const { VeeamApiError } = require('../dist/veeam/api.error');
+  const now = Date.now();
+  const nights = [1, 2, 3, 4].map((n) => now - n * DAY);
+  const sessions = nights.map((start, i) => ({
+    id: `n${i}`, jobId: '1', sessionType: 'BackupJob', creationTime: iso(start), endTime: iso(start + HOUR),
+    result: { result: i === 0 ? 'Failed' : 'Success' },
+  }));
+  const points = nights.flatMap((start, i) => [
+    { id: `a${i}`, backupId: 'b1', name: 'app01', creationTime: iso(start + 1 * MINUTE) },
+    { id: `d${i}`, backupId: 'b1', name: 'db01', creationTime: iso(start + 3 * MINUTE) },
+  ]);
+  const w = world();
+  const evidence = evidenceOf(w, veeamFake({
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'J' }] },
+    '/api/v1/restorePoints': { data: points },
+    '/api/v1/sessions': { data: sessions },
+    '/api/v1/sessions/n0/taskSessions': () => {
+      throw new VeeamApiError('Not found', 404);
+    },
+    '/api/v1/sessions/n0/logs': { records: [
+      { status: 'Succeeded', title: 'Processing app01' },
+      { status: 'Failed', title: 'Processing db01 Error: Failed to open VDDK disk' },
+    ] },
+  }));
+
+  await evidence.refresh(true, [{ id: '1', name: 'J', type: 'Backup', result: 'failed' }]);
+  const scanned = evidence.evidence;
+
+  assert.equal(scanned.status, 'ready');
+  assert.equal(scanned.depthByJob.get('1').runs, 4, 'four nights, not eight machines');
+  assert.equal(scanned.depthByJob.get('1').points, 7, 'the failed machine of the failed night goes');
+  assert.equal(scanned.failedPoints, 1);
+  assert.ok(Math.abs(scanned.cadenceByJob.get('1') - 1) < 0.01, `once a day: ${scanned.cadenceByJob.get('1')}`);
 });
 
 test('the Evidence reads the whole session history on its first scan only', async () => {

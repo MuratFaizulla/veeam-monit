@@ -16,6 +16,13 @@ about forty seconds, so it happens on its own cadence
 Only the selected server's Evidence is read. A server that is selected again is
 read again at once, unless its Evidence is less than ten minutes old.
 
+A point written by a failed run is discarded only when its own machine failed
+in that run: Veeam marks the whole run failed when one machine of fifteen does.
+The machine outcomes come from the task sessions, or from the session log on a
+Veeam whose REST API has none (1.1). Replicas and other jobs whose points are
+not in the restore point list are **proven by runs**: judged by the runs that
+worked.
+
 The **Session history** behind the Evidence is read whole on start and once a
 day. In between, a scan reads only the sessions begun in the two days before
 the previous read, which is one page instead of twenty, and merges them in by id.

@@ -9,6 +9,7 @@ import {
   VeeamCollection,
   VeeamJob,
   VeeamJobState,
+  VeeamLogRecord,
   VeeamNamedResource,
   VeeamRepositoryState,
   VeeamRestorePoint,
@@ -32,6 +33,9 @@ const NEWEST_FIRST = { orderColumn: 'CreationTime', orderAsc: false };
  * 100 would turn a nine-thousand-point estate into ninety requests.
  */
 const SCAN_PAGE = 500;
+
+/** A session log's record status, as the result a task session would carry. */
+const LOG_OUTCOME: Record<string, string> = { succeeded: 'success', warning: 'warning', failed: 'failed' };
 
 /**
  * Everything the service reads from Veeam, by name.
@@ -98,6 +102,37 @@ export class VeeamEstateReader {
   async taskSessions(sessionId: string): Promise<VeeamTaskSession[]> {
     const path = `${SESSIONS}/${encodeURIComponent(sessionId)}/taskSessions`;
     return (await this.pages<VeeamTaskSession>(path)).map(withResultLowered);
+  }
+
+  /**
+   * How each machine of one session ended, by machine name, lower-cased.
+   *
+   * From the task sessions where the server has them. A server on REST API
+   * 1.1 answers that path with 404, and the session log is the only other
+   * place the outcome is written: one "Processing <machine>" record each,
+   * whose status is the machine's.
+   */
+  async machineOutcomes(sessionId: string): Promise<Map<string, string>> {
+    try {
+      const tasks = await this.taskSessions(sessionId);
+      return new Map(
+        tasks
+          .filter((task): task is VeeamTaskSession & { name: string } => Boolean(task.name))
+          .map((task) => [task.name, task.result?.result ?? '']),
+      );
+    } catch (error) {
+      if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;
+    }
+    const path = `${SESSIONS}/${encodeURIComponent(sessionId)}/logs`;
+    const log = await this.get<{ records?: VeeamLogRecord[]; data?: VeeamLogRecord[] }>(path, { limit: 1000 });
+    const outcomes = new Map<string, string>();
+    for (const record of log.records ?? log.data ?? []) {
+      // "Processing vApp_sdot_new Error: Failed to process the following VMs: Test_sd"
+      const machine = /^Processing (.+?)(?:\s+Error:[\s\S]*)?$/.exec(record.title ?? '')?.[1];
+      const outcome = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
+      if (machine && outcome) outcomes.set(machine, outcome);
+    }
+    return outcomes;
   }
 
   /** One job's whole configuration — storage and machines included, which the collection leaves out. */

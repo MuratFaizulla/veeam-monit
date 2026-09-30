@@ -46,6 +46,8 @@ export interface ProtectionInput extends ProtectionThresholds {
 export interface ProtectionRisk {
   name: string;
   type?: string;
+  /** Judged by its good runs, its restore points being kept elsewhere. */
+  byRuns?: boolean;
   /** Epoch ms of the newest restore point, when there is one. */
   lastPoint?: number;
   /** Days since the newest restore point; null when the job has none at all. */
@@ -96,6 +98,7 @@ export const assessProtection = (input: ProtectionInput): ProtectionSnapshot => 
     risks.push({
       name: job.name,
       type: job.type,
+      byRuns: job.byRuns,
       lastPoint: points.length ? points[0] : undefined,
       ageDays,
       intervalDays,
@@ -198,7 +201,9 @@ const riskLine = (risk: ProtectionRisk, clock: Clock): string => {
   const reasons: string[] = [];
 
   if (risk.ageDays === null) {
-    reasons.push('точек восстановления нет');
+    // A replica's points are not in the list read, so "no points" would be
+    // said of every replica whatever it did; what it lacks is a run that worked.
+    reasons.push(risk.byRuns ? 'успешных запусков нет' : 'точек восстановления нет');
     if (risk.lastRun) reasons.push(`последний запуск ${dayOf(risk.lastRun, clock)}`);
   } else {
     // The moment itself, not only how long ago: this is the state a restore
@@ -206,7 +211,7 @@ const riskLine = (risk: ProtectionRisk, clock: Clock): string => {
     // is survivable needs the date in front of them, not an arithmetic problem.
     const when =
       risk.lastPoint === undefined ? '' : ` — ${longMoment(risk.lastPoint, clock)}`;
-    reasons.push(`${age(risk.ageDays)} без точки${when}`);
+    reasons.push(`${age(risk.ageDays)} без ${risk.byRuns ? 'успешного запуска' : 'точки'}${when}`);
     if (risk.intervalDays !== null) reasons.push(`обычно ${cadence(risk.intervalDays)}`);
     if (risk.lastRun) reasons.push(`последний запуск ${dayOf(risk.lastRun, clock)}`);
   }

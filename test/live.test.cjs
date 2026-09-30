@@ -549,6 +549,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
       runsByJob: newestFirst,
       cadenceByJob: new Map([...newestFirst].map(([id, runs]) => [id, cadenceOf(runs)])),
       unscheduled: new Set(jobs.filter((j) => j.unscheduled).map((j) => j.id)),
+      provenByRuns: new Set(),
       streakByJob,
       depthByJob: new Map(),
       orphanChains: [],
@@ -870,7 +871,7 @@ test('a point left behind by a failed run is not counted as a backup', async () 
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
   assert.ok(topic, 'the topic was published');
   assert.ok(!/14 сентября/u.test(topic.text), 'a run that errored out is not a backup');
-  assert.match(topic.text, /Не в счёт:<\/b> 1 точка от прогонов с ошибкой/u);
+  assert.match(topic.text, /Не в счёт:<\/b> 1 точка машин, упавших в своём прогоне/u);
 });
 
 test('a point finished by a successful retry counts, whatever id it carries', async () => {
@@ -883,6 +884,74 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
   assert.match(topic.text, /TTC_Exchange — 1 точка · 23 августа 2026 г\. в 01:31:12/u);
+});
+
+const HOUR_MS = 3_600_000;
+const isoAgo = (ms) => new Date(Date.now() - ms).toISOString();
+
+test('a failed run\'s points count for the machines that got through it, not for the one that failed', async () => {
+  // TTC_ASUEDT_REMS_DBS03's nights: every run failed on one unreachable
+  // machine, and the topics said "точек восстановления нет" of a job with 131
+  // points on disk, thirteen machines a night.
+  const w = monitorWorld(LIVE, [job('1', 'REMS_DBS03', 'Failed')], {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'REMS_DBS03' }] },
+    '/api/v1/restorePoints': {
+      data: ['DACA01', 'DACS01', 'DBS03'].map((name, i) => ({
+        id: `p${i}`, backupId: 'b1', sessionId: 'night', name, creationTime: isoAgo(3 * HOUR_MS - i * 60_000),
+      })),
+    },
+    '/api/v1/sessions': {
+      data: [{ id: 'night', jobId: '1', sessionType: 'BackupJob', creationTime: isoAgo(3 * HOUR_MS + 60_000),
+        endTime: isoAgo(2 * HOUR_MS), result: { result: 'Failed' } }],
+    },
+    '/api/v1/sessions/night/taskSessions': {
+      data: [
+        { name: 'DACA01', result: { result: 'Success' } },
+        { name: 'DACS01', result: { result: 'Warning' } },
+        { name: 'DBS03', result: { result: 'Failed' } },
+      ],
+    },
+  });
+  await w.monitor.check();
+
+  const texts = w.api.sent().map((message) => message.text);
+  const depth = texts.find((text) => /Точки восстановления/.test(text));
+  assert.match(depth, /REMS_DBS03 — 2 точки/u, 'the machines that got through are backed up');
+  assert.match(depth, /Не в счёт:<\/b> 1 точка машин, упавших в своём прогоне/u);
+  const protection = texts.find((text) => /Все задания защищены|Требуют внимания/.test(text));
+  assert.ok(!/точек восстановления нет/.test(protection), protection);
+});
+
+test('a replica is judged by the runs that worked, its points being kept on the target', async () => {
+  const replica = (id, name, lastResult) => ({ ...job(id, name, lastResult), type: 'VSphereReplica' });
+  const run = (id, jobId, ago, result) => ({
+    id, jobId, sessionType: 'ReplicaJob', creationTime: isoAgo(ago), endTime: isoAgo(ago - 600_000),
+    result: { result },
+  });
+  const w = monitorWorld(LIVE, [replica('1', 'REPL_OK', 'Success'), replica('2', 'NTP/DOM', 'Failed')], {
+    '/api/v1/jobs': { data: [
+      { id: '1', schedule: { runAutomatically: true } },
+      { id: '2', schedule: { runAutomatically: true } },
+    ] },
+    '/api/v1/sessions': { data: [
+      run('ok3', '1', 2 * HOUR_MS, 'Success'),
+      run('ok2', '1', 26 * HOUR_MS, 'Success'),
+      run('ok1', '1', 50 * HOUR_MS, 'Success'),
+      run('bad3', '2', 3 * HOUR_MS, 'Failed'),
+      run('bad2', '2', 27 * HOUR_MS, 'Failed'),
+      run('bad1', '2', 51 * HOUR_MS, 'Failed'),
+    ] },
+  });
+  await w.monitor.check();
+
+  const texts = w.api.sent().map((message) => message.text);
+  const protection = texts.find((text) => /Требуют внимания/.test(text));
+  assert.ok(!/REPL_OK/.test(protection), 'a replica replicating every night is protected');
+  assert.match(protection, /NTP\/DOM<\/b> — успешных запусков нет/u, 'what the failing one lacks is a run that worked');
+  assert.ok(!/точек восстановления нет/.test(protection), 'never "no points", which every replica would read');
+  const depth = texts.find((text) => /Точки восстановления|Точек восстановления нет/.test(text));
+  assert.match(depth, /2 задания с точками вне этого списка \(репликации и др\.\)/u);
 });
 
 /* ------------------------------------------------------------------ *
