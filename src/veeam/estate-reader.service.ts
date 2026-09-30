@@ -67,10 +67,12 @@ const MACHINE_LINES: Array<{ pattern: RegExp; reasonIsLine?: boolean }> = [
 /**
  * The machine one line of Veeam's is about, and the reason it gives.
  *
- * The reason keeps what explains the failure — "Cannot get service content. /
- * Soap fault. Temporary failure in name resolution…" is two lines, and the
- * second is the one that says DNS — and drops the line that only repeats the
- * connection parameters, service account included.
+ * The reason is the first two lines that explain the failure — "Cannot get
+ * service content. / Soap fault. Temporary failure in name resolution…" is
+ * two, and the second is the one that says DNS. The line that only repeats the
+ * connection parameters, service account included, is not one of them, and
+ * the rest is the agent's call stack in prose: "Failed to upload disk. /
+ * Agent failed to process method {DataTransfer.SyncDisk}."
  */
 export const machineLine = (text: string): { machine?: string; reason?: string } => {
   const line = text.trim();
@@ -86,7 +88,11 @@ const reasonOf = (text: string | undefined): string | undefined =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !/^Logon attempt with parameters/.test(line))
+    .slice(0, REASON_LINES)
     .join(' / ') || undefined;
+
+/** Lines of a reason kept; see machineLine. */
+const REASON_LINES = 2;
 
 /**
  * Everything the service reads from Veeam, by name.
