@@ -118,8 +118,8 @@ test('every server is watched, and an alert says which server it is about', asyn
   const alerts = texts(w);
   assert.equal(alerts.length, 1, alerts.join('\n---\n'));
   assert.match(alerts[0], /BAAS · Files: ОШИБКА/);
-  assert.equal(w.store.jobResultsOf('baas').of('b1'), 'failed');
-  assert.equal(w.store.jobResultsOf('ast').of('a1'), 'success');
+  assert.equal(w.store.jobMemoryOf('baas').resultOf('b1'), 'failed');
+  assert.equal(w.store.jobMemoryOf('ast').resultOf('a1'), 'success');
   // The same job id on two servers would be two conditions, not one.
   assert.ok(w.store.snapshot().cooldowns['baas:job:b1:failed'] > Date.now());
 });
@@ -130,12 +130,12 @@ test('a server added to the list is learned quietly, whatever the others remembe
     baas: [job('b1', 'Files', 'Failed')],
   });
   // AST has been watched for months; BAAS was added to the list today.
-  w.store.jobResultsOf('ast').record('a1', 'success');
+  w.store.jobMemoryOf('ast').remember('a1', 'success');
 
   await w.monitor.check();
 
   assert.deepEqual(texts(w), [], 'the first sight of a server is not an event');
-  assert.equal(w.store.jobResultsOf('baas').of('b1'), 'failed', 'but it is remembered');
+  assert.equal(w.store.jobMemoryOf('baas').resultOf('b1'), 'failed', 'but it is remembered');
 });
 
 test('the live slots show the selected server, named on top, and the health lists them all', async () => {
@@ -452,11 +452,33 @@ test('a state file from before the server list is read as the first server\'s', 
   }));
 
   const store = new TelegramStateStore(file, [], 'ast');
-  assert.equal(store.jobResultsOf('ast').of('j1'), 'failed');
-  assert.equal(store.jobResultsOf('baas').seeded(), false);
+  assert.equal(store.jobMemoryOf('ast').resultOf('j1'), 'failed');
+  assert.equal(store.jobMemoryOf('baas').seeded(), false);
 
   store.keepServers(new Set(['baas']));
-  assert.equal(store.jobResultsOf('ast').of('j1'), undefined, 'a server taken off the list is forgotten');
+  assert.equal(store.jobMemoryOf('ast').resultOf('j1'), undefined, 'a server taken off the list is forgotten');
+  store.flush();
+  fs.rmSync(file, { force: true });
+  fs.rmSync(`${file}.bak`, { force: true });
+});
+
+test('a server taken off the list takes the runs being followed on it along', () => {
+  const file = path.join(os.tmpdir(), `veeam-servers-${Math.random().toString(36).slice(2)}.json`);
+  const store = new TelegramStateStore(file, [], 'ast');
+  for (const server of ['ast', 'baas']) {
+    store.jobMemoryOf(server).remember('j1', 'failed');
+    store.jobMemoryOf(server).follow('j1', { attempt: 1, retryBy: Date.now() + 60_000 });
+  }
+
+  store.keepServers(new Set(['ast']));
+
+  // Remembered only through the result, the run used to stay in the file for
+  // good, and come back to be followed if the server was ever listed again.
+  const { jobResults, retrying } = store.snapshot();
+  assert.deepEqual(Object.keys(jobResults), ['ast']);
+  assert.deepEqual(Object.keys(retrying), ['ast']);
+  assert.equal(store.jobMemoryOf('baas').retryingOf('j1'), undefined);
+  assert.equal(store.jobMemoryOf('ast').retryingOf('j1').attempt, 1, 'the server kept keeps its run');
   store.flush();
   fs.rmSync(file, { force: true });
   fs.rmSync(`${file}.bak`, { force: true });

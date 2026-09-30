@@ -2,8 +2,7 @@ import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { LiveMessageRef, LiveMessages } from './live-messages';
-import { JobResults } from './job-results';
-import { RetryingRun, RetryingRuns } from './retrying-runs';
+import { JobMemory, memoryFromFile, RetryingRun } from './job-memory';
 import { AnswerLog, AnswerRef } from './answer-log';
 import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';
@@ -30,9 +29,9 @@ interface TelegramState {
   jobResults: Record<string, Record<string, string>>;
   /**
    * Failed runs Veeam was still retrying when announced: server key -> job id
-   * -> the run. Absent from files written before it existed.
+   * -> the run. Absent from files written before it existed, and read as empty.
    */
-  retrying?: Record<string, Record<string, RetryingRun>>;
+  retrying: Record<string, Record<string, RetryingRun>>;
   /** Key of the server the live slots and commands show; absent means the first. */
   selectedServer?: string;
   /**
@@ -53,6 +52,7 @@ const empty = (): TelegramState => ({
   chats: {},
   topics: {},
   jobResults: {},
+  retrying: {},
   cooldowns: {},
   liveMessages: {},
   answers: {},
@@ -62,10 +62,9 @@ const empty = (): TelegramState => ({
  * Everything the notifier must not forget across a restart, in one file.
  *
  * The store owns the file, the chats, the forum topics and which Veeam server
- * is selected. The other
- * things kept in it — job results, runs being retried, cooldowns, live
- * messages and the answer log — are each their own module, handed their part of the state and a way to
- * save it. They carry their own rules (48 hours, 500 answers, "never arm on
+ * is selected. The other things kept in it — what is remembered about the
+ * jobs, cooldowns, live messages and the answer log — are each their own
+ * module, handed their part of the state and a way to save it. They carry their own rules (48 hours, 500 answers, "never arm on
  * the way in") where somebody looking for those rules will find them, and are
  * tested on a plain object without a file.
  *
@@ -87,8 +86,7 @@ export class TelegramStateStore implements OnModuleDestroy {
   readonly cooldowns: Cooldowns;
   readonly liveMessages: LiveMessages;
   readonly answerLog: AnswerLog;
-  private readonly results = new Map<string, JobResults>();
-  private readonly retrying = new Map<string, RetryingRuns>();
+  private readonly memories = new Map<string, JobMemory>();
   /** The chats named in configuration: the only ones anything is sent to. */
   private readonly configured: ReadonlySet<string>;
 
@@ -140,46 +138,36 @@ export class TelegramStateStore implements OnModuleDestroy {
    * ---------------------------------------------------------------- */
 
   /**
-   * The results remembered for one server's jobs.
+   * What is remembered about one server's jobs.
    *
    * Per server, because what the monitor compares against is per server: a
    * server added to the list has never been observed and must be seeded
    * quietly, whatever the others remember, and pruning one server's deleted
    * jobs must not take the other servers' jobs with them.
    */
-  jobResultsOf(server: string): JobResults {
-    let results = this.results.get(server);
-    if (!results) {
-      results = new JobResults((this.state.jobResults[server] ??= {}), () => this.save());
-      this.results.set(server, results);
+  jobMemoryOf(server: string): JobMemory {
+    let memory = this.memories.get(server);
+    if (!memory) {
+      const record = {
+        results: (this.state.jobResults[server] ??= {}),
+        retrying: (this.state.retrying[server] ??= {}),
+      };
+      memory = new JobMemory(record, () => this.save());
+      this.memories.set(server, memory);
     }
-    return results;
-  }
-
-  /** The failed runs of one server's jobs that Veeam was still retrying when announced. */
-  retryingOf(server: string): RetryingRuns {
-    let runs = this.retrying.get(server);
-    if (!runs) {
-      runs = new RetryingRuns(((this.state.retrying ??= {})[server] ??= {}), () => this.save());
-      this.retrying.set(server, runs);
-    }
-    return runs;
+    return memory;
   }
 
   /** Drops what is remembered about servers no longer configured. */
   keepServers(servers: ReadonlySet<string>): void {
     let changed = false;
-    for (const server of Object.keys(this.state.jobResults)) {
-      if (servers.has(server)) continue;
-      delete this.state.jobResults[server];
-      this.results.delete(server);
-      changed = true;
-    }
-    for (const server of Object.keys(this.state.retrying ?? {})) {
-      if (servers.has(server)) continue;
-      delete this.state.retrying![server];
-      this.retrying.delete(server);
-      changed = true;
+    for (const part of [this.state.jobResults, this.state.retrying]) {
+      for (const server of Object.keys(part)) {
+        if (servers.has(server)) continue;
+        delete part[server];
+        this.memories.delete(server);
+        changed = true;
+      }
     }
     if (changed) this.save();
   }
@@ -297,11 +285,13 @@ export class TelegramStateStore implements OnModuleDestroy {
    * other way, the first cycle after the upgrade would find nothing remembered
    * and either stay quiet about a failure or repeat one already reported.
    */
-  private byServer(
-    jobResults: Record<string, unknown>,
-  ): Record<string, Record<string, string>> {
-    const flat = Object.values(jobResults).some((value) => typeof value === 'string');
-    if (!flat) return jobResults as Record<string, Record<string, string>>;
+  private byServer(jobResults: Record<string, unknown>): Record<string, unknown> {
+    // Every value a string, not any: one stray string beside the servers' own
+    // records used to have the whole map read as that older file, and every
+    // server's memory lost to it.
+    const values = Object.values(jobResults);
+    const flat = values.length > 0 && values.every((value) => typeof value === 'string');
+    if (!flat) return jobResults;
     const results: Record<string, string> = {};
     for (const [job, result] of Object.entries(jobResults)) {
       if (typeof result === 'string') results[job] = result;
@@ -325,7 +315,12 @@ export class TelegramStateStore implements OnModuleDestroy {
         if (path !== this.filePath) {
           this.logger.warn(`Telegram state restored from ${path}`);
         }
-        return { ...empty(), ...parsed, jobResults: this.byServer(parsed.jobResults!), version: 1 };
+        // What is remembered about the jobs is checked entry by entry: one
+        // entry this version cannot read is not worth the chats and topics.
+        const memory = memoryFromFile(this.byServer(parsed.jobResults!), parsed.retrying, (message) =>
+          this.logger.warn(message),
+        );
+        return { ...empty(), ...parsed, ...memory, version: 1 };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           this.logger.warn(`Telegram state at ${path} is unreadable: ${(error as Error).message}`);

@@ -88,7 +88,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         lastError: null,
         alerts: new JobAlerts(
           estate,
-          { results: store.jobResultsOf(estate.key), retrying: store.retryingOf(estate.key) },
+          store.jobMemoryOf(estate.key),
           // Through the monitor's own sending, which names the server and
           // counts what was delivered.
           (event) => this.emit(watch, event),
@@ -121,7 +121,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       reachable: watch.reachable,
       authenticated: watch.authenticated,
       lastError: watch.lastError,
-      trackedJobs: this.store.jobResultsOf(watch.estate.key).count(),
+      trackedJobs: this.store.jobMemoryOf(watch.estate.key).count(),
       delivered: this.delivered,
       undelivered: this.undelivered,
       lastOutcome: this.lastOutcome,
@@ -463,7 +463,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         serverAddress: estate.http.address,
         serverTime: watch.lastServerTime,
         error: watch.lastError,
-        trackedJobs: this.store.jobResultsOf(estate.key).count(),
+        trackedJobs: this.store.jobMemoryOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
         servers: this.servers().map(({ name, selected, reachable, authenticated, address }) => ({
           name,
