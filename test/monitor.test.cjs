@@ -1101,3 +1101,31 @@ test('a message of unknown age is retired rather than edited on faith', async ()
   assert.equal(w.api.of('deleteMessage').length, 1);
   assert.notEqual(w.store.liveMessages.of(CHAT, 'health').messageId, first.messageId);
 });
+
+test('a job alert says when the job ran and runs next as people write it, in the operator\'s zone', async () => {
+  // As Veeam reports them, and as they reached the chat until now:
+  // "2026-09-30T01:21:14.7+05:00".
+  const esb = (lastResult, lastRun, nextRun) => ({
+    id: '1', name: 'OPS_ERP_ESB_DB', type: 'Backup', status: 'Stopped',
+    lastResult, lastRun, nextRun, objectsCount: 2,
+  });
+  const w = monitorWorld({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' }, [
+    esb('Success', '2026-09-15T01:21:00+05:00', '2026-09-16T01:21:00+05:00'),
+  ]);
+  await w.monitor.check();
+
+  w.setJobs([esb('Failed', '2026-09-16T01:21:14.7+05:00', '2026-09-17T01:21:00+05:00')]);
+  await w.monitor.check();
+  const failed = w.api.sent().at(-1).text;
+  assert.match(failed, /Последний запуск:<\/b> 16\.09 в 01:21/);
+  assert.match(failed, /Следующий запуск:<\/b> 17\.09 в 01:21/);
+  assert.ok(!/\d{4}-\d\d-\d\dT/.test(failed), `no ISO string is left: ${failed}`);
+
+  // The recovery is written the same way; in UTC it would read 20:21 the day before.
+  w.setJobs([esb('Success', '2026-09-17T01:21:00+05:00', '2026-09-18T01:21:00+05:00')]);
+  await w.monitor.check();
+  const recovered = w.api.sent().at(-1).text;
+  assert.match(recovered, /задание восстановлено/);
+  assert.match(recovered, /Последний запуск:<\/b> 17\.09 в 01:21/);
+  assert.match(recovered, /Следующий запуск:<\/b> 18\.09 в 01:21/);
+});
