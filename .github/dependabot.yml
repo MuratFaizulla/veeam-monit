@@ -1,0 +1,31 @@
+# Dependabot opens a pull request when a dependency has a new release; the
+# test workflow runs on it like on any other. Security fixes come the same way
+# once Dependabot alerts are switched on in the repository's settings.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Qyzylorda
+    open-pull-requests-limit: 5
+    groups:
+      # Nest's packages move together; one pull request for all of them.
+      nestjs:
+        patterns:
+          - "@nestjs/*"
+      # Build and test tooling, which never ships in the image.
+      development:
+        dependency-type: development
+    ignore:
+      # Nest 11 and 12 are a migration, not an update: 12 is ESM-only, and the
+      # overrides in package.json stand in for it until then.
+      - dependency-name: "@nestjs/*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -1,6 +1,6 @@
 {
   "name": "veeam-telegram-monitor",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "NestJS service that watches the Veeam Backup & Replication REST API and reports changes to Telegram forum topics",
   "scripts": {
@@ -40,5 +40,10 @@
     "multer": "2.4.0",
     "qs": "6.16.0"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "author": "Мурат Файзулла (https://github.com/MuratFaizulla)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuratFaizulla/veeam-monit.git"
+  }
 }

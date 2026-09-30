@@ -493,6 +493,8 @@ config                            настройки: одно объявлен�
 
 | Файл | Что в нём |
 | --- | --- |
+| [CHANGELOG.md](CHANGELOG.md) | Что изменилось в каждой версии |
+| [SECURITY.md](SECURITY.md) | Как сообщить об уязвимости и что делать, если утёк секрет |
 | [CONTEXT.md](CONTEXT.md) | Словарь предметной области: Run, Attempt, Evidence, Transition и другие термины кода |
 | [docs/adr/](docs/adr/) | Архитектурные решения и почему они приняты |
 | [docs/veeam-openapi.json](docs/veeam-openapi.json) | Спецификация REST API самого Veeam (не этого сервиса — его описание отдаёт `/api/docs`) |

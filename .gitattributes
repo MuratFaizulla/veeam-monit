@@ -1,0 +1,9 @@
+# Every text file is stored and checked out with LF, on Windows too. The
+# repository already holds LF; this ends the "LF will be replaced by CRLF"
+# warnings and the chance of a file committed with CRLF.
+* text=auto eol=lf
+
+*.svg text
+
+# The vendor's API spec is reference material, not code of this project.
+docs/veeam-openapi.json linguist-documentation
