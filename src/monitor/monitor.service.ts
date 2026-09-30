@@ -138,6 +138,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     if (!watch) return 'unknown';
     if (watch === this.shown()) return 'already';
     this.store.selectServer(key);
+    // Its restore points too: they were last read when it was last shown.
+    watch.estate.evidence.renew();
     // Drawn now rather than at the next tick: somebody just pressed a button
     // and is looking at the topics to see it take. A pass already running
     // draws the server it started with, so another follows it.

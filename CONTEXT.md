@@ -13,6 +13,8 @@ Three live slots — 🛡 Protection, 🗂 Restore points, 🧹 Orphaned backups
 three questions about one Evidence. Reading it costs around twenty requests and
 about forty seconds, so it happens on its own cadence
 (`TELEGRAM_PROTECTION_INTERVAL_MIN`) and the answer is kept until the next one.
+Only the selected server's Evidence is read. A server that is selected again is
+read again at once, unless its Evidence is less than ten minutes old.
 
 Evidence is either **ready** or **pending**, and pending carries the reason a
 slot can show. There is no third state and no sentinel: "never scanned" and

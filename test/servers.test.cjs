@@ -160,6 +160,38 @@ test('the live slots show the selected server, named on top, and the health list
   assert.ok(!w.veeamBaas.asked.some((req) => req.params?.stateFilter === 'Working'));
 });
 
+test('a server selected again has its restore points read at once, unless they were read minutes ago', async () => {
+  // Only the selected server is scanned, so one selected again still holds
+  // the reading from when it was last shown: up to two hours old at the
+  // cadence that keeps the load on Veeam down.
+  const w = twoServers({
+    env: { TELEGRAM_LIVE: 'true', TELEGRAM_PROTECTION_INTERVAL_MIN: '120' },
+    ast: [job('a1', 'SQL Daily', 'Success')],
+    baas: [job('b1', 'Files', 'Success')],
+  });
+  const scans = (veeam) => veeam.paths().filter((path) => path === '/api/v1/restorePoints').length;
+  const realNow = Date.now;
+  try {
+    await w.monitor.check();
+    w.monitor.select('baas');
+    await settled(w);
+    assert.equal(scans(w.veeamBaas), 1, 'BAAS is read when it is first shown');
+
+    w.monitor.select('ast');
+    await settled(w);
+    assert.equal(scans(w.veeamAst), 1, 'straight back: the reading of a moment ago stands');
+
+    Date.now = () => realNow() + 30 * 60_000;
+    w.monitor.select('baas');
+    await settled(w);
+    assert.equal(scans(w.veeamBaas), 2, 'half an hour on, it is read the moment it is shown');
+    await w.monitor.check();
+    assert.equal(scans(w.veeamBaas), 2, 'and then keeps to its cadence');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('the health gives every server\'s IP address beside its name', async () => {
   const w = twoServers({
     env: { TELEGRAM_LIVE: 'true' },

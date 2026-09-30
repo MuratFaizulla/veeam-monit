@@ -28,6 +28,13 @@ import { failureStreakOf, retryWindowOf } from './runs';
 const STREAK_WINDOW_DAYS = 7;
 
 /**
+ * A reading this young is kept when its server is selected again. Switching
+ * back and forth must not become a way of running the heaviest read there is
+ * on demand.
+ */
+const JUST_READ_MS = 10 * 60_000;
+
+/**
  * Run timestamps kept per job.
  *
  * One more than the gaps a cadence is learned from: N gaps need N+1 points.
@@ -107,6 +114,8 @@ export class BackupEvidenceService {
   /** The last scan that finished. Survives cycles Veeam did not answer. */
   private scanned?: ScannedEvidence;
   private current: Evidence = { status: 'pending', reason: NOT_READ };
+  /** The next refresh reads again, whatever the cadence says. */
+  private renewing = false;
 
   constructor(
     config: ConfigService,
@@ -123,7 +132,21 @@ export class BackupEvidenceService {
   }
 
   /**
-   * Brings the evidence up to date if it is older than the configured cadence.
+   * Has the next refresh read the estate again, ahead of the cadence.
+   *
+   * For a server that was just selected: only the selected server is scanned,
+   * so a server selected again still holds the reading from when it was last
+   * shown — up to a whole cadence old, which at two hours is not what somebody
+   * who just pressed the button expects to see. A reading from the last few
+   * minutes is kept.
+   */
+  renew(): void {
+    if (Date.now() - (this.scanned?.scannedAt ?? 0) >= JUST_READ_MS) this.renewing = true;
+  }
+
+  /**
+   * Brings the evidence up to date if it is older than the configured cadence,
+   * or `renew` asked for it.
    *
    * Called once per cycle, before anything reads. That is what makes the order
    * the slots are published in mean nothing: it used to be that whichever slot
@@ -139,9 +162,12 @@ export class BackupEvidenceService {
       this.current = { status: 'pending', reason: NO_ANSWER };
       return;
     }
-    if (Date.now() - (this.scanned?.scannedAt ?? 0) >= this.config.protectionIntervalMs) {
+    if (this.renewing || Date.now() - (this.scanned?.scannedAt ?? 0) >= this.config.protectionIntervalMs) {
       const fresh = await this.scan(jobs);
-      if (fresh) this.scanned = fresh;
+      if (fresh) {
+        this.scanned = fresh;
+        this.renewing = false;
+      }
     }
     this.current = this.scanned ?? { status: 'pending', reason: NOT_READ };
   }
