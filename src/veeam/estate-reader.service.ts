@@ -4,6 +4,7 @@ import { InventoryNames, Job, jobOf, withResultLowered, WorkingSessions, working
 import { RawRequest, VeeamHttpService } from './http.service';
 import { VeeamMonitorAuthService } from './monitor-auth.service';
 import { allPages } from './pages';
+import { machineLine } from './session-text';
 import {
   VeeamBackup,
   VeeamCollection,
@@ -45,54 +46,6 @@ export interface MachineResult {
   /** Why it went wrong, in Veeam's words and without its boilerplate; absent when Veeam gave none. */
   reason?: string;
 }
-
-/**
- * Veeam's ways of writing that one machine went wrong, from its task messages,
- * its session messages and its session logs alike:
- *
- *   Processing APPDB1-T3Q4 Error: Failed to open VDDK disk […]
- *   Failed to create processing task for VM dc02 Error: Failed to retrieve object hierarchy […]
- *   Virtual Machine dc01 is unavailable and will be skipped from processing
- *   Error: Выдано исключение типа "…AgentClosedException".
- *
- * A bare "Processing <machine>" names the machine and gives no reason. Any
- * other text is a reason with no machine named in it.
- */
-const MACHINE_LINES: Array<{ pattern: RegExp; reasonIsLine?: boolean }> = [
-  { pattern: /^Processing (.+?)(?:\s+Error:\s*([\s\S]*))?$/ },
-  { pattern: /^Failed to create processing task for VM (.+?)\s+Error:\s*([\s\S]*)$/ },
-  { pattern: /^Virtual Machine (.+?)(?: \([0-9a-f-]{36}\))? is unavailable\b/, reasonIsLine: true },
-];
-
-/**
- * The machine one line of Veeam's is about, and the reason it gives.
- *
- * The reason is the first two lines that explain the failure — "Cannot get
- * service content. / Soap fault. Temporary failure in name resolution…" is
- * two, and the second is the one that says DNS. The line that only repeats the
- * connection parameters, service account included, is not one of them, and
- * the rest is the agent's call stack in prose: "Failed to upload disk. /
- * Agent failed to process method {DataTransfer.SyncDisk}."
- */
-export const machineLine = (text: string): { machine?: string; reason?: string } => {
-  const line = text.trim();
-  for (const { pattern, reasonIsLine } of MACHINE_LINES) {
-    const found = pattern.exec(line);
-    if (found) return { machine: found[1], reason: reasonOf(reasonIsLine ? line : found[2]) };
-  }
-  return { reason: reasonOf(line.replace(/^Error:\s*/, '')) };
-};
-
-const reasonOf = (text: string | undefined): string | undefined =>
-  (text ?? '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^Logon attempt with parameters/.test(line))
-    .slice(0, REASON_LINES)
-    .join(' / ') || undefined;
-
-/** Lines of a reason kept; see machineLine. */
-const REASON_LINES = 2;
 
 /**
  * Everything the service reads from Veeam, by name.

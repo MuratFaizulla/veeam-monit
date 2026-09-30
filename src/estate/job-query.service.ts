@@ -4,7 +4,8 @@ import { AppConfig } from '../config/configuration';
 import { Clock } from '../telegram/time';
 import { escapeHtml } from '../telegram/format';
 import { Job } from '../veeam/estate';
-import { machineLine, MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service';
+import { MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service';
+import { blameOf, sessionText } from '../veeam/session-text';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamJob } from '../veeam/types';
@@ -199,7 +200,10 @@ export class JobQueryService {
         startedAt: session.creationTime,
         endedAt: session.endTime,
         result: session.result?.result,
-        message: session.result?.message?.trim() || undefined,
+        // Read once, here, so that nothing downstream can show the message
+        // as Veeam wrote it — which is what a card's run list once did.
+        message: sessionText(session.result?.message),
+        blames: blameOf(session.result?.message),
         percent: session.progressPercent,
       }));
     } catch (error) {
@@ -250,11 +254,11 @@ export class JobQueryService {
     // "Getting VM info from vSphere" — while the session's says, of the same
     // machine, "Error: Cannot get service content. / Soap fault. Temporary
     // failure in name resolution". An error named for a machine wins.
-    const said = machineLine(session.message ?? '');
+    const { blames } = session;
     return machines.map(({ name, result, reason }) => ({
       name,
       result,
-      message: said.machine === name && said.reason ? said.reason : reason,
+      message: blames?.machine === name ? blames.reason : reason,
     }));
   }
 

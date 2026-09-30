@@ -1392,34 +1392,69 @@ test('the monitor hands every server\'s jobs to its Job alerts, and the run foll
   assert.equal(w.store.snapshot().retrying[SERVER]['1'], undefined);
 });
 
-test('Veeam\'s ways of saying a machine failed are read as the machine and the reason', () => {
-  const { machineLine } = require('../dist/veeam/estate-reader.service');
+/* ------------------------------------------------------------------ *
+ * A session's message is shown as it is worth showing, everywhere
+ * ------------------------------------------------------------------ */
 
-  // Two lines of it: the connection parameters are not a reason, and what
-  // follows the second is the agent's call stack.
-  assert.deepEqual(machineLine(VDDK), {
-    machine: 'APPDB1-T3Q4',
-    reason: 'Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.',
+// OPS_Kingston_vCenters, as Veeam wrote it: the reason, the line that says DNS,
+// and the connection parameters with the service account in them.
+const DNS_RAW =
+  'Processing comp01vc01 Error: Cannot get service content.\r\n' +
+  'Soap fault. Temporary failure in name resolution\r\n' +
+  'Logon attempt with parameters [VC/ESX: [vc01cloud];Port: 443;Login: [svc@example.com]]';
+const kingstonNight = (id, day) => ({
+  id, jobId: '1', creationTime: `2026-09-${day}T22:00:00+05:00`, endTime: `2026-09-${day}T22:10:00+05:00`,
+  result: { result: 'Failed', message: DNS_RAW },
+});
+
+test('a Job card never shows the connection parameters Veeam writes after a reason', async () => {
+  // No per-machine detail to read, so both the reason line and the run list
+  // come from the sessions' own messages — which the run list showed raw.
+  const w = monitorWorld({}, [job('1', 'OPS_Kingston_vCenters', 'Failed')], {
+    '/api/v1/sessions': { data: [kingstonNight('n2', 29), kingstonNight('n1', 27)] },
   });
-  // The second line is the one that says it was DNS.
-  assert.deepEqual(
-    machineLine("Processing EMM1-Dy2M Error: Cannot get service content.\r\nSoap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'"),
-    { machine: 'EMM1-Dy2M', reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'" },
-  );
-  assert.deepEqual(
-    machineLine('Failed to create processing task for VM dc02.example.com Error: Failed to retrieve object hierarchy: exception ID d1dd9757'),
-    { machine: 'dc02.example.com', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
-  );
-  assert.deepEqual(
-    machineLine('Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
-    { machine: 'REMS-DBS03', reason: 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing' },
-  );
-  assert.deepEqual(
-    machineLine('Error: Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".'),
-    { reason: 'Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".' },
-  );
-  // A name and no reason: Veeam said which, not why.
-  assert.deepEqual(machineLine('Processing Sirius'), { machine: 'Sirius', reason: undefined });
+
+  await said(w, '/job Kingston');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /<b>Причина:<\/b> comp01vc01 — Cannot get service content\. \/ Soap fault\. Temporary failure in name resolution/);
+  const runs = reply.slice(reply.indexOf('Последние запуски'));
+  assert.equal((runs.match(/comp01vc01 — Cannot get service content/g) ?? []).length, 2, `в списке запусков:\n${runs}`);
+  assert.doesNotMatch(reply, /Logon attempt|svc@example\.com/);
+});
+
+test('an alert with no machine to list gives the session\'s reason, without the connection parameters', async () => {
+  const w = monitorWorld({}, [job('1', 'OPS_Kingston_vCenters', 'Success')], {
+    '/api/v1/sessions': { data: [kingstonNight('n2', 29)] },
+  });
+  await w.monitor.check();
+
+  w.setJobs([job('1', 'OPS_Kingston_vCenters', 'Failed')]);
+  await w.monitor.check();
+
+  const alert = w.api.sent().at(-1).text;
+  assert.match(alert, /<pre>comp01vc01 — Cannot get service content\. \/ Soap fault\. Temporary failure in name resolution<\/pre>/);
+  assert.doesNotMatch(alert, /Logon attempt|svc@example\.com/);
+});
+
+test('the machine a session blames takes the session\'s reason, and the others keep their own', async () => {
+  const server = serverOf(world(), veeamFake({
+    '/api/v1/sessions': { data: [kingstonNight('n2', 29)] },
+    '/api/v1/sessions/n2/taskSessions': { data: [
+      // Its own task says only the step it stopped at.
+      { name: 'comp01vc01', result: { result: 'Failed', message: 'Getting VM info from vSphere' } },
+      { name: 'mgmt01vc01', result: { result: 'Failed', message: 'Processing mgmt01vc01 Error: Disk full' } },
+      { name: 'ok01', result: { result: 'Success', message: 'Success' } },
+    ] },
+  }));
+
+  const [session] = await server.jobs.recentSessions({ id: '1', name: 'OPS_Kingston_vCenters', result: 'failed' });
+
+  assert.deepEqual(await server.jobs.objectsOf(session), [
+    { name: 'comp01vc01', result: 'failed', message: 'Cannot get service content. / Soap fault. Temporary failure in name resolution' },
+    { name: 'mgmt01vc01', result: 'failed', message: 'Disk full' },
+    { name: 'ok01', result: 'success', message: 'Success' },
+  ]);
 });
 
 test('an alert lists at most five machines of a group and counts the rest', () => {
