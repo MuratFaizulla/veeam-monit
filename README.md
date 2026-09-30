@@ -14,6 +14,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js-22-5FA04E?logo=nodedotjs&logoColor=white)
 ![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+[![License](https://img.shields.io/badge/License-Proprietary-lightgrey)](LICENSE)
 
 [Возможности](#-возможности) ·
 [Быстрый старт](#-быстрый-старт) ·
@@ -495,6 +496,10 @@ config                            настройки: одно объявлен�
 | [CONTEXT.md](CONTEXT.md) | Словарь предметной области: Run, Attempt, Evidence, Transition и другие термины кода |
 | [docs/adr/](docs/adr/) | Архитектурные решения и почему они приняты |
 | [docs/veeam-openapi.json](docs/veeam-openapi.json) | Спецификация REST API самого Veeam (не этого сервиса — его описание отдаёт `/api/docs`) |
+
+## 📄 Лицензия
+
+Закрытая лицензия, все права защищены © 2026 Мурат Файзулла. Копировать, изменять, распространять и использовать код можно только с письменного разрешения правообладателя. Полный текст — в [LICENSE](LICENSE).
 
 ---
 
