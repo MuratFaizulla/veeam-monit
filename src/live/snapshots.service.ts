@@ -5,7 +5,7 @@ import { VeeamApiError } from '../veeam/api.error';
 import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamServer } from '../veeam/servers';
 import { VeeamSession } from '../veeam/types';
-import { Evidence } from '../estate/backup-evidence.service';
+import { Evidence } from '../estate/evidence';
 import { Standings, standingsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
 import { RepositoryCapacity } from '../estate/repository-capacity';

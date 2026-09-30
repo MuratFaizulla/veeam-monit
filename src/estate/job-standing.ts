@@ -1,5 +1,5 @@
 import { Job } from '../veeam/estate';
-import { RetainedHistory, ScannedEvidence } from './backup-evidence.service';
+import { RetainedHistory, ScannedEvidence } from './evidence';
 import { isDisabled } from './job-state';
 
 /**

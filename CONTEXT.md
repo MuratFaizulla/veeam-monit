@@ -18,8 +18,9 @@ read again at once, unless its Evidence is less than ten minutes old.
 
 A point written by a failed run is discarded only when its own machine failed
 in that run: Veeam marks the whole run failed when one machine of fifteen does.
-The machine outcomes come from the task sessions, or from the session log on a
-Veeam whose REST API has none (1.1). Replicas and other jobs whose points are
+The **machine outcomes** come from the task sessions, or from the session log on a
+Veeam whose REST API has none (1.1). Each failed session is asked once: a
+finished session's outcomes never change. Replicas and other jobs whose points are
 not in the restore point list are **proven by runs**: judged by the runs that
 worked.
 
@@ -31,8 +32,12 @@ Evidence is either **ready** or **pending**, and pending carries the reason a
 slot can show. There is no third state and no sentinel: "never scanned" and
 "Veeam did not answer this cycle" are both pending, with different reasons.
 
-Owned by `src/estate/backup-evidence.service.ts`. Readers take it as
-an argument; nothing reads it out of a field.
+What a reading means is `readingOf` in `src/estate/evidence.ts`: pure, given
+what the scan read, it says which failed sessions it must ask about their
+machines, and then what the reading establishes. When to read, and what is kept
+from one reading to the next — the Session history and the machine outcomes
+(`src/estate/machine-outcomes.ts`) — is `src/estate/backup-evidence.service.ts`.
+Readers take the Evidence as an argument; nothing reads it out of a field.
 
 Refreshed once per cycle, as its own step, right after the job list is read
 and before anything reads it — the alerts as much as the live slots. It used

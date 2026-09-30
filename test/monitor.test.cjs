@@ -260,23 +260,10 @@ test('repositories are listed by name with the default ones last', () => {
 /* ------------------------------------------------------------------ *
  * The evidence itself
  *
- * Session attribution used to be assertable only by driving a whole cycle and
- * grepping a rendered Russian message for a date format owned by a third
- * module. These ask the evidence directly.
+ * Asked directly rather than through a rendered Russian message. What one
+ * reading establishes — which run wrote a point — is asked of the reading
+ * itself, with no Veeam behind it (runs.test.cjs).
  * ------------------------------------------------------------------ */
-
-test('the evidence attributes each point to the run that was on the clock', async () => {
-  const w = exchange();
-  await w.evidence.refresh(true, [job('1', 'TTC_Exchange', 'Failed')]);
-  const evidence = w.evidence.evidence;
-
-  assert.equal(evidence.status, 'ready');
-  assert.equal(evidence.failedPoints, 1, 'the run that errored out left one point');
-  assert.equal(evidence.totalPoints, 2);
-  const depth = evidence.depthByJob.get('1');
-  assert.equal(depth.runs, 1, 'only the point a successful run wrote is retained');
-  assert.equal(depth.newest, Date.parse('2026-08-23T01:31:12+05:00'));
-});
 
 test('evidence nothing has read yet says why, instead of an empty estate', async () => {
   const w = exchange();

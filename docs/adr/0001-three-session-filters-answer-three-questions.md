@@ -51,3 +51,8 @@ readers get it.
 
 The streak re-grouping sessions rather than reusing the Evidence's own Runs is
 left to the Evidence's internal seams, if they are ever named.
+
+Update, 2026-09-30: they were (`src/estate/evidence.ts`). The placing of
+points and the streak now start from one grouping of a job's sessions, newest
+first, and each keeps its own filter: every attempt for the placing, finished
+attempts of the last seven days for the streak.
