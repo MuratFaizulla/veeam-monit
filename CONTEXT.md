@@ -16,6 +16,10 @@ about forty seconds, so it happens on its own cadence
 Only the selected server's Evidence is read. A server that is selected again is
 read again at once, unless its Evidence is less than ten minutes old.
 
+The **Session history** behind the Evidence is read whole on start and once a
+day. In between, a scan reads only the sessions begun in the two days before
+the previous read, which is one page instead of twenty, and merges them in by id.
+
 Evidence is either **ready** or **pending**, and pending carries the reason a
 slot can show. There is no third state and no sentinel: "never scanned" and
 "Veeam did not answer this cycle" are both pending, with different reasons.

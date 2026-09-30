@@ -130,6 +130,12 @@ export class VeeamEstateReader {
     return (await this.pages<VeeamSession>(SESSIONS, NEWEST_FIRST, SCAN_PAGE)).map(withResultLowered);
   }
 
+  /** The sessions begun after `since`, newest first: what a history read then is missing. */
+  async sessionsCreatedAfter(since: Date): Promise<VeeamSession[]> {
+    const params = { createdAfterFilter: since.toISOString(), ...NEWEST_FIRST };
+    return (await this.pages<VeeamSession>(SESSIONS, params, SCAN_PAGE)).map(withResultLowered);
+  }
+
   /** The names behind repository and proxy ids — what the Inventory keeps. */
   async inventoryNames(): Promise<InventoryNames> {
     const [repositories, proxies] = await Promise.all([
