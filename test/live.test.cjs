@@ -772,8 +772,9 @@ test('a row says the name, the point count and exactly when the newest was taken
     ],
   });
 
-  // Spelled out, because this is the line somebody reads before opening Veeam.
-  assert.match(text, /^🔴 TTC_Call_Center — 7 точек · пропущено \d+ запусков · 17 июня 2026 г\. в 21:32:09$/mu);
+  // A date and a minute, because this is the line somebody reads before
+  // opening Veeam; not "17 июня 2026 г. в 21:32:09" eighty-five times over.
+  assert.match(text, /^🔴 TTC_Call_Center — 7 точек · пропущено \d+ запусков · 17\.06 в 21:32$/mu);
 });
 
 test('the same staleness means opposite things at different cadences', async () => {
@@ -883,7 +884,7 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
-  assert.match(topic.text, /TTC_Exchange — 1 точка · 23 августа 2026 г\. в 01:31:12/u);
+  assert.match(topic.text, /TTC_Exchange — 1 точка · 23\.08 в 01:31/u);
 });
 
 const HOUR_MS = 3_600_000;
@@ -1217,4 +1218,40 @@ test('📈 names a job the way every other message does, and a session with no j
   assert.match(performance, /TTC_MGMT_MS/);
   assert.doesNotMatch(performance, /old name/);
   assert.match(performance, /Malware Detection/);
+});
+
+/* ------------------------------------------------------------------ *
+ * Veeam's words and moments, as the room reads them
+ * ------------------------------------------------------------------ */
+
+test('a moment says yesterday as yesterday, and a year only when it is not this one', () => {
+  const { dayOf, everyLabel } = require('../dist/telegram/time');
+  const clock = { now: new Date('2026-09-30T05:52:00Z'), timezone: 'Asia/Qyzylorda' };
+  assert.equal(dayOf('2026-09-29T17:25:00Z', clock), 'вчера в 22:25');
+  assert.equal(dayOf('2026-09-26T18:11:00Z', clock), '26.09 в 23:11');
+  assert.equal(dayOf('2025-04-01T17:38:00Z', clock), '01.04.2025 в 22:38');
+  assert.equal(everyLabel(5.04), 'раз в 5 дней', 'not "раз в 5.0 сут"');
+  assert.equal(everyLabel(30.6), 'раз в месяц');
+  assert.equal(everyLabel(0.29), 'раз в 7 часов');
+});
+
+test('Veeam\'s identifiers are written in Russian, and one it does not know is kept as it came', () => {
+  const { resultWord, jobTypeWord, jobStatusWord, bottleneckWord } = require('../dist/telegram/words');
+  assert.equal(resultWord('FAILED'), 'ошибка');
+  assert.equal(jobTypeWord('CloudDirectorBackup'), 'бэкап vCloud');
+  assert.equal(jobStatusWord('inactive'), 'не выполняется');
+  assert.equal(bottleneckWord('Target'), 'репозиторий');
+  assert.equal(jobTypeWord('SomethingNewInVeeam13'), 'SomethingNewInVeeam13', 'a new build must not make a field vanish');
+  assert.equal(resultWord(undefined), undefined);
+});
+
+test('a job running since another day says which day it started', async () => {
+  const { renderRunning } = require('../dist/live/format');
+  const clock = { now: new Date('2026-09-30T05:52:00Z'), timezone: 'Asia/Qyzylorda' };
+  const text = renderRunning({
+    jobs: [{ name: 'CLT_Kazphosphate_vm', type: 'Backup', percent: 56, startedAt: '2026-09-26T18:11:00Z' }],
+    totalJobs: 112,
+  }, clock);
+  // "старт 23:11" read as last night's start for a job four days in.
+  assert.match(text, /старт 26\.09 в 23:11 · идёт 3 д 11 ч · бэкап ВМ/);
 });

@@ -1,5 +1,5 @@
 import { escapeHtml } from '../telegram/format';
-import { dayOf, footerOf, Clock, longMoment, paged, plural } from './format';
+import { dayOf, footerOf, Clock, momentOf, paged, plural } from './format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
@@ -223,9 +223,10 @@ const byUrgency =
  * One line, spelled out: name, how many points, how far behind, and exactly
  * when the newest point was taken.
  *
- * The date is written in full rather than as "5 дней назад" because this is the
- * line somebody reads before opening Veeam, and a relative age has to be
- * translated back into a moment before it can be checked against anything.
+ * The date is a date rather than "5 дней назад" because this is the line
+ * somebody reads before opening Veeam, and a relative age has to be translated
+ * back into a moment before it can be checked against anything. A day and a
+ * minute find the point there; the year is written when it is not this one.
  */
 const depthLine = (job: JobDepth, missed: number | null, clock: Clock): string => {
   const icon =
@@ -237,7 +238,7 @@ const depthLine = (job: JobDepth, missed: number | null, clock: Clock): string =
       `${plural(missed, 'пропущен', 'пропущено', 'пропущено')} ${missed} ${plural(missed, 'запуск', 'запуска', 'запусков')}`,
     );
   }
-  if (job.newest !== undefined) facts.push(longMoment(job.newest, clock));
+  if (job.newest !== undefined) facts.push(momentOf(job.newest, clock));
 
   return `${icon} ${escapeHtml(job.name)} — ${facts.join(' · ')}`;
 };

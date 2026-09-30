@@ -19,21 +19,21 @@ export const renderRepositories = (
 ): string => {
   const footer = footerOf(clock);
   if (!repositories) {
-    return ['💾 <b>VEEAM REPOSITORIES</b>', '', '⚠️ Данные репозиториев временно недоступны.', '', footer].join('\n');
+    return ['💾 <b>Заполненность репозиториев</b>', '', '⚠️ Данные репозиториев временно недоступны.', '', footer].join('\n');
   }
   if (!repositories.length) {
-    return ['💾 <b>VEEAM REPOSITORIES</b>', '', 'Репозитории не найдены.', '', footer].join('\n');
+    return ['💾 <b>Заполненность репозиториев</b>', '', 'Репозитории не найдены.', '', footer].join('\n');
   }
 
   return truncate(
     fitted(repositories.length, (shown) => {
-      const lines = ['💾 <b>VEEAM REPOSITORIES</b>', ''];
+      const lines = ['💾 <b>Заполненность репозиториев</b>', ''];
       repositories.slice(0, shown).forEach((repository, index) => {
         lines.push(...repositoryLines(repository, index + 1));
         if (index < shown - 1) lines.push('', '────────────────────', '');
       });
-      if (shown < repositories.length) lines.push(`…и ещё ${repositories.length - shown}`, '');
-      lines.push(`<b>Всего:</b> ${repositories.length}`, '', footer);
+      if (shown < repositories.length) lines.push('', `…и ещё ${repositories.length - shown}`);
+      lines.push('', `<b>Всего:</b> ${repositories.length}`, '', footer);
       return lines.join('\n');
     }),
   );
@@ -44,14 +44,17 @@ const repositoryLines = (repository: RepositoryCapacity, index: number): string[
   const usage = bar(percent ?? 0, BAR_WIDTH);
   const usageIcon =
     percent === undefined ? '⚪' : percent >= 90 ? '🔴' : percent >= 80 ? '🟠' : percent >= 70 ? '🟡' : '🟢';
-  const onlineIcon = repository.isOnline === undefined ? '⚪' : repository.isOnline ? '🟢' : '🔴';
   return [
     `<b>${index}. ${escapeHtml(repository.name)}</b>`,
     '',
     `${usageIcon} ${usage}  <b>${percent === undefined ? 'нет данных' : `${Math.round(percent)}% занято`}</b>`,
     `📦 ${formatGb(repository.usedGB)} / ${formatGb(repository.capacityGB)}`,
     `💧 Свободно: <b>${formatGb(repository.freeGB)}</b>`,
-    `${onlineIcon} Статус: <b>${repository.isOnline === undefined ? 'UNKNOWN' : repository.isOnline ? 'ONLINE' : 'OFFLINE'}</b>`,
+    // Only when Veeam said. A build whose REST API does not report it (1.1,
+    // veam01baas01) printed "⚪ UNKNOWN" under every repository it has.
+    ...(repository.isOnline === undefined
+      ? []
+      : [repository.isOnline ? '🟢 Доступен' : '🔴 <b>Недоступен</b>']),
   ];
 };
 

@@ -53,21 +53,15 @@ export const moment = (iso: string, clock: Clock): string => {
 };
 
 /**
- * A moment written out in full: "17 июня 2026 г., 21:32:09".
+ * A moment as `dayOf` writes it, from epoch milliseconds: "вчера в 22:25".
  *
- * Used where the reader is about to go and look the point up in Veeam. A
- * relative age ("5 дней назад") has to be turned back into a date before it can
- * be matched against anything on screen, so it is the wrong shape there.
+ * Where the reader is about to go and look a point up in Veeam: a date and a
+ * minute find it there, and a relative age ("5 дней назад") would have to be
+ * turned back into one first. It replaces "29 сентября 2026 г. в 22:25:26",
+ * which said the same eighty-five times down 🗂 and split it over two
+ * messages.
  */
-export const longMoment = (at: number, clock: Clock): string =>
-  parts(new Date(at), clock, {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+export const momentOf = (at: number, clock: Clock): string => dayOf(new Date(at).toISOString(), clock);
 
 export const stampOf = (value: Date, clock: Clock): string =>
   parts(value, clock, {
@@ -92,19 +86,46 @@ export const timeOnly = (iso: string, clock: Clock): string => {
 export const dayKey = (value: Date, clock: Clock): string =>
   parts(value, clock, { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-/** "сегодня в 18:00", "завтра в 03:00", or "16.09 в 03:00". */
+/**
+ * "сегодня в 18:00", "вчера в 22:25", "завтра в 03:00", "16.09 в 03:00", or
+ * "01.04.2025 в 22:38" — the year only when it is not this one, which is the
+ * only time it tells the reader anything.
+ */
 export const dayOf = (iso: string, clock: Clock): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return escapeHtml(iso);
   const time = timeOnly(iso, clock);
 
   const today = dayKey(clock.now, clock);
+  const yesterday = dayKey(new Date(clock.now.getTime() - 86_400_000), clock);
   const tomorrow = dayKey(new Date(clock.now.getTime() + 86_400_000), clock);
   const target = dayKey(date, clock);
 
   if (target === today) return `сегодня в ${time}`;
+  if (target === yesterday) return `вчера в ${time}`;
   if (target === tomorrow) return `завтра в ${time}`;
-  return `${parts(date, clock, { day: '2-digit', month: '2-digit' })} в ${time}`;
+  // dayKey is "dd.mm.yyyy": the year is its last four characters.
+  const sameYear = target.slice(-4) === today.slice(-4);
+  return `${sameYear ? target.slice(0, 5) : target} в ${time}`;
+};
+
+/**
+ * How often something happens, from a cadence in days: "раз в сутки",
+ * "раз в 5 дней", "раз в 7 часов". 🛡 and the job card each wrote their own,
+ * and the card's said "раз в 5.0 сут".
+ */
+export const everyLabel = (days: number): string => {
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24));
+    if (hours === 1) return 'раз в час';
+    if (hours < 24) return `раз в ${hours} ${plural(hours, 'час', 'часа', 'часов')}`;
+    return 'раз в сутки';
+  }
+  const whole = Math.round(days);
+  if (whole === 1) return 'раз в сутки';
+  if (whole === 7) return 'раз в неделю';
+  if (whole >= 28 && whole <= 31) return 'раз в месяц';
+  return `раз в ${whole} ${plural(whole, 'день', 'дня', 'дней')}`;
 };
 
 /** "45 с", "22 мин", "3 ч 33 мин", "2 д 4 ч" — never more than two units. */

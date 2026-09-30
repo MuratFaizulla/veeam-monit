@@ -115,7 +115,9 @@ export const summarise = (
 const BODY_LIMIT = 3400;
 
 const bodyOf = (summary: DigestSummary): string | undefined => {
-  const lines = summary.failing.map((job) => `${job.result.toUpperCase()} — ${job.name}`);
+  // The icons every other message uses for the same two results, where Veeam's
+  // own FAILED and WARNING used to stand.
+  const lines = summary.failing.map((job) => `${job.result === 'failed' ? '🔴' : '🟡'} ${job.name}`);
   if (lines.length === 0) return undefined;
 
   const whole = lines.join('\n');
