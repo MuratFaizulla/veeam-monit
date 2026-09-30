@@ -247,8 +247,8 @@ attempt did it — or Veeam stops trying, which is one more alert, "ОШИБКА
 повторов больше не будет". The attempts in between say nothing. Following
 costs no request until the job's last run moves, which is when Veeam starts
 another attempt. Kept in the state file, so a restart between two attempts
-does not lose the last word; owned by `src/telegram/retrying-runs.ts`, decided
-in `followRetry`.
+does not lose the last word; remembered by `src/telegram/retrying-runs.ts`,
+followed by the **Job alert** module.
 
 Every failure alert lists the machines that went wrong, each with Veeam's
 reason, instead of the session's message — which for a failed machine is
@@ -273,13 +273,37 @@ into `success` is worth a message only as a recovery from something bad. A
 running retry reports `none`, which is not a result and changes nothing.
 
 Deciding is separate from sending. `src/monitor/transitions.ts` says what is
-owed and what to remember; the monitor sends it and records the result only
-once the alert was delivered — a delivery that reached nobody has not dealt
-with anything, so the transition stays pending and is tried again next cycle.
+owed and what to remember; the **Job alert** module sends it and records the
+result only once the alert was delivered — a delivery that reached nobody has
+not dealt with anything, so the transition stays pending and is tried again
+next cycle.
 
 Repositories have the same split in `src/monitor/repository-alarms.ts`: below
 the threshold warns, below half of it is critical, back above it re-arms. The
 hour the daily **Summary** goes out is `digestDue`, in `TELEGRAM_TIMEZONE`.
+
+## Job alert
+
+Everything the bot says about a server's jobs in 🚨 Alerts and 🟢 Recovered, and
+when: a failure, a warning, a recovery, and the last word on a **Retrying
+run**. One module per **Server**, built by the monitor beside it and called
+once a cycle with the job list and the **Evidence**; the alerts come out sent,
+and what is remembered is advanced only for those that were delivered.
+
+Behind that one call: which change is worth a message (**Transition**), which
+failed run Veeam is still retrying and how it ended, where the job's retry
+policy comes from — the Evidence when a scan has finished, the job's own
+configuration otherwise — the **Attempt** line, and the machines that went
+wrong. They used to be private methods of the monitor and the modules around
+them, reachable only through whole monitor cycles; a script that wanted to show
+what an alert looks like copied the field list by hand, and the copy drifted
+within the day. Sending is handed in — the monitor's, which names the server
+and counts deliveries — and so is the clock.
+
+Not in it: the server not answering, the account not signing in, repository
+space and the daily **Summary**, which are the monitor's own.
+
+Owned by `src/monitor/job-alerts.ts`.
 
 ## Summary
 
@@ -485,9 +509,10 @@ Newest 500 per chat, entries older than 48 hours dropped on read.
 Owned by `src/telegram/answer-log.ts`. It is persisted in the state file
 like everything else, but the state store only hands it its part of the file
 and a way to save; the rules above live in the answer log. Job results,
-cooldowns and live messages are split out the same way — `store.jobResults`,
-`store.cooldowns`, `store.liveMessages` — and the store itself keeps only the
-file, the chats and the forum topics.
+retrying runs, cooldowns and live messages are split out the same way —
+`store.jobResultsOf`, `store.retryingOf`, `store.cooldowns`,
+`store.liveMessages` — and the store itself keeps only the file, the chats and
+the forum topics.
 
 ## Button
 
