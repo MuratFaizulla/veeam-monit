@@ -246,3 +246,71 @@ test('before any chat is configured, the bot says only the chat\'s id', async ()
   assert.deepEqual(w.api.of('leaveChat'), [], 'and nobody is left while the bot is being set up');
   assert.deepEqual(w.store.chats(), []);
 });
+
+/* ------------------------------------------------------------------ *
+ * The HTTP endpoints: who may call them
+ *
+ * The keys were checked by guards no test ever called: a guard that let an
+ * empty key through, or a route that lost its guard, would have passed
+ * everything.
+ * ------------------------------------------------------------------ */
+
+const { TelegramAdminGuard, TelegramWebhookGuard } = require('../dist/updates/access.guard');
+const { TelegramController } = require('../dist/updates/telegram.controller');
+
+const ADMIN_KEY = 'admin-key-for-tests-0123456789abcdef';
+const WEBHOOK_SECRET = 'webhook-secret-for-tests-0123456789';
+
+const guarded = (Guard, secrets) => new Guard({ getOrThrow: () => ({ adminKey: '', webhookSecret: '', ...secrets }) });
+
+/** Whether `guard` lets a request with these headers through; a refusal is a 403. */
+const lets = (guard, headers) => {
+  try {
+    return guard.canActivate({ switchToHttp: () => ({ getRequest: () => ({ headers }) }) });
+  } catch (error) {
+    assert.equal(error.getStatus?.(), 403, error.message);
+    return false;
+  }
+};
+
+test('an operator endpoint opens to the admin key and to nothing else', () => {
+  const guard = guarded(TelegramAdminGuard, { adminKey: ADMIN_KEY, webhookSecret: WEBHOOK_SECRET });
+
+  assert.equal(lets(guard, { 'x-telegram-admin-key': ADMIN_KEY }), true);
+  assert.equal(lets(guard, {}), false, 'no key');
+  assert.equal(lets(guard, { 'x-telegram-admin-key': '' }), false);
+  assert.equal(lets(guard, { 'x-telegram-admin-key': ADMIN_KEY.replace(/.$/, 'X') }), false, 'one character off');
+  assert.equal(lets(guard, { 'x-telegram-admin-key': ADMIN_KEY.slice(0, -1) }), false, 'a prefix');
+  assert.equal(lets(guard, { 'x-telegram-admin-key': `${ADMIN_KEY}0` }), false, 'longer');
+  assert.equal(lets(guard, { 'x-telegram-admin-key': [ADMIN_KEY] }), false, 'not a single header');
+  assert.equal(lets(guard, { 'x-telegram-bot-api-secret-token': WEBHOOK_SECRET }), false, 'the webhook secret is not the admin key');
+});
+
+test('with no key configured, every guarded endpoint is closed, not open', () => {
+  const admin = guarded(TelegramAdminGuard, {});
+  const webhook = guarded(TelegramWebhookGuard, {});
+  for (const value of ['', 'anything', undefined]) {
+    assert.equal(lets(admin, { 'x-telegram-admin-key': value }), false);
+    assert.equal(lets(webhook, { 'x-telegram-bot-api-secret-token': value }), false);
+  }
+});
+
+test('the webhook opens to the secret Telegram sends, and not to the admin key', () => {
+  const guard = guarded(TelegramWebhookGuard, { adminKey: ADMIN_KEY, webhookSecret: WEBHOOK_SECRET });
+
+  assert.equal(lets(guard, { 'x-telegram-bot-api-secret-token': WEBHOOK_SECRET }), true);
+  assert.equal(lets(guard, { 'x-telegram-bot-api-secret-token': WEBHOOK_SECRET.slice(1) }), false);
+  assert.equal(lets(guard, { 'x-telegram-admin-key': ADMIN_KEY }), false);
+});
+
+test('every Telegram endpoint carries a key guard: the webhook Telegram\'s, the rest the admin key', () => {
+  const routes = Object.getOwnPropertyNames(TelegramController.prototype)
+    .filter((name) => name !== 'constructor')
+    .filter((name) => Reflect.getMetadata('path', TelegramController.prototype[name]) !== undefined);
+  assert.ok(routes.length >= 8, `routes found: ${routes.join(', ')}`);
+  for (const name of routes) {
+    const guards = Reflect.getMetadata('__guards__', TelegramController.prototype[name]) ?? [];
+    const expected = name === 'webhook' ? TelegramWebhookGuard : TelegramAdminGuard;
+    assert.ok(guards.includes(expected), `${name} is guarded by ${expected.name}`);
+  }
+});

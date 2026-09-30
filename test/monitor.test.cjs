@@ -724,7 +724,7 @@ test('the command menu is registered with Telegram at startup', async () => {
   // long as the test process lives.
   const w = monitorWorld({
     TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com',
-    TELEGRAM_WEBHOOK_SECRET: 'test-secret',
+    TELEGRAM_WEBHOOK_SECRET: 'webhook-secret-for-tests-0123456789',
   }, []);
 
   await w.updates.onModuleInit();

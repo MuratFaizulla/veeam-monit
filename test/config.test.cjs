@@ -104,9 +104,20 @@ test('invalid operator settings fail before the monitor starts', () => {
     TELEGRAM_MONITOR_INTERVAL_MS: '0',
     TELEGRAM_DIGEST_HOUR: '-1',
     TELEGRAM_WEBHOOK_URL: 'https://example.com',
-    TELEGRAM_WEBHOOK_SECRET: 'secret',
+    TELEGRAM_WEBHOOK_SECRET: 'webhook-secret-for-tests-0123456789',
     TELEGRAM_TIMEZONE: 'Asia/Qyzylorda',
   });
+});
+
+test('an admin key or webhook secret short enough to guess is refused, without repeating it', () => {
+  for (const key of ['TELEGRAM_ADMIN_KEY', 'TELEGRAM_WEBHOOK_SECRET']) {
+    const short = 'Sh0rtKey' + key.length;
+    refused({ [key]: short }, new RegExp(`${key} must be at least 32 characters`));
+    assert.throws(() => readConfig({ [key]: short }), (error) => !error.message.includes(short), 'the log never sees the key');
+    accepted({ [key]: 'k'.repeat(32) });
+  }
+  // Empty is not weak: it closes what the key guards.
+  accepted({ TELEGRAM_ADMIN_KEY: '', TELEGRAM_WEBHOOK_SECRET: '' });
 });
 
 test('every wrong setting is named at once, not one per restart', () => {
