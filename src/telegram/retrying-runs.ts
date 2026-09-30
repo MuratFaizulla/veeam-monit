@@ -20,8 +20,12 @@ export interface RetryingRun {
    * reading again; until then it costs nothing to follow.
    */
   lastRun?: string;
-  /** Epoch ms after which Veeam has let its chance to retry pass. */
-  retryBy: number;
+  /**
+   * Epoch ms after which Veeam has let its chance to retry pass. Absent when
+   * an attempt was running when last looked at: then the run is read again as
+   * soon as the job stops running.
+   */
+  retryBy?: number;
 }
 
 /** Holds one server's part of the state and calls `save` after each change, like JobResults. */

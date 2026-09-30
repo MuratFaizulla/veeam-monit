@@ -236,8 +236,10 @@ with identical text were three attempts at one run and nothing said so — and
 what comes next, which is what decides between waiting and going to look:
 "Veeam повторит ≈ сегодня в 04:33" while the job has attempts left and the
 wait since the last one has not run out, "повторов больше не будет" once
-either has. That answer is `standingOf`, by the same rule that folds the
-attempts.
+either has, and "повтор уже идёт" when the next attempt is running as the
+failure is read. That answer is `standingOf`, by the same rule that folds the
+attempts; an attempt with no end yet is the next attempt of the failed run
+it follows, never the end of it.
 
 A failure is announced when the result changes, which is after the first
 attempt, so that alert alone always said "1 из 4". A run announced while
