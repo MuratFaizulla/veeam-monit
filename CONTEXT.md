@@ -259,9 +259,19 @@ the **Job alert** module.
 Every failure alert lists the machines that went wrong, each with Veeam's
 reason, instead of the session's message — which for a failed machine is
 "Processing EMMDB1-T3Q4", its name and not a word about why. The reason comes
-from the task sessions, or on REST API 1.1 from the session log (`machineResults`),
-with Veeam's "Processing <machine> Error:" and the line that repeats the
-connection parameters taken off (`machineLine`). The job card reads the same.
+from the task sessions, or on REST API 1.1 from the session log (`machineResults`).
+The job card reads the same.
+
+What Veeam's words mean is one module, `src/veeam/session-text.ts`: which
+machine a line blames and why (`machineLine`), with "Processing <machine>
+Error:", the line that repeats the connection parameters — the service
+account among them — and the agent's call stack taken off. A session's own
+message goes through it once, when the job's sessions are read: what travels
+on is the text worth showing (`sessionText`) and the machine it blames
+(`blameOf`), never the message as Veeam wrote it. Shown raw, a Job card's run
+list once carried "Logon attempt with parameters […] Login: […]" into the
+chat. A machine the session blames takes the session's reason over its own
+task's, which may say no more than the step it stopped at.
 
 Distinct from the remembered result, which is what stops the repeats: a job
 reports `none` while a retry runs, and recording that over `failed` made the

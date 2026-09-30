@@ -37,7 +37,10 @@ export interface JobSession {
   endedAt?: string;
   /** Lower-cased, as the estate reader hands every session result out. */
   result?: string;
+  /** Veeam's message as it is worth showing — see `sessionText`; never as Veeam wrote it. */
   message?: string;
+  /** The machine the message says went wrong, and why, when it says both. */
+  blames?: { machine: string; reason: string };
   /** 0-100, only while running and only once Veeam reports any. */
   percent?: number;
 }

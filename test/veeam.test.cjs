@@ -373,3 +373,86 @@ test('only a refusal of the version is read as one, and the newest version it na
   assert.equal(spokenVersion('Veeam API responded with HTTP 400'), undefined);
   assert.equal(spokenVersion('Job v1.1-rev2 not found'), undefined);
 });
+
+/* ------------------------------------------------------------------ *
+ * What Veeam's words about a session mean
+ *
+ * One machine's failure is written the same way in a task's message, a
+ * session's message and a session log, wrapped in boilerplate: the line that
+ * repeats the connection parameters — service account included — and the
+ * agent's call stack in prose. Shown raw, a Job card's run list carried them
+ * into the chat.
+ * ------------------------------------------------------------------ */
+
+const { machineLine, sessionText, blameOf } = require('../dist/veeam/session-text');
+
+const VDDK =
+  'Processing EMMDB1-T3Q4 Error: Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )\r\n' +
+  'Logon attempt with parameters [VC/ESX: [10.11.1.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]\r\n' +
+  'Failed to open disk for read.\r\n' +
+  "Failed to upload disk 'vddkConnSpec>'\r\n" +
+  'Agent failed to process method {DataTransfer.SyncDisk}.';
+const DNS =
+  'Processing comp01vc01.ast01.mgmt.cloudttc.kz Error: Cannot get service content.\r\n' +
+  "Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cast.t-cloud.kz:443/sdk'\r\n" +
+  'Logon attempt with parameters [VC/ESX: [vc01cast.t-cloud.kz];Port: 443;Login: [svc@example.com]]';
+
+test('Veeam\'s ways of saying a machine failed are read as the machine and the reason', () => {
+
+  // Two lines of it: the connection parameters are not a reason, and what
+  // follows the second is the agent's call stack.
+  assert.deepEqual(machineLine(VDDK), {
+    machine: 'EMMDB1-T3Q4',
+    reason: 'Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.',
+  });
+  // The second line is the one that says it was DNS.
+  assert.deepEqual(
+    machineLine("Processing EMM1-Dy2M Error: Cannot get service content.\r\nSoap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'"),
+    { machine: 'EMM1-Dy2M', reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'" },
+  );
+  assert.deepEqual(
+    machineLine('Failed to create processing task for VM t-dom002.t-cloud.kz Error: Failed to retrieve object hierarchy: exception ID d1dd9757'),
+    { machine: 't-dom002.t-cloud.kz', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
+  );
+  assert.deepEqual(
+    machineLine('Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
+    { machine: 'REMS-DBS03', reason: 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing' },
+  );
+  assert.deepEqual(
+    machineLine('Error: Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".'),
+    { reason: 'Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".' },
+  );
+  // A name and no reason: Veeam said which, not why.
+  assert.deepEqual(machineLine('Processing Sirius'), { machine: 'Sirius', reason: undefined });
+});
+
+test('a session\'s message is shown as a machine and its reason, never with the connection parameters', () => {
+  assert.equal(
+    sessionText(VDDK),
+    'EMMDB1-T3Q4 — Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.',
+  );
+  assert.equal(
+    sessionText(DNS),
+    "comp01vc01.ast01.mgmt.cloudttc.kz — Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cast.t-cloud.kz:443/sdk'",
+  );
+  // A name with no reason stays as Veeam wrote it: "Processing" is what says
+  // the name is a machine.
+  assert.equal(sessionText('Processing EMMDB1-T3Q4'), 'Processing EMMDB1-T3Q4');
+  // A reason that names its machine already is not given the name twice.
+  const unavailable = 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing';
+  assert.equal(sessionText(unavailable), unavailable);
+  assert.equal(sessionText('Removing VM snapshot Details: A connection attempt failed'), 'Removing VM snapshot Details: A connection attempt failed');
+  assert.equal(sessionText('   '), undefined);
+  assert.equal(sessionText(undefined), undefined);
+  for (const text of [VDDK, DNS].map(sessionText)) assert.doesNotMatch(text, /Logon attempt|svc@example\.com|DataTransfer/);
+});
+
+test('a session blames a machine only when it names one and says why', () => {
+  assert.deepEqual(blameOf(DNS), {
+    machine: 'comp01vc01.ast01.mgmt.cloudttc.kz',
+    reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()', endpoint: 'https://vc01cast.t-cloud.kz:443/sdk'",
+  });
+  assert.equal(blameOf('Processing EMMDB1-T3Q4'), undefined, 'a name alone blames nobody');
+  assert.equal(blameOf('Error: Выдано исключение типа "AgentClosedException".'), undefined, 'a reason alone names nobody');
+  assert.equal(blameOf(undefined), undefined);
+});
