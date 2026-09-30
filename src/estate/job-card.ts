@@ -3,7 +3,7 @@ import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '.
 import { jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
-import { RetainedHistory } from './backup-evidence.service';
+import { RetainedHistory } from './evidence';
 import { iconOf, isBadResult } from './job-state';
 import { runsOf } from './runs';
 import { daysOf, describeRetry, describeSchedule } from './schedule-planner';

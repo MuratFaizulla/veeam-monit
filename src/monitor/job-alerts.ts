@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { Evidence } from '../estate/backup-evidence.service';
+import { Evidence } from '../estate/evidence';
 import { FailedObject, JobSession } from '../estate/job-card';
 import { iconOf, isBadResult, isDisabled, isRunning, statusOf } from '../estate/job-state';
 import { RunStanding, standingOf } from '../estate/runs';

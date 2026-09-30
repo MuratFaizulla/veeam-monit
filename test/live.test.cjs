@@ -531,7 +531,7 @@ const points = (now, ageDays, everyDays, count = 8) =>
  */
 const standings = (jobs, pointsByJob, streakByJob, now) => {
   const { standingsOf } = require('../dist/estate/job-standing');
-  const { cadenceOf } = require('../dist/estate/backup-evidence.service');
+  const { cadenceOf } = require('../dist/estate/evidence');
   const newestFirst = new Map(
     [...pointsByJob].map(([id, stamps]) => [id, [...stamps].sort((a, b) => b - a)]),
   );
