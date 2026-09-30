@@ -4,8 +4,7 @@ import { FailedObject, JobSession } from '../estate/job-card';
 import { iconOf, isBadResult, isDisabled, isRunning, statusOf } from '../estate/job-state';
 import { RunStanding, standingOf } from '../estate/runs';
 import { ServerEstate } from '../estate/server-estates';
-import { JobResults } from '../telegram/job-results';
-import { RetryingRun, RetryingRuns } from '../telegram/retrying-runs';
+import { JobMemory, RetryingRun } from '../telegram/job-memory';
 import { DeliveryReport } from '../telegram/telegram.service';
 import { dayOf, momentOf } from '../telegram/time';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
@@ -49,16 +48,16 @@ export class JobAlerts {
 
   /** Announces what changed since what is remembered about this server's jobs. */
   async check(jobs: Job[], evidence: Evidence): Promise<void> {
-    const { results, retrying } = this.memory;
-    // An empty record means this server has never been observed: a new
+    const { memory } = this;
+    // Nothing remembered means this server has never been observed: a new
     // installation, or a server just added to the list.
-    const seeding = !results.seeded();
-    const transitions = jobTransitions(jobs, (id) => results.of(id), seeding);
+    const seeding = !memory.seeded();
+    const transitions = jobTransitions(jobs, (id) => memory.resultOf(id), seeding);
 
     for (const transition of transitions) {
       const { job, severity, remember } = transition;
       if (severity) {
-        const followed = retrying.of(job.id);
+        const followed = memory.retryingOf(job.id);
         // A recovery needs no attempt, unless it is a retry that worked.
         const run = severity === 'success' && !followed ? undefined : await this.runOf(job, evidence);
         const report = await this.send(await this.eventOf({ ...transition, severity }, run));
@@ -69,15 +68,13 @@ export class JobAlerts {
         // Followed while Veeam has attempts left; any other change of result
         // ends the run, and this alert has said how.
         const next = severity === 'critical' ? run && retryingRunOf(job, run.standing) : undefined;
-        if (next) retrying.follow(job.id, next);
-        else retrying.forget(job.id);
+        if (next) memory.follow(job.id, next);
+        else memory.unfollow(job.id);
       }
-      results.record(job.id, remember);
+      memory.remember(job.id, remember);
     }
 
-    const ids = new Set(jobs.map((job) => job.id));
-    results.keepOnly(ids);
-    retrying.keepOnly(ids);
+    memory.keepOnly(new Set(jobs.map((job) => job.id)));
     for (const job of jobs) await this.followRetry(job, evidence);
 
     if (seeding) {
@@ -96,8 +93,8 @@ export class JobAlerts {
    * wait for an attempt has run out without one, and costs nothing between.
    */
   private async followRetry(job: Job, evidence: Evidence): Promise<void> {
-    const { retrying } = this.memory;
-    const followed = retrying.of(job.id);
+    const { memory } = this;
+    const followed = memory.retryingOf(job.id);
     // Any other result is a change the alerts have already dealt with, and
     // an attempt in flight has nothing to say yet.
     if (!followed || job.result !== 'failed' || isRunning(job)) return;
@@ -111,11 +108,11 @@ export class JobAlerts {
     if (run.sessions[0] && !run.sessions[0].endedAt) return;
     const next = retryingRunOf(job, run.standing);
     if (next) {
-      retrying.follow(job.id, next);
+      memory.follow(job.id, next);
       return;
     }
     const report = await this.send(await this.eventOf({ job, result: 'failed', severity: 'critical' }, run, true));
-    if (report.outcome !== 'failed') retrying.forget(job.id);
+    if (report.outcome !== 'failed') memory.unfollow(job.id);
   }
 
   /**
@@ -205,14 +202,6 @@ export class JobAlerts {
     const scanned = evidence.status === 'ready' ? evidence.schedulesByJob.get(job.id) : undefined;
     return scanned ?? (await this.server.jobs.configurationOf(job))?.schedule;
   }
-}
-
-/** What is remembered about one server's jobs, from one cycle to the next and across a restart. */
-export interface JobMemory {
-  /** The result each job was last reported with. */
-  results: JobResults;
-  /** The failed runs Veeam was still retrying when announced. */
-  retrying: RetryingRuns;
 }
 
 /** Sends one alert and says what became of it; only whether it reached nobody matters here. */

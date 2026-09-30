@@ -425,12 +425,12 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   const w = monitorWorld({}, [job('1', 'SQL Daily', 'Success')], {}, rejectSend(() => broken));
 
   await w.monitor.check();
-  assert.equal(w.store.jobResultsOf(SERVER).of('1'), 'success', 'первый цикл засеял состояние');
+  assert.equal(w.store.jobMemoryOf(SERVER).resultOf('1'), 'success', 'первый цикл засеял состояние');
 
   w.setJobs([job('1', 'SQL Daily', 'Failed')]);
   await w.monitor.check();
   assert.equal(
-    w.store.jobResultsOf(SERVER).of('1'),
+    w.store.jobMemoryOf(SERVER).resultOf('1'),
     'success',
     'провалившаяся отправка не отмечает переход как обработанный',
   );
@@ -444,7 +444,7 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
   assert.match(sent[0].text, /SQL Daily/);
   assert.match(sent[0].text, /Результат:<\/b> ошибка/);
-  assert.equal(w.store.jobResultsOf(SERVER).of('1'), 'failed');
+  assert.equal(w.store.jobMemoryOf(SERVER).resultOf('1'), 'failed');
   assert.equal(w.monitor.status.lastOutcome, 'delivered');
 });
 
@@ -504,7 +504,7 @@ test('every state write persists without the caller managing save()', async () =
   const w = world({}, {}, file);
 
   w.store.rememberTopic(CHAT, 'SQL Daily', 77);
-  w.store.jobResultsOf(SERVER).record('job-1', 'failed');
+  w.store.jobMemoryOf(SERVER).remember('job-1', 'failed');
   w.store.cooldowns.arm('k', 60_000);
   w.store.flush();
 
@@ -512,7 +512,7 @@ test('every state write persists without the caller managing save()', async () =
   // three modules above ever had to remember a save.
   const reopened = new TelegramStateStore(file, [CHAT]);
   assert.equal(reopened.threadId(CHAT, 'SQL Daily'), 77);
-  assert.equal(reopened.jobResultsOf(SERVER).of('job-1'), 'failed');
+  assert.equal(reopened.jobMemoryOf(SERVER).resultOf('job-1'), 'failed');
   assert.equal(reopened.cooldowns.isSuppressed('k'), true);
   assert.deepEqual(
     reopened.chats().map(([id]) => id),
@@ -520,9 +520,9 @@ test('every state write persists without the caller managing save()', async () =
     'чат, засеянный из конфигурации, тоже сохранён',
   );
 
-  reopened.jobResultsOf(SERVER).keepOnly(new Set(['other']));
+  reopened.jobMemoryOf(SERVER).keepOnly(new Set(['other']));
   reopened.flush();
-  assert.equal(new TelegramStateStore(file).jobResultsOf(SERVER).of('job-1'), undefined);
+  assert.equal(new TelegramStateStore(file).jobMemoryOf(SERVER).resultOf('job-1'), undefined);
   fs.rmSync(file, { force: true });
 });
 
@@ -554,19 +554,73 @@ test('only configured chats are sent to, and one remembered by an older version 
   fs.rmSync(`${file}.bak`, { force: true });
 });
 
+test('a job deleted in Veeam takes everything remembered about it along, in one write', () => {
+  const { JobMemory } = require('../dist/telegram/job-memory');
+  const record = {
+    results: { gone: 'failed', kept: 'success' },
+    retrying: { gone: { attempt: 1, retryBy: 1 } },
+  };
+  let saves = 0;
+  const memory = new JobMemory(record, () => (saves += 1));
+
+  memory.keepOnly(new Set(['kept']));
+
+  // Pruned only by its result, the run stayed in the file for good.
+  assert.deepEqual(record, { results: { kept: 'success' }, retrying: {} });
+  assert.equal(saves, 1);
+  memory.keepOnly(new Set(['kept']));
+  assert.equal(saves, 1, 'ничего не изменилось — ничего не записано');
+});
+
+test('a job entry this version cannot read is left out, and the rest of the state is kept', async () => {
+  const file = path.join(os.tmpdir(), `veeam-memory-${Math.random().toString(36).slice(2)}.json`);
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1, chats: {}, topics: { [CHAT]: { Alerts: 5 } }, cooldowns: {}, liveMessages: {}, answers: {},
+    jobResults: { [SERVER]: { ok: 'failed', broken: 5 }, junk: 'x' },
+    retrying: { [SERVER]: { ok: { attempt: 2, lastRun: '2026-09-30T04:33:41Z', retryBy: 1 }, text: 'x', odd: { attempt: '2' } }, bad: [] },
+  }));
+
+  const store = new TelegramStateStore(file, [CHAT]);
+
+  // Checked whole, one bad entry used to cost the file — and with it the
+  // chats, the topics and the live messages, for the sake of one job.
+  assert.equal(store.threadId(CHAT, 'Alerts'), 5, 'темы на месте');
+  const memory = store.jobMemoryOf(SERVER);
+  assert.equal(memory.resultOf('ok'), 'failed');
+  assert.equal(memory.resultOf('broken'), undefined);
+  assert.deepEqual(memory.retryingOf('ok'), { attempt: 2, lastRun: '2026-09-30T04:33:41Z', retryBy: 1 });
+  assert.equal(memory.retryingOf('text'), undefined);
+  assert.equal(memory.retryingOf('odd'), undefined);
+  const { jobResults, retrying } = store.snapshot();
+  assert.deepEqual(Object.keys(jobResults), [SERVER]);
+  assert.deepEqual(Object.keys(retrying), [SERVER]);
+
+  // A file from before runs were followed has none, and is read as such.
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1, chats: {}, topics: {}, cooldowns: {}, liveMessages: {}, answers: {}, jobResults: { [SERVER]: { ok: 'failed' } },
+  }));
+  const older = new TelegramStateStore(file, [CHAT]);
+  assert.equal(older.jobMemoryOf(SERVER).resultOf('ok'), 'failed');
+  assert.equal(older.jobMemoryOf(SERVER).retryingOf('ok'), undefined);
+
+  await new Promise(setImmediate);
+  fs.rmSync(file, { force: true });
+  fs.rmSync(`${file}.bak`, { force: true });
+});
+
 test('a damaged Telegram state is restored from the last complete copy', async () => {
   const file = path.join(os.tmpdir(), `veeam-backup-${Math.random().toString(36).slice(2)}.json`);
   const store = new TelegramStateStore(file, [CHAT]);
-  store.jobResultsOf(SERVER).record('job-1', 'failed');
+  store.jobMemoryOf(SERVER).remember('job-1', 'failed');
   store.flush();
   assert.ok(fs.existsSync(`${file}.bak`));
 
   fs.writeFileSync(file, '{broken', 'utf8');
   const restored = new TelegramStateStore(file, [CHAT]);
-  assert.equal(restored.jobResultsOf(SERVER).of('job-1'), 'failed');
+  assert.equal(restored.jobMemoryOf(SERVER).resultOf('job-1'), 'failed');
   assert.deepEqual(restored.chats().map(([id]) => id), [CHAT]);
   restored.flush();
-  assert.equal(new TelegramStateStore(file).jobResultsOf(SERVER).of('job-1'), 'failed');
+  assert.equal(new TelegramStateStore(file).jobMemoryOf(SERVER).resultOf('job-1'), 'failed');
 
   await new Promise(setImmediate);
   fs.rmSync(file, { force: true });

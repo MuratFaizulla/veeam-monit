@@ -253,8 +253,8 @@ attempt did it — or Veeam stops trying, which is one more alert, "ОШИБКА
 повторов больше не будет". The attempts in between say nothing. Following
 costs no request until the job's last run moves, which is when Veeam starts
 another attempt. Kept in the state file, so a restart between two attempts
-does not lose the last word; remembered by `src/telegram/retrying-runs.ts`,
-followed by the **Job alert** module.
+does not lose the last word; remembered by the **Job memory**, followed by
+the **Job alert** module.
 
 Every failure alert lists the machines that went wrong, each with Veeam's
 reason, instead of the session's message — which for a failed machine is
@@ -310,6 +310,23 @@ Not in it: the server not answering, the account not signing in, repository
 space and the daily **Summary**, which are the monitor's own.
 
 Owned by `src/monitor/job-alerts.ts`.
+
+## Job memory
+
+What the bot remembers about one server's jobs across cycles and restarts: the
+result each job was last reported with, and the **Retrying run** of each job
+Veeam is still retrying. One module per server, handed its part of the state
+file; a job deleted in Veeam, or a server taken off the list, takes both
+along. They were two modules once, and the second, copied from the first,
+missed being pruned with its server.
+
+The file keeps the two parts where older versions wrote them, `jobResults`
+and `retrying`, so a version rolled back to reads what it knows. They are
+checked entry by entry on the way in: an entry this version would not have
+written is left out and said, rather than failing the file — which would
+cost the chats, topics and live messages beside it for the sake of one job.
+
+Owned by `src/telegram/job-memory.ts`.
 
 ## Summary
 
@@ -514,11 +531,10 @@ Newest 500 per chat, entries older than 48 hours dropped on read.
 
 Owned by `src/telegram/answer-log.ts`. It is persisted in the state file
 like everything else, but the state store only hands it its part of the file
-and a way to save; the rules above live in the answer log. Job results,
-retrying runs, cooldowns and live messages are split out the same way —
-`store.jobResultsOf`, `store.retryingOf`, `store.cooldowns`,
-`store.liveMessages` — and the store itself keeps only the file, the chats and
-the forum topics.
+and a way to save; the rules above live in the answer log. The **Job
+memory**, cooldowns and live messages are split out the same way —
+`store.jobMemoryOf`, `store.cooldowns`, `store.liveMessages` — and the store
+itself keeps only the file, the chats and the forum topics.
 
 ## Button
 

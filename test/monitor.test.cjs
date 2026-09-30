@@ -1077,8 +1077,7 @@ test('the alert says which attempt it is', async () => {
  * ------------------------------------------------------------------ */
 
 const { JobAlerts } = require('../dist/monitor/job-alerts');
-const { JobResults } = require('../dist/telegram/job-results');
-const { RetryingRuns } = require('../dist/telegram/retrying-runs');
+const { JobMemory } = require('../dist/telegram/job-memory');
 const { jobOf } = require('../dist/veeam/estate');
 const { serverOf } = require('./world.cjs');
 
@@ -1123,7 +1122,7 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
       data: [{ name: 'EMMDB1-T3Q4', result: { result: 'Failed', message: VDDK } }],
     }])),
   }));
-  const memory = { results: new JobResults({}, () => {}), retrying: new RetryingRuns({}, () => {}) };
+  const memory = new JobMemory({ results: {}, retrying: {} }, () => {});
   const send = async (event) => {
     if (!delivers) return { outcome: 'failed' };
     sent.push(event);
@@ -1187,7 +1186,7 @@ test('the first failure says Veeam will try again, and which machine failed and 
   );
   // "не выполняется" is what every job an alert is about is doing.
   assert.equal(fieldOf(alert, 'Статус'), undefined);
-  assert.equal(night.memory.retrying.of('1').attempt, 1, 'запуск запомнен до конца повторов');
+  assert.equal(night.memory.retryingOf('1').attempt, 1, 'запуск запомнен до конца повторов');
 });
 
 test('the retries in between say nothing, and the last one says the run is over', async () => {
@@ -1204,7 +1203,7 @@ test('the retries in between say nothing, and the last one says the run is over'
   night.attempt(3);
   await night.check();
   assert.deepEqual(night.sent, [], 'повторы, у которых есть ещё попытки, — не событие');
-  assert.equal(night.memory.retrying.of('1').attempt, 3);
+  assert.equal(night.memory.retryingOf('1').attempt, 3);
 
   night.attempt(4);
   await night.check();
@@ -1213,7 +1212,7 @@ test('the retries in between say nothing, and the last one says the run is over'
   assert.equal(fieldOf(last, 'Попытка'), '4 из 4 · повторов больше не будет');
   assert.match(last.body, /🔴 EMMDB1-T3Q4 — Failed to open VDDK disk/);
   assert.equal(fieldOf(last, 'Было'), undefined, 'что было до этого запуска, сказано в первом сообщении');
-  assert.equal(night.memory.retrying.of('1'), undefined);
+  assert.equal(night.memory.retryingOf('1'), undefined);
 
   await night.check();
   assert.equal(night.sent.length, 1, 'и сказано один раз');
@@ -1255,7 +1254,7 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   assert.equal(alert.title, 'TTC_ASUEDT_EMM_DB1: ОШИБКА');
   assert.equal(fieldOf(alert, 'Попытка'), '2 из 4 · повтор уже идёт');
   assert.match(alert.body, /🔴 EMMDB1-T3Q4 — Failed to open VDDK disk/, 'причина — из попытки, что упала');
-  assert.equal(night.memory.retrying.of('1').attempt, 2);
+  assert.equal(night.memory.retryingOf('1').attempt, 2);
 
   // It fails, and so do the two after it: the last word comes, once.
   for (const n of [2, 3]) {
@@ -1285,7 +1284,7 @@ test('a job only a hand can start is promised no retry, and not waited on', asyn
     assert.equal(night.sent.length, 1, 'одно сообщение, без «повторов больше не будет» полчаса спустя');
     assert.equal(night.sent[0].title, 'TTC_ASUEDT_EMM_DB1: ОШИБКА');
     assert.equal(fieldOf(night.sent[0], 'Попытка'), undefined, 'повтора не обещано');
-    assert.equal(night.memory.retrying.of('1'), undefined);
+    assert.equal(night.memory.retryingOf('1'), undefined);
   }
   assert.equal(fieldOf(switchedOff.sent[0], 'Статус'), 'выключено в Veeam');
 });
@@ -1325,7 +1324,7 @@ test('a retry that works is a recovery that says which attempt did it', async ()
   assert.equal(recovered.title, 'TTC_ASUEDT_EMM_DB1: задание восстановлено');
   assert.equal(fieldOf(recovered, 'Попытка'), '2 из 4');
   assert.equal(recovered.body, undefined);
-  assert.equal(night.memory.retrying.of('1'), undefined);
+  assert.equal(night.memory.retryingOf('1'), undefined);
 });
 
 test('an alert that reached nobody is not remembered, and is sent again next cycle', async () => {
@@ -1335,14 +1334,14 @@ test('an alert that reached nobody is not remembered, and is sent again next cyc
   night.attempt(1);
   night.delivers = false;
   await night.check();
-  assert.equal(night.memory.results.of('1'), 'success', 'отказ всё ещё новость');
-  assert.equal(night.memory.retrying.of('1'), undefined);
+  assert.equal(night.memory.resultOf('1'), 'success', 'отказ всё ещё новость');
+  assert.equal(night.memory.retryingOf('1'), undefined);
 
   night.delivers = true;
   await night.check();
   assert.equal(night.sent.length, 1);
-  assert.equal(night.memory.results.of('1'), 'failed');
-  assert.equal(night.memory.retrying.of('1').attempt, 1);
+  assert.equal(night.memory.resultOf('1'), 'failed');
+  assert.equal(night.memory.retryingOf('1').attempt, 1);
 
   // The last word too: undelivered, the run stays followed.
   for (const n of [2, 3]) {
@@ -1352,11 +1351,11 @@ test('an alert that reached nobody is not remembered, and is sent again next cyc
   night.attempt(4);
   night.delivers = false;
   await night.check();
-  assert.equal(night.memory.retrying.of('1').attempt, 3, 'не доставлено — не забыто');
+  assert.equal(night.memory.retryingOf('1').attempt, 3, 'не доставлено — не забыто');
   night.delivers = true;
   await night.check();
   assert.equal(night.sent.at(-1).title, 'TTC_ASUEDT_EMM_DB1: ОШИБКА, повторов больше не будет');
-  assert.equal(night.memory.retrying.of('1'), undefined);
+  assert.equal(night.memory.retryingOf('1'), undefined);
 });
 
 test('the monitor hands every server\'s jobs to its Job alerts, and the run followed is kept in the state file', async () => {
