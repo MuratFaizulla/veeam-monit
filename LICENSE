@@ -1,0 +1,62 @@
+Copyright (c) 2026 Мурат Файзулла (Murat Faizulla). Все права защищены.
+
+Veeam Telegram Monitor, включая исходный код, тесты, документацию и
+сопутствующие файлы (далее — «Программа»), принадлежит правообладателю.
+
+Без предварительного письменного разрешения правообладателя запрещается:
+
+  1. копировать, воспроизводить и распространять Программу или её части;
+  2. изменять Программу и создавать на её основе производные работы;
+  3. публиковать Программу, передавать её третьим лицам, сублицензировать,
+     продавать или сдавать в аренду;
+  4. использовать Программу иначе, чем разрешил правообладатель.
+
+Тот, кто получил доступ к Программе с разрешения правообладателя, может
+пользоваться ею только в пределах этого разрешения. Разрешение не передаёт
+права на Программу и может быть отозвано.
+
+Программа предоставляется «как есть», без каких-либо гарантий, явных или
+подразумеваемых, в том числе гарантий пригодности для определённой цели.
+Правообладатель не отвечает за ущерб, возникший в связи с использованием
+Программы или невозможностью её использовать.
+
+Сторонние компоненты, которые использует Программа (библиотеки npm, значки
+Simple Icons), распространяются на условиях собственных лицензий. Veeam и
+Veeam Backup & Replication — товарные знаки Veeam Software, Telegram — товарный
+знак его владельца. Программа не связана с этими компаниями.
+
+По вопросам использования: https://github.com/MuratFaizulla
+
+--------------------------------------------------------------------------------
+
+English translation. In case of any discrepancy, the Russian text prevails.
+
+Copyright (c) 2026 Murat Faizulla. All rights reserved.
+
+Veeam Telegram Monitor, including its source code, tests, documentation and
+accompanying files (the "Software"), is the property of the copyright holder.
+
+Without the prior written permission of the copyright holder, you may not:
+
+  1. copy, reproduce or distribute the Software or any part of it;
+  2. modify the Software or create derivative works based on it;
+  3. publish, transfer, sublicense, sell or rent the Software;
+  4. use the Software in any way other than as permitted by the copyright
+     holder.
+
+Anyone given access to the Software by the copyright holder may use it only
+within the scope of that permission. Permission transfers no rights in the
+Software and may be withdrawn.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party components used by the Software (npm libraries, Simple Icons)
+are distributed under their own licenses. Veeam and Veeam Backup & Replication
+are trademarks of Veeam Software; Telegram is a trademark of its owner. The
+Software is not affiliated with these companies.
+
+Enquiries: https://github.com/MuratFaizulla
