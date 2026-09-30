@@ -103,6 +103,8 @@ export interface RunStanding {
   retryAt?: number;
   /** The last moment a retry can start and still belong to this run, epoch ms. */
   retryBy?: number;
+  /** Veeam is retrying the run as it is read: its newest attempt has not ended. */
+  inFlight?: boolean;
 }
 
 /**
@@ -125,6 +127,14 @@ export const standingOf = (
   const allowed = retriesAllowed(schedule);
   const run = runsOf(newestFirst, windowMs)[0];
   if (!run) return { attempt: 1, allowed };
+  // An attempt still going has no result, and a run read as ending in it was
+  // said to be over: "2 из 4 · повторов больше не будет" about a run Veeam was
+  // retrying at that moment. Folded into a failed run, it is that run's next
+  // attempt; standing alone, it is a new run, and the one before it is over.
+  if (!run.attempts[0].endedAt) {
+    if (run.attempts.length > 1) return { attempt: run.attempts.length, allowed, inFlight: true };
+    return standingOf(newestFirst.slice(1), schedule, now);
+  }
   const attempt = run.attempts.length;
   const ended = Date.parse(run.attempts[0].endedAt ?? '');
   const retrying =

@@ -101,7 +101,8 @@ export class JobAlerts {
     // Any other result is a change the alerts have already dealt with, and
     // an attempt in flight has nothing to say yet.
     if (!followed || job.result !== 'failed' || isRunning(job)) return;
-    if (job.lastRun === followed.lastRun && this.now() <= followed.retryBy) return;
+    const waiting = followed.retryBy !== undefined && this.now() <= followed.retryBy;
+    if (job.lastRun === followed.lastRun && waiting) return;
 
     // Whichever run is newest now: should the one followed have ended out of
     // sight — the bot down through a whole night — the job list shows the
@@ -230,11 +231,14 @@ interface JobRun {
   standing: RunStanding;
 }
 
-/** The run to follow, when Veeam is still due to retry it. */
-const retryingRunOf = (job: Job, standing: RunStanding): RetryingRun | undefined =>
-  standing.retryBy !== undefined
-    ? { attempt: standing.attempt, lastRun: job.lastRun, retryBy: standing.retryBy }
-    : undefined;
+/** The run to follow, when Veeam is retrying it or still due to. */
+const retryingRunOf = (job: Job, standing: RunStanding): RetryingRun | undefined => {
+  // Nothing to wait for while an attempt runs: it is read again as soon as
+  // the job stops running.
+  if (standing.inFlight) return { attempt: standing.attempt, lastRun: job.lastRun };
+  if (standing.retryBy === undefined) return undefined;
+  return { attempt: standing.attempt, lastRun: job.lastRun, retryBy: standing.retryBy };
+};
 
 /** Objects listed per group; the rest are counted. */
 const OBJECTS_SHOWN = 5;
@@ -261,6 +265,7 @@ export const attemptLine = (
   // count is worth saying only when retries came before it; so is a failure's
   // when the job's policy could not be read and nothing is known of what next.
   if (result !== 'failed' || !allowed) return attempt > 1 ? count : undefined;
+  if (standing.inFlight) return `${count} · повтор уже идёт`;
   if (retryAt !== undefined) return `${count} · Veeam повторит ≈ ${when(retryAt)}`;
   return `${count} · повторов больше не будет`;
 };

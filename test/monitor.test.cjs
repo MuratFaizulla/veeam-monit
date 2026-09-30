@@ -1133,7 +1133,8 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
   const evidence = { status: 'ready', schedulesByJob: new Map([['1', schedule]]) };
   const session = (n, result, ended = ends[n - 1]) => ({
     id: `a${n}`, jobId: '1', sessionType: 'BackupJob', creationTime: at(starts[n - 1]),
-    endTime: ended === null ? undefined : at(ended), result: { result, message: 'Processing EMMDB1-T3Q4' },
+    // A session still going has no result yet.
+    endTime: ended === null ? undefined : at(ended), result: { result: ended === null ? 'None' : result, message: 'Processing EMMDB1-T3Q4' },
   });
 
   return {
@@ -1150,11 +1151,15 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
     },
     check: () =>
       alerts.check([jobOf({ id: '1', name: 'TTC_ASUEDT_EMM_DB1', type: 'Backup', objectsCount: 1, ...state })], evidence),
-    /** The n-th attempt ended with `result`; `ended: null` means it is still running. */
-    attempt(n, result = 'Failed', { ended } = {}) {
+    /**
+     * The n-th attempt ended with `result`; `ended: null` means it is still
+     * running. `reported` is the job's result as Veeam's job list gives it,
+     * when it is not the one that follows from that.
+     */
+    attempt(n, result = 'Failed', { ended, reported } = {}) {
       sessions = [session(n, result, ended), ...sessions.filter((s) => s.id !== `a${n}`)];
       const running = ended === null;
-      state = { lastResult: running ? 'None' : result, status: running ? 'Working' : status, lastRun: at(starts[n - 1]) };
+      state = { lastResult: reported ?? (running ? 'None' : result), status: running ? 'Working' : status, lastRun: at(starts[n - 1]) };
     },
     later(ms) {
       now += ms;
@@ -1233,6 +1238,35 @@ test('following a run reads nothing until Veeam starts another attempt', async (
   night.attempt(2);
   await night.check();
   assert.equal(night.reads, before + 1, 'закончившаяся попытка — один');
+});
+
+test('a failure first read while Veeam is already retrying says so, and the run is followed', async () => {
+  const night = retriedNight();
+  await night.check();
+
+  // The first attempt failed while the bot was not looking, and the second is
+  // running as it looks: the job list still says failed. Read as ending in
+  // an attempt with no result, the run used to be called over.
+  night.attempt(1);
+  night.attempt(2, 'Failed', { ended: null, reported: 'Failed' });
+  await night.check();
+
+  const [alert] = night.sent;
+  assert.equal(alert.title, 'TTC_ASUEDT_EMM_DB1: ОШИБКА');
+  assert.equal(fieldOf(alert, 'Попытка'), '2 из 4 · повтор уже идёт');
+  assert.match(alert.body, /🔴 EMMDB1-T3Q4 — Failed to open VDDK disk/, 'причина — из попытки, что упала');
+  assert.equal(night.memory.retrying.of('1').attempt, 2);
+
+  // It fails, and so do the two after it: the last word comes, once.
+  for (const n of [2, 3]) {
+    night.attempt(n);
+    await night.check();
+  }
+  assert.equal(night.sent.length, 1);
+  night.attempt(4);
+  await night.check();
+  assert.equal(night.sent.at(-1).title, 'TTC_ASUEDT_EMM_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(night.sent.length, 2);
 });
 
 test('a run Veeam stopped retrying early is called over once the wait has passed', async () => {
