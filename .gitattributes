@@ -7,3 +7,8 @@
 
 # The vendor's API spec is reference material, not code of this project.
 docs/veeam-openapi.json linguist-documentation
+
+# The tests are plain JavaScript on purpose: they run the compiled service,
+# the code that ships. Left out of GitHub's language bar, which is meant to
+# say what the service is written in.
+test/** linguist-detectable=false
