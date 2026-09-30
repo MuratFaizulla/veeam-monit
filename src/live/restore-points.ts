@@ -40,6 +40,12 @@ export interface RestorePointsSnapshot {
   jobs: JobDepth[];
   /** Jobs that are supposed to run but have no restore point at all. */
   without: number;
+  /**
+   * Replicas and the like: their points are kept where this list is not read
+   * from, and 🛡 judges them by their runs. Counted apart from `without`, which
+   * would otherwise say every one of them has nothing.
+   */
+  elsewhere: number;
   /** Left out on purpose — they are not supposed to be producing points. */
   excludedDisabled: number;
   excludedUnscheduled: number;
@@ -118,6 +124,11 @@ export const renderRestorePoints = (
     skipped.push(`${snapshot.excludedUnscheduled} без расписания`);
   }
   if (snapshot.excludedDisabled) skipped.push(`${snapshot.excludedDisabled} выключено`);
+  if (snapshot.elsewhere) {
+    skipped.push(
+      `${snapshot.elsewhere} ${plural(snapshot.elsewhere, 'задание', 'задания', 'заданий')} с точками вне этого списка (репликации и др.)`,
+    );
+  }
   const skippedLine = skipped.length ? `<b>Не учитываются:</b> ${skipped.join(', ')}` : null;
 
   if (snapshot.jobs.length === 0) {
@@ -150,7 +161,7 @@ export const renderRestorePoints = (
     // Named rather than quietly dropped: a point that exists in Veeam but not
     // here is exactly the kind of difference that makes a report distrusted.
     snapshot.failedPoints
-      ? `<b>Не в счёт:</b> ${snapshot.failedPoints} ${plural(snapshot.failedPoints, 'точка', 'точки', 'точек')} от прогонов с ошибкой`
+      ? `<b>Не в счёт:</b> ${snapshot.failedPoints} ${plural(snapshot.failedPoints, 'точка', 'точки', 'точек')} машин, упавших в своём прогоне`
       : null,
     snapshot.crossLink && snapshot.orphanBackups
       ? `<b>Сверх того, без заданий:</b> ${snapshot.orphanPoints} ${plural(snapshot.orphanPoints, 'точка', 'точки', 'точек')} в ${snapshot.orphanBackups} ${plural(snapshot.orphanBackups, 'цепочке', 'цепочках', 'цепочках')} — см. 🧹`
@@ -158,8 +169,9 @@ export const renderRestorePoints = (
     snapshot.newest
       ? `<b>Последняя точка:</b> ${escapeHtml(snapshot.newest.name)}, ${dayOf(new Date(snapshot.newest.at).toISOString(), clock)}`
       : null,
-    '<i>Считаются только точки успешных прогонов. Пропуски — по собственному' +
-      ' ритму задания: сколько его обычных интервалов прошло с последней точки.</i>',
+    '<i>Точка машины, упавшей в своём прогоне, не считается; точки остальных машин' +
+      ' того же прогона считаются. Пропуски — по собственному ритму задания: сколько' +
+      ' его обычных интервалов прошло с последней точки.</i>',
     footer,
   ].filter((line): line is string => line !== null);
 

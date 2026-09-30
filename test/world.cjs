@@ -283,6 +283,8 @@ const exchange = (env = {}) =>
           endTime: '2026-08-23T01:20:41+05:00', result: { result: 'Failed' } },
       ],
     },
+    // The one machine of the job is the one that failed that night.
+    '/api/v1/sessions/sep14/taskSessions': { data: [{ name: 'MTA', result: { result: 'Failed' } }] },
   });
 
 /**

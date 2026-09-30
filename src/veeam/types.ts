@@ -74,6 +74,17 @@ export interface VeeamSession {
   };
 }
 
+/**
+ * One record of GET /api/v1/sessions/{id}/logs. On a server whose REST API
+ * predates task sessions (1.1), "Processing <machine>" records are the only
+ * place a machine's outcome is written down.
+ */
+export interface VeeamLogRecord {
+  /** `Succeeded`, `Warning`, `Failed` or `None`. */
+  status?: string;
+  title?: string;
+}
+
 export interface VeeamTaskProgress {
   duration?: string | null;
   processingRate?: string | null;

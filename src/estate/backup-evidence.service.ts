@@ -1,10 +1,11 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { VeeamApiError } from '../veeam/api.error';
 import { Job } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamJob, VeeamSchedule, VeeamSession } from '../veeam/types';
-import { failureStreakOf, retryWindowOf } from './runs';
+import { Attempt, failureStreakOf, retryWindowOf, Run, runsOf } from './runs';
 import { SessionHistory } from './session-history';
 
 /**
@@ -36,6 +37,25 @@ const STREAK_WINDOW_DAYS = 7;
  * on demand.
  */
 const JUST_READ_MS = 10 * 60_000;
+
+/**
+ * Job types whose restore points are not in the restore point list: a replica
+ * keeps its own on the target host, and file, object storage, Entra ID and
+ * tape jobs keep theirs in collections of their own. They are judged by their
+ * good runs instead; judged by points, every one of them read "точек
+ * восстановления нет" for ever, NTP/DOM and OPS_Billing_DB_file among them.
+ */
+const PROVEN_BY_RUNS = /Replica|EntraID|File|ObjectStorage|Tape/i;
+
+/**
+ * Points this close together, where nothing else can tell their runs apart,
+ * are one run. Only for points older than the session history on a server
+ * whose points do not name their session (REST API 1.1).
+ */
+const SAME_RUN_MS = 2 * 3_600_000;
+
+/** Failed sessions whose machine outcomes are read at once. */
+const OUTCOME_READS = 5;
 
 /**
  * Run timestamps kept per job.
@@ -82,13 +102,18 @@ export interface ScannedEvidence {
   streakByJob: Map<string, number>;
   /** Jobs Veeam will not start on its own; they owe nobody a restore point. */
   unscheduled: ReadonlySet<string>;
+  /**
+   * Jobs whose `runsByJob` are their good runs rather than their restore
+   * points, because their points are kept somewhere this scan does not read.
+   */
+  provenByRuns: ReadonlySet<string>;
   /** Full schedules, used to validate and describe today's nextRun values. */
   schedulesByJob: ReadonlyMap<string, VeeamSchedule>;
   depthByJob: Map<string, RetainedHistory>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
   totalPoints: number;
-  /** Of those, the ones a failed run left behind. */
+  /** Of those, the ones a failed run left behind for a machine that failed in it. */
   failedPoints: number;
 }
 
@@ -103,11 +128,20 @@ export type Evidence = ScannedEvidence | PendingEvidence;
 const NOT_READ = 'Точки восстановления ещё не прочитаны.';
 const NO_ANSWER = 'Veeam не ответил на этот цикл, поэтому точки не перечитывались.';
 
-/** When one run of a job was on the clock, and how it ended. */
+/** When one session of a job was on the clock, how it ended, and which run it belongs to. */
 interface RunWindow {
+  /** The session. */
+  id: string;
   from: number;
   to: number;
   failed: boolean;
+  /** The session that opened its run: the one Veeam stamps the run's points with. */
+  run: string;
+}
+
+/** One session, as the run folding reads it. */
+interface SessionAttempt extends Attempt {
+  id: string;
 }
 
 /** One per Veeam server, built by `ServerEstates`: a scan reads one server. */
@@ -120,6 +154,11 @@ export class BackupEvidenceService {
   /** The next refresh reads again, whatever the cadence says. */
   private renewing = false;
   private readonly history: SessionHistory;
+  /**
+   * How each machine ended, per failed session that wrote a point. Read once
+   * each: a finished session's outcomes never change.
+   */
+  private readonly outcomes = new Map<string, Map<string, string>>();
 
   constructor(
     config: ConfigService,
@@ -177,6 +216,39 @@ export class BackupEvidenceService {
     this.current = this.scanned ?? { status: 'pending', reason: NOT_READ };
   }
 
+  /**
+   * Has the machine outcomes of every failed session in `needed`, reading only
+   * those not read before and forgetting those no point needs any more.
+   *
+   * A session that could not be read is left out, and its points stay
+   * discarded — the verdict from before this was asked. One Veeam no longer
+   * has (404) is remembered as having nothing to say, so it is not asked
+   * again every scan.
+   */
+  private async learnOutcomes(needed: Set<string>): Promise<void> {
+    for (const id of this.outcomes.keys()) if (!needed.has(id)) this.outcomes.delete(id);
+    const missing = [...needed].filter((id) => !this.outcomes.has(id));
+    let unread = 0;
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < missing.length) {
+        const id = missing[next++];
+        try {
+          this.outcomes.set(id, await this.reader.machineOutcomes(id));
+        } catch (error) {
+          unread += 1;
+          if (error instanceof VeeamApiError && error.upstreamStatus === 404) this.outcomes.set(id, new Map());
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(OUTCOME_READS, missing.length) }, () => worker()));
+    if (unread > 0) {
+      this.logger.warn(
+        `Machine outcomes of ${unread} of ${missing.length} failed sessions not read; their points stay discarded`,
+      );
+    }
+  }
+
   /** Reads the estate. Returns undefined when the read did not finish. */
   private async scan(jobs: Job[]): Promise<ScannedEvidence | undefined> {
     const startedAt = Date.now();
@@ -222,37 +294,23 @@ export class BackupEvidenceService {
       // the job look backed up that night when its last good copy was from 23
       // August. The verdict lives only in the sessions.
       const sessions = await this.history.read();
-      const runsOfJob = runWindows(sessions);
+      const runsByJobSessions = jobRuns(sessions, schedulesByJob);
+      const runsOfJob = runWindows(runsByJobSessions);
       const resultOfSession = new Map(
         sessions
           .filter((session): session is VeeamSession & { id: string } => Boolean(session.id))
           .map((session) => [session.id, session.result?.result ?? '']),
       );
 
-      // One restore point is created per protected machine, so a job covering
-      // eleven VMs produces eleven points minutes apart. Taken raw, that made a
-      // quarterly job look like it ran hourly. Points are therefore folded down
-      // to one timestamp per run, which is what `sessionId` identifies.
-      const runsByJob = new Map<string, Map<string, number>>();
-      const depth = new Map<
-        string,
-        { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
-      >();
+      // First, which failed session — if any — wrote each point.
+      const placed: Placed[] = [];
       const orphans = new Map<string, { points: number; oldest: number; newest: number }>();
-      let failedPoints = 0;
-
       for (const point of points) {
         if (!point.creationTime) continue;
         const at = Date.parse(point.creationTime);
         if (!Number.isFinite(at)) continue;
 
         const jobId = point.backupId ? jobOfBackup.get(point.backupId) : undefined;
-        // Counted for the job it belongs to, then dropped: it is a file on a
-        // repository, not a state anybody should plan to restore to.
-        if (jobId && wroteByFailedRun(runsOfJob.get(jobId), at, point.sessionId, resultOfSession)) {
-          failedPoints += 1;
-          continue;
-        }
         if (!jobId) {
           const orphanId = point.backupId;
           if (!orphanId || !orphanNames.has(orphanId)) continue;
@@ -263,7 +321,51 @@ export class BackupEvidenceService {
           orphans.set(orphanId, chain);
           continue;
         }
-        const run = point.sessionId ?? point.creationTime;
+        const covering = coveringOf(runsOfJob.get(jobId), at);
+        placed.push({
+          jobId,
+          at,
+          name: point.name,
+          sessionId: point.sessionId,
+          run: covering?.run,
+          failedBy: failedSessionOf(covering, point.sessionId, resultOfSession),
+        });
+      }
+
+      // A failed run is not a failed machine. Veeam marks the whole run failed
+      // when one machine of fifteen does, and every point of it used to be
+      // discarded: OPS_ERP_REMS_DBS03 read "точек восстановления нет" with
+      // 131 points on disk, thirteen machines a night. So the failed sessions
+      // are asked how each machine ended, and only a failed machine's point
+      // goes.
+      await this.learnOutcomes(new Set(placed.flatMap((point) => point.failedBy ?? [])));
+
+      // One restore point is created per protected machine, so a job covering
+      // eleven VMs produces eleven points minutes apart. Taken raw, that made a
+      // quarterly job look like it ran hourly. Points are therefore folded down
+      // to one timestamp per run: the one `sessionId` names, or on a server
+      // whose points name no session, the run that was on the clock.
+      const runsByJob = new Map<string, Map<string, number>>();
+      const depth = new Map<
+        string,
+        { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
+      >();
+      const nearest = new Map<string, { key: string; at: number }>();
+      let failedPoints = 0;
+      let keptFromFailed = 0;
+
+      for (const { jobId, at, name, sessionId, run: coveringRun, failedBy } of placed) {
+        if (failedBy) {
+          const outcome = name ? this.outcomes.get(failedBy)?.get(name) : undefined;
+          // Counted, then dropped: it is a file on a repository, not a state
+          // anybody should plan to restore to.
+          if (outcome !== 'success' && outcome !== 'warning') {
+            failedPoints += 1;
+            continue;
+          }
+          keptFromFailed += 1;
+        }
+        const run = sessionId ?? coveringRun ?? nearby(nearest, jobId, at);
 
         // Depth is counted over every point, uncapped: how far back a job can
         // be restored is exactly the question the cap would answer wrongly.
@@ -276,7 +378,7 @@ export class BackupEvidenceService {
         };
         seen.runs.add(run);
         seen.points += 1;
-        if (point.name) seen.machines.add(point.name);
+        if (name) seen.machines.add(name);
         seen.oldest = Math.min(seen.oldest, at);
         seen.newest = Math.max(seen.newest, at);
         depth.set(jobId, seen);
@@ -289,10 +391,25 @@ export class BackupEvidenceService {
         runsByJob.set(jobId, runs);
       }
 
+      // Their points are elsewhere; what they have to show is runs that worked.
+      const provenByRuns = new Set(
+        jobs.filter((job) => PROVEN_BY_RUNS.test(job.type ?? '')).map((job) => job.id),
+      );
+      for (const jobId of provenByRuns) {
+        const good = (runsByJobSessions.get(jobId) ?? [])
+          .filter((run) => run.result === 'success' || run.result === 'warning')
+          .slice(0, RUNS_PER_JOB);
+        runsByJob.set(
+          jobId,
+          new Map(good.map((run) => [run.attempts[0].id, Date.parse(run.attempts[0].startedAt ?? '')])),
+        );
+      }
+
       const scannedAt = Date.now();
       this.logger.log(
-        `Evidence scan: ${points.length} restore points (${failedPoints} from failed runs),` +
-          ` ${sessions.length} sessions, ${runsByJob.size} jobs, ${scannedAt - startedAt}ms`,
+        `Evidence scan: ${points.length} restore points (${failedPoints} from failed machines,` +
+          ` ${keptFromFailed} kept from failed runs), ${sessions.length} sessions,` +
+          ` ${runsByJob.size} jobs, ${scannedAt - startedAt}ms`,
       );
 
       // Newest first, which is the order a cadence reads its gaps in.
@@ -310,6 +427,7 @@ export class BackupEvidenceService {
         cadenceByJob: new Map([...runs].map(([jobId, kept]) => [jobId, cadenceOf(kept)])),
         streakByJob: failureStreaks(sessions, schedulesByJob),
         unscheduled,
+        provenByRuns,
         schedulesByJob,
         depthByJob: new Map(
           [...depth].map(([jobId, seen]) => [
@@ -358,33 +476,89 @@ export const cadenceOf = (newestFirst: number[]): number | null => {
   return Number.isFinite(middle) && middle > 0 ? middle : null;
 };
 
+/** One restore point of a live job, with what the sessions say about it. */
+interface Placed {
+  jobId: string;
+  at: number;
+  /** The machine. */
+  name?: string;
+  sessionId?: string;
+  /** The run that was on the clock when it was written, when one was. */
+  run?: string;
+  /** The failed session that wrote it, when it was a failed one. */
+  failedBy?: string;
+}
+
 /**
- * When each job's runs were on the clock, oldest first.
+ * Each job's runs, newest first, its retries folded in by the one rule in
+ * runs.ts. Only actual job runs: malware scans, compliance analysis,
+ * retention and configuration backups are sessions too.
+ */
+const jobRuns = (
+  sessions: VeeamSession[],
+  schedules: ReadonlyMap<string, VeeamSchedule>,
+): Map<string, Run<SessionAttempt>[]> => {
+  const attempts = new Map<string, SessionAttempt[]>();
+  for (const session of sessions) {
+    if (!session.id || !session.jobId || !/Job$/.test(session.sessionType ?? '')) continue;
+    if (!Number.isFinite(Date.parse(session.creationTime ?? ''))) continue;
+    const list = attempts.get(session.jobId) ?? [];
+    list.push({
+      id: session.id,
+      startedAt: session.creationTime,
+      endedAt: session.endTime,
+      result: session.result?.result,
+    });
+    attempts.set(session.jobId, list);
+  }
+  const runs = new Map<string, Run<SessionAttempt>[]>();
+  for (const [jobId, list] of attempts) {
+    list.sort((a, b) => Date.parse(b.startedAt ?? '') - Date.parse(a.startedAt ?? ''));
+    runs.set(jobId, runsOf(list, retryWindowOf(schedules.get(jobId))));
+  }
+  return runs;
+};
+
+/**
+ * When each job's sessions were on the clock, oldest first.
  *
  * A session's window is what the point lookup needs: a point written at 01:31
  * belongs to whatever was running at 01:31, whatever id the point carries.
  */
-const runWindows = (sessions: VeeamSession[]): Map<string, RunWindow[]> => {
+const runWindows = (runs: Map<string, Run<SessionAttempt>[]>): Map<string, RunWindow[]> => {
   const windows = new Map<string, RunWindow[]>();
-  for (const session of sessions) {
-    if (!session.jobId || !/Job$/.test(session.sessionType ?? '')) continue;
-    const from = Date.parse(session.creationTime ?? '');
-    if (!Number.isFinite(from)) continue;
-    const list = windows.get(session.jobId) ?? [];
-    list.push({
-      from,
-      // A session still running has no end; it owns everything since it began.
-      to: session.endTime ? Date.parse(session.endTime) : Number.POSITIVE_INFINITY,
-      failed: session.result?.result === 'failed',
-    });
-    windows.set(session.jobId, list);
+  for (const [jobId, list] of runs) {
+    const flat: RunWindow[] = [];
+    for (const { attempts } of list) {
+      const opener = attempts[attempts.length - 1].id;
+      for (const attempt of attempts) {
+        flat.push({
+          id: attempt.id,
+          from: Date.parse(attempt.startedAt ?? ''),
+          // A session still running has no end; it owns everything since it began.
+          to: attempt.endedAt ? Date.parse(attempt.endedAt) : Number.POSITIVE_INFINITY,
+          failed: attempt.result === 'failed',
+          run: opener,
+        });
+      }
+    }
+    windows.set(jobId, flat.sort((a, b) => a.from - b.from));
   }
-  for (const list of windows.values()) list.sort((a, b) => a.from - b.from);
   return windows;
 };
 
+/** The newest session that was on the clock at `at`. */
+const coveringOf = (windows: RunWindow[] | undefined, at: number): RunWindow | undefined => {
+  let covering: RunWindow | undefined;
+  for (const window of windows ?? []) {
+    if (window.from > at) break;
+    if (at <= window.to && (!covering || window.from > covering.from)) covering = window;
+  }
+  return covering;
+};
+
 /**
- * Did the run that wrote this point end in an error?
+ * The failed session that wrote this point, if a failed one did.
  *
  * Not the same question as "did the session whose id the point carries fail".
  * Veeam stamps a point with the session that *opened* the run, and a run that
@@ -401,19 +575,28 @@ const runWindows = (sessions: VeeamSession[]): Map<string, RunWindow[]> => {
  * that a run failed may simply have aged out of Veeam's session history, and
  * inventing a verdict is worse than trusting a point that survived that long.
  */
-const wroteByFailedRun = (
-  windows: RunWindow[] | undefined,
-  at: number,
+const failedSessionOf = (
+  covering: RunWindow | undefined,
   sessionId: string | undefined,
   results: Map<string, string>,
-): boolean => {
-  let covering: RunWindow | undefined;
-  for (const window of windows ?? []) {
-    if (window.from > at) break;
-    if (at <= window.to && (!covering || window.from > covering.from)) covering = window;
+): string | undefined => {
+  if (covering) return covering.failed ? covering.id : undefined;
+  return sessionId !== undefined && results.get(sessionId) === 'failed' ? sessionId : undefined;
+};
+
+/**
+ * The run of a point nothing else places: the same as the point before it
+ * (newer, in the order points are read) when that one is close enough.
+ */
+const nearby = (last: Map<string, { key: string; at: number }>, jobId: string, at: number): string => {
+  const previous = last.get(jobId);
+  if (previous && previous.at - at <= SAME_RUN_MS) {
+    previous.at = at;
+    return previous.key;
   }
-  if (covering) return covering.failed;
-  return sessionId !== undefined && results.get(sessionId) === 'failed';
+  const key = `near:${at}`;
+  last.set(jobId, { key, at });
+  return key;
 };
 
 /**

@@ -117,6 +117,8 @@ export interface JobCard {
   cadenceDays?: number | null;
   /** Why there is nothing to say about restore points, when there is not. */
   pointsUnavailable?: string;
+  /** A replica or the like, whose points Veeam keeps outside the list the scan reads. */
+  pointsElsewhere?: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -427,6 +429,12 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
       `Новейшая: ${longMoment(freshest, clock)}`,
       `Старейшая: ${longMoment(oldest, clock)}`,
     );
+    const cadence = cadenceLabel(card.cadenceDays);
+    if (cadence) lines.push(`Периодичность: ${cadence}`);
+  } else if (card.pointsElsewhere && !card.pointsUnavailable) {
+    // Said instead of "no points at all", which is what a replica read as
+    // while it was replicating every night.
+    lines.push('Точки заданий этого типа Veeam хранит отдельно; защищённость видна по успешным запускам.');
     const cadence = cadenceLabel(card.cadenceDays);
     if (cadence) lines.push(`Периодичность: ${cadence}`);
   } else {
