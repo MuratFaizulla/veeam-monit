@@ -2,45 +2,21 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Job, WorkingSessions, workingUnavailable } from '../veeam/estate';
-import { VeeamSchedule } from '../veeam/types';
 import { DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
 import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
-import { NotificationEvent, NotificationSeverity } from '../telegram/types';
+import { NotificationEvent } from '../telegram/types';
 import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
-import { Evidence } from '../estate/backup-evidence.service';
 import { addressable, digestDue, digestEvent, summarise } from '../estate/digest';
 import { repositoryAlarms } from './repository-alarms';
-import { jobTransitions, Transition } from './transitions';
-import { RunStanding, standingOf } from '../estate/runs';
-import { JobSession } from '../estate/job-card';
-import { isBadResult, isRunning, statusOf } from '../estate/job-state';
-import { RetryingRun } from '../telegram/retrying-runs';
-import { attemptLine, objectsBody } from './job-alert';
+import { JobAlerts } from './job-alerts';
 import { escapeHtml, renderEvent } from '../telegram/format';
-import { dayOf, momentOf } from '../telegram/time';
-import { jobStatusWord, jobTypeWord, resultWord } from '../telegram/words';
 import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
 
 const HOUR = 3_600_000;
-
-/** Statuses of a job that is simply not running, lower-cased: nothing an alert needs to say. */
-const IDLE = new Set(['inactive', 'stopped']);
-
-/** A job's newest sessions, newest first, and where its newest run stands. */
-interface JobRun {
-  sessions: JobSession[];
-  standing: RunStanding;
-}
-
-/** The run to follow, when Veeam is still due to retry it. */
-const retryingRunOf = (job: Job, standing: RunStanding): RetryingRun | undefined =>
-  standing.retryBy !== undefined
-    ? { attempt: standing.attempt, lastRun: job.lastRun, retryBy: standing.retryBy }
-    : undefined;
 
 export type { Answer, MonitorHealth } from './monitor';
 
@@ -56,6 +32,8 @@ interface Watch {
   authenticated: boolean | null;
   lastError: string | null;
   jobs?: ServerStatus['jobs'];
+  /** What the bot says about this server's jobs. */
+  alerts: JobAlerts;
 }
 
 /** What one server's pass found, for the live slots when it is the one shown. */
@@ -101,13 +79,24 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     private readonly snapshots: LiveSnapshotsService,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
-    this.watches = estates.all.map((estate) => ({
-      estate,
-      lastCheckAt: null,
-      reachable: null,
-      authenticated: null,
-      lastError: null,
-    }));
+    this.watches = estates.all.map((estate) => {
+      const watch: Watch = {
+        estate,
+        lastCheckAt: null,
+        reachable: null,
+        authenticated: null,
+        lastError: null,
+        alerts: new JobAlerts(
+          estate,
+          { results: store.jobResultsOf(estate.key), retrying: store.retryingOf(estate.key) },
+          // Through the monitor's own sending, which names the server and
+          // counts what was delivered.
+          (event) => this.emit(watch, event),
+          { timezone: this.config.timezone, cooldownMs: this.config.jobAlertCooldownMs },
+        ),
+      };
+      return watch;
+    });
     this.named = this.watches.length > 1;
   }
 
@@ -330,7 +319,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
     let repositories: RepositoryCapacity[] | undefined;
     if (authenticated) {
-      if (jobs) await this.step(watch, 'alerts', () => this.checkJobs(watch, jobs, evidence));
+      if (jobs) await this.step(watch, 'alerts', () => watch.alerts.check(jobs, evidence));
       repositories = await this.step(watch, 'repositories', () => this.checkRepositories(watch));
       if (jobs && working && digest) {
         await this.step(watch, 'digest', () => this.sendDigest(watch, jobs, working));
@@ -450,47 +439,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Announces what changed since the results the monitor remembers for this server. */
-  private async checkJobs(watch: Watch, jobs: Job[], evidence: Evidence): Promise<void> {
-    const results = this.store.jobResultsOf(watch.estate.key);
-    const retrying = this.store.retryingOf(watch.estate.key);
-    // An empty record means this server has never been observed: a new
-    // installation, or a server just added to the list.
-    const seeding = !results.seeded();
-    const transitions = jobTransitions(jobs, (id) => results.of(id), seeding);
-
-    for (const transition of transitions) {
-      const { job, severity, remember } = transition;
-      if (severity) {
-        const followed = retrying.of(job.id);
-        // A recovery needs no attempt, unless it is a retry that worked.
-        const run = severity === 'success' && !followed ? undefined : await this.runOf(watch, job, evidence);
-        const report = await this.emit(watch, await this.jobEvent(watch, { ...transition, severity }, run));
-        // Advancing the remembered result is the record of "this transition has
-        // been dealt with". A delivery that reached nobody has not dealt with
-        // anything, so the transition stays pending and is retried next tick.
-        if (report.outcome === 'failed') continue;
-        // Followed while Veeam has attempts left; any other change of result
-        // ends the run, and this alert has said how.
-        const next = severity === 'critical' ? run && retryingRunOf(job, run.standing) : undefined;
-        if (next) retrying.follow(job.id, next);
-        else retrying.forget(job.id);
-      }
-      results.record(job.id, remember);
-    }
-
-    const ids = new Set(jobs.map((job) => job.id));
-    results.keepOnly(ids);
-    retrying.keepOnly(ids);
-    for (const job of jobs) await this.followRetry(watch, job, evidence);
-
-    if (seeding) {
-      this.logger.log(
-        `Veeam monitor seeded with ${jobs.length} job states on ${watch.estate.name}, alerts start next cycle`,
-      );
-    }
-  }
-
   /* ---------------------------------------------------------------- *
    * Live status
    * ---------------------------------------------------------------- */
@@ -527,127 +475,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       },
     });
     for (const { slot, content } of pages) await this.live.publish(slot, content);
-  }
-
-  /**
-   * One job alert. `run` is the job's newest run as `runOf` read it; a
-   * recovery goes without one unless it came from a retry. `final` is the
-   * word on a run already announced, once Veeam has stopped retrying it.
-   */
-  private async jobEvent(
-    watch: Watch,
-    transition: Pick<Transition, 'job' | 'result' | 'previous'> & { severity: NotificationSeverity },
-    run: JobRun | undefined,
-    final = false,
-  ): Promise<NotificationEvent> {
-    const { job, result, previous, severity } = transition;
-    const { name } = job;
-    const recovery = severity === 'success';
-    const title = recovery
-      ? `${name}: задание восстановлено`
-      : final
-        ? `${name}: ОШИБКА, повторов больше не будет`
-        : `${name}: ${result === 'failed' ? 'ОШИБКА' : 'предупреждение'}`;
-
-    // Written as every other message writes a moment — "сегодня в 01:21", in
-    // the operator's zone — not as Veeam's own string, offset and fractions of
-    // a second included, which nobody reads at three in the morning.
-    const clock = { now: new Date(), timezone: this.config.timezone };
-    const when = (iso: string | undefined): string | undefined => (iso ? dayOf(iso, clock) : undefined);
-
-    // The attempt that went wrong, and which of its machines did and why.
-    const bad = recovery ? undefined : run?.sessions.find((session) => isBadResult(session.result ?? ''));
-    const objects = bad ? await watch.estate.jobs.objectsOf(bad) : [];
-
-    return {
-      kind: 'job',
-      severity,
-      subject: name,
-      title,
-      fields: [
-        ['Результат', resultWord(result)],
-        // The last word on a run already announced: what came before is in that alert.
-        ['Было', final ? undefined : resultWord(previous) ?? '—'],
-        ['Попытка', run ? attemptLine(run.standing, result, (at) => momentOf(at, clock)) : undefined],
-        ['Тип', jobTypeWord(job.type)],
-        // Not running is what every job an alert is about is doing; only
-        // another status — switched off, say — tells anybody anything.
-        ['Статус', IDLE.has(statusOf(job)) ? undefined : jobStatusWord(job.status)],
-        ['Последний запуск', when(job.lastRun)],
-        ['Следующий запуск', when(job.nextRun)],
-        ['Объектов', job.objectsCount],
-      ],
-      body: recovery ? undefined : objectsBody(objects, (bad ?? run?.sessions[0])?.message),
-      // One message per job per transition; the cooldown only guards against a
-      // job flapping between two results within the window.
-      dedupeKey: `job:${job.id}:${result}${final ? ':final' : ''}`,
-      cooldownMs: this.config.jobAlertCooldownMs,
-    };
-  }
-
-  /**
-   * The job's newest sessions and where its run stands. One read answers
-   * both, and the reason the run failed besides.
-   */
-  private async runOf(watch: Watch, job: Job, evidence: Evidence): Promise<JobRun> {
-    const sessions = await watch.estate.jobs.recentSessions(job);
-    const schedule = await this.retryPolicyOf(watch.estate, job, evidence);
-    return { sessions, standing: standingOf(sessions, schedule, Date.now()) };
-  }
-
-  /**
-   * Says how a failed run ended, once Veeam has stopped retrying it.
-   *
-   * The job list shows nothing of a retry that failed: the result was
-   * "failed" and stays "failed". What moves is the job's last run, when the
-   * next attempt starts — so the run is read again only then, or once the
-   * wait for an attempt has run out without one, and costs nothing between.
-   */
-  private async followRetry(watch: Watch, job: Job, evidence: Evidence): Promise<void> {
-    const retrying = this.store.retryingOf(watch.estate.key);
-    const followed = retrying.of(job.id);
-    // Any other result is a change the alerts have already dealt with, and
-    // an attempt in flight has nothing to say yet.
-    if (!followed || job.result !== 'failed' || isRunning(job)) return;
-    if (job.lastRun === followed.lastRun && Date.now() <= followed.retryBy) return;
-
-    // Whichever run is newest now: should the one followed have ended out of
-    // sight — the bot down through a whole night — the job list shows the
-    // next one's failure, and that is the run to finish the story of.
-    const run = await this.runOf(watch, job, evidence);
-    if (run.sessions[0] && !run.sessions[0].endedAt) return;
-    const next = retryingRunOf(job, run.standing);
-    if (next) {
-      retrying.follow(job.id, next);
-      return;
-    }
-    const report = await this.emit(
-      watch,
-      await this.jobEvent(watch, { job, result: 'failed', severity: 'critical' }, run, true),
-    );
-    if (report.outcome !== 'failed') retrying.forget(job.id);
-  }
-
-  /**
-   * The job's schedule, retry policy included: from the Evidence when a scan
-   * has finished, otherwise from the job's own configuration.
-   *
-   * The scan already reads every job configuration, so it is the free answer.
-   * But after a restart the Evidence is pending until the first scan finishes,
-   * a scan can fail outright, a job created since the last scan is not in it,
-   * and a server nobody has selected is not scanned at all; the alert used to
-   * lose "из 4" for as long as any of that lasted. One request per alert is
-   * cheap next to that. Best effort: an alert without the policy is still an
-   * alert.
-   */
-  private async retryPolicyOf(
-    estate: ServerEstate,
-    job: Job,
-    evidence: Evidence,
-  ): Promise<VeeamSchedule | undefined> {
-    // A job created after the last scan is not in it, however ready it is.
-    const scanned = evidence.status === 'ready' ? evidence.schedulesByJob.get(job.id) : undefined;
-    return scanned ?? (await estate.jobs.configurationOf(job))?.schedule;
   }
 
   private async checkRepositories(watch: Watch): Promise<RepositoryCapacity[]> {
