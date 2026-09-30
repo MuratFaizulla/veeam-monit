@@ -623,7 +623,10 @@ test('/job names the machine that failed, which the job name never does', async 
 
   const reply = w.api.sent().at(-1).text;
   assert.match(reply, /Что именно не прошло/);
-  assert.match(reply, /🔴 APPDB1-T3Q4 — Getting VM info from vSphere/);
+  // The task says only the step it stopped at; the session says, of the same
+  // machine, why. The machine's own error is the one worth reading.
+  assert.match(reply, /🔴 APPDB1-T3Q4 — Virtual Machine APPDB1-T3Q4 is unavailable and will be skipped/);
+  assert.doesNotMatch(reply, /Getting VM info/);
 });
 
 test('a job that is not failing is not asked which machine failed', async () => {
@@ -1057,6 +1060,224 @@ test('the alert says which attempt it is', async () => {
   const alert = w.api.sent().at(-1);
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
   assert.match(alert.text, /Processing REMS-DACA03/, 'и причина именно этой попытки');
+});
+
+/* ------------------------------------------------------------------ *
+ * A failed run is followed until Veeam stops retrying it
+ *
+ * OPS_ERP_EMM_DB1 on 30 September: four attempts from 03:12 to 05:37, all
+ * failed. The one alert said "Попытка: 1 из 4", because a failure is announced
+ * when the result changes, and the three retries changed nothing. Nobody was
+ * told the run had ended with no point, nor which machine failed and why.
+ * ------------------------------------------------------------------ */
+
+const MINUTE = 60_000;
+const at = (ms) => new Date(ms).toISOString();
+const VDDK =
+  'Processing APPDB1-T3Q4 Error: Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )\r\n' +
+  'Logon attempt with parameters [VC/ESX: [192.0.2.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]';
+
+/**
+ * EMM_DB1 with Veeam's retry policy, driven attempt by attempt. `attempt(n)`
+ * puts the n-th attempt's session in front and says so in the job list.
+ */
+const retriedNight = () => {
+  const now = Date.now();
+  // The first attempt started an hour ago and has just ended; each retry
+  // starts after the one before it ended, seconds apart, which is all the rule
+  // folding them needs.
+  const starts = [now - 60 * MINUTE, now - 50_000, now - 8_000, now - 5_000];
+  const ends = [now - 1 * MINUTE, now - 10_000, now - 6_000, now - 1_000];
+  let sessions = [];
+  let reads = 0;
+  const emm = (lastResult, status, lastRun) => ({
+    id: '1', name: 'OPS_ERP_EMM_DB1', type: 'Backup', status, lastResult, lastRun, objectsCount: 1,
+  });
+  const w = monitorWorld({ TELEGRAM_TIMEZONE: 'UTC' }, [emm('Success', 'Inactive', at(now - DAY))], {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } } }] },
+    '/api/v1/sessions': (req) => {
+      // The job's own sessions; the Evidence reads the whole list its own way.
+      if (req.params?.jobIdFilter === '1') reads += 1;
+      return { data: sessions };
+    },
+    ...Object.fromEntries([1, 2, 3, 4].map((n) => [`/api/v1/sessions/a${n}/taskSessions`, {
+      data: [{ name: 'APPDB1-T3Q4', result: { result: 'Failed', message: VDDK } }],
+    }])),
+  });
+  const session = (n, result, ended = ends[n - 1]) => ({
+    id: `a${n}`, jobId: '1', sessionType: 'BackupJob', creationTime: at(starts[n - 1]),
+    endTime: ended === null ? undefined : at(ended), result: { result, message: 'Processing APPDB1-T3Q4' },
+  });
+  return {
+    w,
+    ends,
+    /** Reads of this job's sessions so far. */
+    get reads() {
+      return reads;
+    },
+    /** The n-th attempt ended with `result`; `ended: null` means it is still running. */
+    attempt(n, result = 'Failed', { ended } = {}) {
+      sessions = [session(n, result, ended), ...sessions.filter((s) => s.id !== `a${n}`)];
+      const running = ended === null;
+      w.setJobs([emm(running ? 'None' : result, running ? 'Working' : 'Inactive', at(starts[n - 1]))]);
+    },
+    /** As if `ms` had passed since the first attempt ended, with no other. */
+    firstEndedAgo(ms) {
+      sessions = sessions.map((s) => (s.id === 'a1' ? { ...s, endTime: at(Date.now() - ms) } : s));
+    },
+  };
+};
+const DAY = 24 * 60 * MINUTE;
+
+test('the first failure says Veeam will try again, and which machine failed and why', async () => {
+  const night = retriedNight();
+  await night.w.monitor.check();
+  night.w.api.reset();
+
+  night.attempt(1);
+  await night.w.monitor.check();
+
+  const [alert] = night.w.api.sent();
+  const retryAt = new Date(night.ends[0] + 10 * MINUTE);
+  const hhmm = `${String(retryAt.getUTCHours()).padStart(2, '0')}:${String(retryAt.getUTCMinutes()).padStart(2, '0')}`;
+  assert.match(alert.text, /OPS_ERP_EMM_DB1: ОШИБКА<\/b>/);
+  assert.match(alert.text, new RegExp(`Попытка:</b> 1 из 4 · Veeam повторит ≈ [^\\n]*${hhmm}`));
+  assert.match(alert.text, /Не прошли: 1 из 1/);
+  assert.match(alert.text, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk \[\[SITE1_SSD_DATA09\][^\n]*read-only mode - \[true\] \)/);
+  assert.doesNotMatch(alert.text, /Logon attempt|svc@example\.com/, 'параметры подключения — не причина');
+  // "не выполняется" is what every job an alert is about is doing.
+  assert.doesNotMatch(alert.text, /Статус:/);
+  assert.equal(night.w.store.snapshot().retrying[SERVER]['1'].attempt, 1, 'запуск запомнен до конца повторов');
+});
+
+test('the retries in between say nothing, and the last one says the run is over', async () => {
+  const night = retriedNight();
+  await night.w.monitor.check();
+  night.attempt(1);
+  await night.w.monitor.check();
+  night.w.api.reset();
+
+  night.attempt(2, 'Failed', { ended: null });
+  await night.w.monitor.check();
+  night.attempt(2);
+  await night.w.monitor.check();
+  night.attempt(3);
+  await night.w.monitor.check();
+  assert.deepEqual(night.w.api.sent(), [], 'повторы, у которых есть ещё попытки, — не событие');
+  assert.equal(night.w.store.snapshot().retrying[SERVER]['1'].attempt, 3);
+
+  night.attempt(4);
+  await night.w.monitor.check();
+  const [last] = night.w.api.sent();
+  assert.match(last.text, /OPS_ERP_EMM_DB1: ОШИБКА, повторов больше не будет/);
+  assert.match(last.text, /Попытка:<\/b> 4 из 4 · повторов больше не будет/);
+  assert.match(last.text, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk/);
+  assert.doesNotMatch(last.text, /Было:/, 'что было до этого запуска, сказано в первом сообщении');
+  assert.equal(night.w.store.snapshot().retrying[SERVER]['1'], undefined);
+
+  night.w.api.reset();
+  await night.w.monitor.check();
+  assert.deepEqual(night.w.api.sent(), [], 'и сказано один раз');
+});
+
+test('following a run reads nothing until Veeam starts another attempt', async () => {
+  const night = retriedNight();
+  await night.w.monitor.check();
+  night.attempt(1);
+  await night.w.monitor.check();
+  const before = night.reads;
+
+  // The ten minutes' wait, a cycle a minute.
+  for (let i = 0; i < 3; i += 1) await night.w.monitor.check();
+  night.attempt(2, 'Failed', { ended: null });
+  await night.w.monitor.check();
+
+  assert.equal(night.reads, before, 'ни ожидание, ни идущая попытка не стоят запроса');
+  night.attempt(2);
+  await night.w.monitor.check();
+  assert.equal(night.reads, before + 1, 'закончившаяся попытка — один');
+});
+
+test('a run Veeam stopped retrying early is called over once the wait has passed', async () => {
+  const night = retriedNight();
+  await night.w.monitor.check();
+  night.attempt(1);
+  await night.w.monitor.check();
+  night.w.api.reset();
+
+  // Forty minutes on and no second attempt: past the ten-minute wait and the
+  // allowance for a slow start.
+  night.firstEndedAgo(40 * MINUTE);
+  const followed = night.w.store.retryingOf(SERVER).of('1');
+  night.w.store.retryingOf(SERVER).follow('1', { ...followed, retryBy: Date.now() - 1 });
+  await night.w.monitor.check();
+
+  const [last] = night.w.api.sent();
+  assert.match(last.text, /ОШИБКА, повторов больше не будет/);
+  assert.match(last.text, /Попытка:<\/b> 1 из 4 · повторов больше не будет/);
+});
+
+test('a retry that works is a recovery that says which attempt did it', async () => {
+  const night = retriedNight();
+  await night.w.monitor.check();
+  night.attempt(1);
+  await night.w.monitor.check();
+  night.w.api.reset();
+
+  night.attempt(2, 'Success');
+  await night.w.monitor.check();
+
+  const [recovered] = night.w.api.sent();
+  assert.match(recovered.text, /задание восстановлено/);
+  assert.match(recovered.text, /Попытка:<\/b> 2 из 4/);
+  assert.doesNotMatch(recovered.text, /повторит|повторов/);
+  assert.equal(night.w.store.snapshot().retrying[SERVER]['1'], undefined);
+});
+
+test('Veeam\'s ways of saying a machine failed are read as the machine and the reason', () => {
+  const { machineLine } = require('../dist/veeam/estate-reader.service');
+
+  assert.deepEqual(machineLine(VDDK), {
+    machine: 'APPDB1-T3Q4',
+    reason: 'Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )',
+  });
+  // The second line is the one that says it was DNS.
+  assert.deepEqual(
+    machineLine("Processing EMM1-Dy2M Error: Cannot get service content.\r\nSoap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'"),
+    { machine: 'EMM1-Dy2M', reason: "Cannot get service content. / Soap fault. Temporary failure in name resolutionDetail: 'getaddrinfo failed in tcp_connect()'" },
+  );
+  assert.deepEqual(
+    machineLine('Failed to create processing task for VM dc02.example.com Error: Failed to retrieve object hierarchy: exception ID d1dd9757'),
+    { machine: 'dc02.example.com', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
+  );
+  assert.deepEqual(
+    machineLine('Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
+    { machine: 'REMS-DBS03', reason: 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing' },
+  );
+  assert.deepEqual(
+    machineLine('Error: Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".'),
+    { reason: 'Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".' },
+  );
+  // A name and no reason: Veeam said which, not why.
+  assert.deepEqual(machineLine('Processing Sirius'), { machine: 'Sirius', reason: undefined });
+});
+
+test('an alert lists at most five machines of a group and counts the rest', () => {
+  const { objectsBody } = require('../dist/monitor/job-alert');
+  const objects = [
+    ...Array.from({ length: 7 }, (_, i) => ({ name: `vm${i}`, result: 'failed', message: 'x'.repeat(400) })),
+    { name: 'ok', result: 'success' },
+    { name: 'slow', result: 'warning', message: 'Removing VM snapshot' },
+  ];
+
+  const body = objectsBody(objects, 'Processing vm0');
+
+  assert.match(body, /^Не прошли: 7 из 9\n/);
+  assert.equal((body.match(/^🔴 /gm) ?? []).length, 5);
+  assert.match(body, /… и ещё 2\n\nС предупреждением: 1 из 9\n🟡 slow — Removing VM snapshot$/);
+  assert.ok(body.split('\n').every((line) => line.length < 320), 'длинная причина обрезана');
+  // Nothing named: the session's own message is the whole story.
+  assert.equal(objectsBody([{ name: 'ok', result: 'success' }], 'Virtual Machine X is unavailable'), 'Virtual Machine X is unavailable');
 });
 
 /* ------------------------------------------------------------------ *

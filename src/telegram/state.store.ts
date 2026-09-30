@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFile
 import { dirname } from 'path';
 import { LiveMessageRef, LiveMessages } from './live-messages';
 import { JobResults } from './job-results';
+import { RetryingRun, RetryingRuns } from './retrying-runs';
 import { AnswerLog, AnswerRef } from './answer-log';
 import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';
@@ -27,6 +28,11 @@ interface TelegramState {
    * directly; it is read as the first server's.
    */
   jobResults: Record<string, Record<string, string>>;
+  /**
+   * Failed runs Veeam was still retrying when announced: server key -> job id
+   * -> the run. Absent from files written before it existed.
+   */
+  retrying?: Record<string, Record<string, RetryingRun>>;
   /** Key of the server the live slots and commands show; absent means the first. */
   selectedServer?: string;
   /**
@@ -56,9 +62,9 @@ const empty = (): TelegramState => ({
  * Everything the notifier must not forget across a restart, in one file.
  *
  * The store owns the file, the chats, the forum topics and which Veeam server
- * is selected. The four other
- * things kept in it — job results, cooldowns, live messages and the answer log
- * — are each their own module, handed their part of the state and a way to
+ * is selected. The other
+ * things kept in it — job results, runs being retried, cooldowns, live
+ * messages and the answer log — are each their own module, handed their part of the state and a way to
  * save it. They carry their own rules (48 hours, 500 answers, "never arm on
  * the way in") where somebody looking for those rules will find them, and are
  * tested on a plain object without a file.
@@ -82,6 +88,7 @@ export class TelegramStateStore implements OnModuleDestroy {
   readonly liveMessages: LiveMessages;
   readonly answerLog: AnswerLog;
   private readonly results = new Map<string, JobResults>();
+  private readonly retrying = new Map<string, RetryingRuns>();
   /** The chats named in configuration: the only ones anything is sent to. */
   private readonly configured: ReadonlySet<string>;
 
@@ -149,6 +156,16 @@ export class TelegramStateStore implements OnModuleDestroy {
     return results;
   }
 
+  /** The failed runs of one server's jobs that Veeam was still retrying when announced. */
+  retryingOf(server: string): RetryingRuns {
+    let runs = this.retrying.get(server);
+    if (!runs) {
+      runs = new RetryingRuns(((this.state.retrying ??= {})[server] ??= {}), () => this.save());
+      this.retrying.set(server, runs);
+    }
+    return runs;
+  }
+
   /** Drops what is remembered about servers no longer configured. */
   keepServers(servers: ReadonlySet<string>): void {
     let changed = false;
@@ -156,6 +173,12 @@ export class TelegramStateStore implements OnModuleDestroy {
       if (servers.has(server)) continue;
       delete this.state.jobResults[server];
       this.results.delete(server);
+      changed = true;
+    }
+    for (const server of Object.keys(this.state.retrying ?? {})) {
+      if (servers.has(server)) continue;
+      delete this.state.retrying![server];
+      this.retrying.delete(server);
       changed = true;
     }
     if (changed) this.save();

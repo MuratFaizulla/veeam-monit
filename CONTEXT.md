@@ -232,7 +232,30 @@ inside the retry window of the older finishing — the job's own `awaitMinutes`
 plus an allowance for how long the failing attempt took.
 
 The alert says which attempt it is ("2 из 4"), because three messages a night
-with identical text were three attempts at one run and nothing said so.
+with identical text were three attempts at one run and nothing said so — and
+what comes next, which is what decides between waiting and going to look:
+"Veeam повторит ≈ сегодня в 04:33" while the job has attempts left and the
+wait since the last one has not run out, "повторов больше не будет" once
+either has. That answer is `standingOf`, by the same rule that folds the
+attempts.
+
+A failure is announced when the result changes, which is after the first
+attempt, so that alert alone always said "1 из 4". A run announced while
+Veeam still had attempts left is a **Retrying run**: it is followed until the
+job's result changes — a retry that worked is a recovery, and says which
+attempt did it — or Veeam stops trying, which is one more alert, "ОШИБКА,
+повторов больше не будет". The attempts in between say nothing. Following
+costs no request until the job's last run moves, which is when Veeam starts
+another attempt. Kept in the state file, so a restart between two attempts
+does not lose the last word; owned by `src/telegram/retrying-runs.ts`, decided
+in `followRetry`.
+
+Every failure alert lists the machines that went wrong, each with Veeam's
+reason, instead of the session's message — which for a failed machine is
+"Processing APPDB1-T3Q4", its name and not a word about why. The reason comes
+from the task sessions, or on REST API 1.1 from the session log (`machineResults`),
+with Veeam's "Processing <machine> Error:" and the line that repeats the
+connection parameters taken off (`machineLine`). The job card reads the same.
 
 Distinct from the remembered result, which is what stops the repeats: a job
 reports `none` while a retry runs, and recording that over `failed` made the

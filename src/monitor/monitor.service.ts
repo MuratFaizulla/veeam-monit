@@ -13,16 +13,34 @@ import { Evidence } from '../estate/backup-evidence.service';
 import { addressable, digestDue, digestEvent, summarise } from '../estate/digest';
 import { repositoryAlarms } from './repository-alarms';
 import { jobTransitions, Transition } from './transitions';
-import { attemptOf, retriesAllowed, retryWindowOf } from '../estate/runs';
+import { RunStanding, standingOf } from '../estate/runs';
 import { JobSession } from '../estate/job-card';
+import { isBadResult, isRunning, statusOf } from '../estate/job-state';
+import { RetryingRun } from '../telegram/retrying-runs';
+import { attemptLine, objectsBody } from './job-alert';
 import { escapeHtml, renderEvent } from '../telegram/format';
-import { dayOf } from '../telegram/time';
+import { dayOf, momentOf } from '../telegram/time';
 import { jobStatusWord, jobTypeWord, resultWord } from '../telegram/words';
 import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
 
 const HOUR = 3_600_000;
+
+/** Statuses of a job that is simply not running, lower-cased: nothing an alert needs to say. */
+const IDLE = new Set(['inactive', 'stopped']);
+
+/** A job's newest sessions, newest first, and where its newest run stands. */
+interface JobRun {
+  sessions: JobSession[];
+  standing: RunStanding;
+}
+
+/** The run to follow, when Veeam is still due to retry it. */
+const retryingRunOf = (job: Job, standing: RunStanding): RetryingRun | undefined =>
+  standing.retryBy !== undefined
+    ? { attempt: standing.attempt, lastRun: job.lastRun, retryBy: standing.retryBy }
+    : undefined;
 
 export type { Answer, MonitorHealth } from './monitor';
 
@@ -435,6 +453,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   /** Announces what changed since the results the monitor remembers for this server. */
   private async checkJobs(watch: Watch, jobs: Job[], evidence: Evidence): Promise<void> {
     const results = this.store.jobResultsOf(watch.estate.key);
+    const retrying = this.store.retryingOf(watch.estate.key);
     // An empty record means this server has never been observed: a new
     // installation, or a server just added to the list.
     const seeding = !results.seeded();
@@ -443,19 +462,27 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     for (const transition of transitions) {
       const { job, severity, remember } = transition;
       if (severity) {
-        const report = await this.emit(
-          watch,
-          await this.jobEvent(watch, { ...transition, severity }, evidence),
-        );
+        const followed = retrying.of(job.id);
+        // A recovery needs no attempt, unless it is a retry that worked.
+        const run = severity === 'success' && !followed ? undefined : await this.runOf(watch, job, evidence);
+        const report = await this.emit(watch, await this.jobEvent(watch, { ...transition, severity }, run));
         // Advancing the remembered result is the record of "this transition has
         // been dealt with". A delivery that reached nobody has not dealt with
         // anything, so the transition stays pending and is retried next tick.
         if (report.outcome === 'failed') continue;
+        // Followed while Veeam has attempts left; any other change of result
+        // ends the run, and this alert has said how.
+        const next = severity === 'critical' ? run && retryingRunOf(job, run.standing) : undefined;
+        if (next) retrying.follow(job.id, next);
+        else retrying.forget(job.id);
       }
       results.record(job.id, remember);
     }
 
-    results.keepOnly(new Set(jobs.map((job) => job.id)));
+    const ids = new Set(jobs.map((job) => job.id));
+    results.keepOnly(ids);
+    retrying.keepOnly(ids);
+    for (const job of jobs) await this.followRetry(watch, job, evidence);
 
     if (seeding) {
       this.logger.log(
@@ -502,31 +529,35 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     for (const { slot, content } of pages) await this.live.publish(slot, content);
   }
 
+  /**
+   * One job alert. `run` is the job's newest run as `runOf` read it; a
+   * recovery goes without one unless it came from a retry. `final` is the
+   * word on a run already announced, once Veeam has stopped retrying it.
+   */
   private async jobEvent(
     watch: Watch,
-    transition: Transition & { severity: NotificationSeverity },
-    evidence: Evidence,
+    transition: Pick<Transition, 'job' | 'result' | 'previous'> & { severity: NotificationSeverity },
+    run: JobRun | undefined,
+    final = false,
   ): Promise<NotificationEvent> {
     const { job, result, previous, severity } = transition;
     const { name } = job;
-    // A recovery needs no reason and no attempt: the run that matters worked.
     const recovery = severity === 'success';
-    const title =
-      recovery
-        ? `${name}: задание восстановлено`
+    const title = recovery
+      ? `${name}: задание восстановлено`
+      : final
+        ? `${name}: ОШИБКА, повторов больше не будет`
         : `${name}: ${result === 'failed' ? 'ОШИБКА' : 'предупреждение'}`;
-
-    // One read, two answers: the reason the run failed, and which attempt of
-    // the run this is. They come from the same sessions, and fetching them
-    // twice would be two requests to say one thing.
-    const sessions = recovery ? [] : await watch.estate.jobs.recentSessions(job);
-    const schedule = recovery ? undefined : await this.retryPolicyOf(watch.estate, job, evidence);
 
     // Written as every other message writes a moment — "сегодня в 01:21", in
     // the operator's zone — not as Veeam's own string, offset and fractions of
     // a second included, which nobody reads at three in the morning.
     const clock = { now: new Date(), timezone: this.config.timezone };
     const when = (iso: string | undefined): string | undefined => (iso ? dayOf(iso, clock) : undefined);
+
+    // The attempt that went wrong, and which of its machines did and why.
+    const bad = recovery ? undefined : run?.sessions.find((session) => isBadResult(session.result ?? ''));
+    const objects = bad ? await watch.estate.jobs.objectsOf(bad) : [];
 
     return {
       kind: 'job',
@@ -535,37 +566,66 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       title,
       fields: [
         ['Результат', resultWord(result)],
-        ['Было', resultWord(previous) ?? '—'],
-        ['Попытка', this.attemptLabel(sessions, schedule)],
+        // The last word on a run already announced: what came before is in that alert.
+        ['Было', final ? undefined : resultWord(previous) ?? '—'],
+        ['Попытка', run ? attemptLine(run.standing, result, (at) => momentOf(at, clock)) : undefined],
         ['Тип', jobTypeWord(job.type)],
-        ['Статус', jobStatusWord(job.status)],
+        // Not running is what every job an alert is about is doing; only
+        // another status — switched off, say — tells anybody anything.
+        ['Статус', IDLE.has(statusOf(job)) ? undefined : jobStatusWord(job.status)],
         ['Последний запуск', when(job.lastRun)],
         ['Следующий запуск', when(job.nextRun)],
         ['Объектов', job.objectsCount],
       ],
-      body: recovery ? undefined : sessions[0]?.message,
+      body: recovery ? undefined : objectsBody(objects, (bad ?? run?.sessions[0])?.message),
       // One message per job per transition; the cooldown only guards against a
       // job flapping between two results within the window.
-      dedupeKey: `job:${job.id}:${result}`,
+      dedupeKey: `job:${job.id}:${result}${final ? ':final' : ''}`,
       cooldownMs: this.config.jobAlertCooldownMs,
     };
   }
 
   /**
-   * "2 из 3", or nothing when this is a first attempt with no retries behind it.
-   *
-   * Three alerts a night with identical text were three attempts at one run,
-   * and nothing in the message said so. The policy is handed in; where it comes
-   * from is retryPolicyOf's business.
+   * The job's newest sessions and where its run stands. One read answers
+   * both, and the reason the run failed besides.
    */
-  private attemptLabel(
-    sessions: JobSession[],
-    schedule: VeeamSchedule | undefined,
-  ): string | undefined {
-    const attempt = attemptOf(sessions, retryWindowOf(schedule));
-    const allowed = retriesAllowed(schedule);
-    if (attempt === 1 && !allowed) return undefined;
-    return allowed ? `${attempt} из ${allowed}` : String(attempt);
+  private async runOf(watch: Watch, job: Job, evidence: Evidence): Promise<JobRun> {
+    const sessions = await watch.estate.jobs.recentSessions(job);
+    const schedule = await this.retryPolicyOf(watch.estate, job, evidence);
+    return { sessions, standing: standingOf(sessions, schedule, Date.now()) };
+  }
+
+  /**
+   * Says how a failed run ended, once Veeam has stopped retrying it.
+   *
+   * The job list shows nothing of a retry that failed: the result was
+   * "failed" and stays "failed". What moves is the job's last run, when the
+   * next attempt starts — so the run is read again only then, or once the
+   * wait for an attempt has run out without one, and costs nothing between.
+   */
+  private async followRetry(watch: Watch, job: Job, evidence: Evidence): Promise<void> {
+    const retrying = this.store.retryingOf(watch.estate.key);
+    const followed = retrying.of(job.id);
+    // Any other result is a change the alerts have already dealt with, and
+    // an attempt in flight has nothing to say yet.
+    if (!followed || job.result !== 'failed' || isRunning(job)) return;
+    if (job.lastRun === followed.lastRun && Date.now() <= followed.retryBy) return;
+
+    // Whichever run is newest now: should the one followed have ended out of
+    // sight — the bot down through a whole night — the job list shows the
+    // next one's failure, and that is the run to finish the story of.
+    const run = await this.runOf(watch, job, evidence);
+    if (run.sessions[0] && !run.sessions[0].endedAt) return;
+    const next = retryingRunOf(job, run.standing);
+    if (next) {
+      retrying.follow(job.id, next);
+      return;
+    }
+    const report = await this.emit(
+      watch,
+      await this.jobEvent(watch, { job, result: 'failed', severity: 'critical' }, run, true),
+    );
+    if (report.outcome !== 'failed') retrying.forget(job.id);
   }
 
   /**

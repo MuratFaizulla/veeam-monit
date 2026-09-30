@@ -4,7 +4,7 @@ import { AppConfig } from '../config/configuration';
 import { Clock } from '../telegram/time';
 import { escapeHtml } from '../telegram/format';
 import { Job } from '../veeam/estate';
-import { VeeamEstateReader } from '../veeam/estate-reader.service';
+import { machineLine, MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamJob } from '../veeam/types';
@@ -228,28 +228,41 @@ export class JobQueryService {
   }
 
   /**
-   * Which objects of the newest bad session failed, and why.
+   * How each object of one session ended, and why the ones that went wrong did.
+   * Best effort: empty when Veeam could not say.
    *
    * An empty answer is not a failure of this method: a run that could not
    * reach the machine at all — "Virtual Machine … is unavailable" — never
    * starts a task for it, and then the session message is the whole story.
+   *
+   * Public because an alert asks the same question a card does.
    */
-  private async failedObjects(sessions: JobSession[]): Promise<FailedObject[]> {
-    const bad = sessions.find((session) => isBadResult(session.result ?? ''));
-    if (!bad?.id) return [];
+  async objectsOf(session: JobSession): Promise<FailedObject[]> {
+    if (!session.id) return [];
+    let machines: MachineResult[];
     try {
-      const tasks = await this.reader.taskSessions(bad.id);
-      return tasks
-        .filter((task) => isBadResult(task.result?.result ?? ''))
-        .map((task) => ({
-          name: task.name ?? 'без имени',
-          result: task.result?.result,
-          message: task.result?.message?.trim() || undefined,
-        }));
+      machines = await this.reader.machineResults(session.id);
     } catch (error) {
-      this.logger.debug(`No task detail for session ${bad.id}: ${(error as Error).message}`);
+      this.logger.debug(`No per-object detail for session ${session.id}: ${(error as Error).message}`);
       return [];
     }
+    // The task's own message is sometimes only the step it stopped at —
+    // "Getting VM info from vSphere" — while the session's says, of the same
+    // machine, "Error: Cannot get service content. / Soap fault. Temporary
+    // failure in name resolution". An error named for a machine wins.
+    const said = machineLine(session.message ?? '');
+    return machines.map(({ name, result, reason }) => ({
+      name,
+      result,
+      message: said.machine === name && said.reason ? said.reason : reason,
+    }));
+  }
+
+  /** Which objects of the newest bad session went wrong, and why. */
+  private async failedObjects(sessions: JobSession[]): Promise<FailedObject[]> {
+    const bad = sessions.find((session) => isBadResult(session.result ?? ''));
+    if (!bad) return [];
+    return (await this.objectsOf(bad)).filter((object) => isBadResult(object.result ?? ''));
   }
 
   private clock(): Clock {
