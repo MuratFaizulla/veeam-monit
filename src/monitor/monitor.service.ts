@@ -16,6 +16,7 @@ import { jobTransitions, Transition } from './transitions';
 import { attemptOf, retriesAllowed, retryWindowOf } from '../estate/runs';
 import { JobSession } from '../estate/job-card';
 import { escapeHtml, renderEvent } from '../telegram/format';
+import { dayOf } from '../telegram/time';
 import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
@@ -520,6 +521,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     const sessions = recovery ? [] : await watch.estate.jobs.recentSessions(job);
     const schedule = recovery ? undefined : await this.retryPolicyOf(watch.estate, job, evidence);
 
+    // Written as every other message writes a moment — "сегодня в 01:21", in
+    // the operator's zone — not as Veeam's own string, offset and fractions of
+    // a second included, which nobody reads at three in the morning.
+    const clock = { now: new Date(), timezone: this.config.timezone };
+    const when = (iso: string | undefined): string | undefined => (iso ? dayOf(iso, clock) : undefined);
+
     return {
       kind: 'job',
       severity,
@@ -531,8 +538,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         ['Попытка', this.attemptLabel(sessions, schedule)],
         ['Тип', job.type],
         ['Статус', job.status],
-        ['Последний запуск', job.lastRun],
-        ['Следующий запуск', job.nextRun],
+        ['Последний запуск', when(job.lastRun)],
+        ['Следующий запуск', when(job.nextRun)],
         ['Объектов', job.objectsCount],
       ],
       body: recovery ? undefined : sessions[0]?.message,
