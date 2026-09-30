@@ -807,6 +807,33 @@ test('a job that disappeared between the message and the press says so', async (
   assert.match(w.api.sent().at(-1).text, /больше не найдено/);
 });
 
+test('a job switched off in Veeam is counted apart, never as a failure', () => {
+  // The summary listed OPS_MGMT_VEEAM_OLD and others as FAILED: the last run
+  // of each had failed, before somebody switched it off. Nobody expects a job
+  // that is off to run, so its last result is history, not a problem to fix.
+  const { summarise, digestEvent } = require('../dist/estate/digest');
+  const { jobOf } = require('../dist/veeam/estate');
+  const jobs = [
+    { id: '1', name: 'SQL Daily', status: 'Stopped', lastResult: 'Failed' },
+    { id: '2', name: 'OPS_MGMT_VEEAM_OLD', status: 'Disabled', lastResult: 'Failed' },
+    { id: '3', name: 'Old warning', status: 'Disabled', lastResult: 'Warning' },
+    { id: '4', name: 'Old success', status: 'Disabled', lastResult: 'Success' },
+    { id: '5', name: 'Files', status: 'Stopped', lastResult: 'Success' },
+  ].map(jobOf);
+
+  const summary = summarise(jobs, new Set());
+  assert.deepEqual(summary.failing.map((failing) => failing.name), ['SQL Daily']);
+  assert.deepEqual(
+    [summary.total, summary.success, summary.warning, summary.failed, summary.disabled],
+    [5, 1, 0, 1, 3],
+  );
+
+  const event = digestEvent(summary);
+  const field = (label) => event.fields.find(([name]) => name === label)?.[1];
+  assert.equal(field('Выключены в Veeam'), 3);
+  assert.doesNotMatch(event.body, /OPS_MGMT_VEEAM_OLD|Old warning/);
+});
+
 test('a running job Veeam still calls disabled is counted as running', async () => {
   const { summarise } = require('../dist/estate/digest');
   const { jobOf } = require('../dist/veeam/estate');

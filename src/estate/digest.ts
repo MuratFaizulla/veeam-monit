@@ -1,6 +1,6 @@
 import { NotificationEvent } from '../telegram/types';
 import { Job } from '../veeam/estate';
-import { isRunningNow, WorkingJobs } from './job-state';
+import { isDisabled, isRunningNow, WorkingJobs } from './job-state';
 
 /**
  * Where every job stands, counted once.
@@ -29,6 +29,13 @@ export interface DigestSummary {
   success: number;
   warning: number;
   failed: number;
+  /**
+   * Jobs switched off in Veeam, counted apart from the three results above
+   * and never listed among the failing. Their last result is history: the
+   * summary once listed a job as FAILED that had failed before somebody
+   * switched it off, and nobody was expecting it to run again.
+   */
+  disabled: number;
   running: number;
   /**
    * Why the Working sessions could not be read, when they could not. The
@@ -65,20 +72,27 @@ export const summarise = (
     success: 0,
     warning: 0,
     failed: 0,
+    disabled: 0,
     running: 0,
     runningUnread: workingUnread,
     failing: [],
   };
 
   for (const job of jobs) {
+    // Counted from the status and the sessions, not from the result: a job
+    // transferring right now still carries the result of its previous run.
+    // A run somebody started by hand on a job that is off is still a run.
+    if (isRunningNow(job, working)) summary.running += 1;
+
+    if (isDisabled(job)) {
+      summary.disabled += 1;
+      continue;
+    }
+
     const { result } = job;
     if (result === 'success') summary.success += 1;
     else if (result === 'warning') summary.warning += 1;
     else if (result === 'failed') summary.failed += 1;
-
-    // Counted from the status and the sessions, not from the result: a job
-    // transferring right now still carries the result of its previous run.
-    if (isRunningNow(job, working)) summary.running += 1;
 
     if (result === 'failed' || result === 'warning') {
       summary.failing.push({ id: job.id, name: job.name, result });
@@ -132,6 +146,8 @@ export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
     ['Успешно', summary.success],
     ['С предупреждением', summary.warning],
     ['С ошибкой', summary.failed],
+    // Only when there are some: a line saying "0" on every morning is noise.
+    ...(summary.disabled ? [['Выключены в Veeam', summary.disabled] as [string, number]] : []),
     [
       'Выполняются',
       summary.runningUnread === undefined
