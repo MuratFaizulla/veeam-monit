@@ -1,5 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 /**
  * The published description of this service's HTTP surface.
@@ -17,6 +19,14 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 export const DOCS_PATH = 'api/docs';
 
+/**
+ * The version package.json states. It used to be written here as well, and
+ * stayed at 0.1.0 whatever was released; the image carries package.json beside
+ * dist/, as the repository does.
+ */
+const version = (): string =>
+  (JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8')) as { version: string }).version;
+
 export const mountOpenApi = (app: INestApplication): void => {
   const document = SwaggerModule.createDocument(
     app,
@@ -33,7 +43,7 @@ export const mountOpenApi = (app: INestApplication): void => {
           'пустой секрет никогда не означает «секрет не нужен».',
         ].join('\n'),
       )
-      .setVersion('0.1.0')
+      .setVersion(version())
       .addApiKey(
         {
           type: 'apiKey',
