@@ -22,7 +22,7 @@ const {
 test('an unreachable server is an answer, not an exception', async () => {
   const veeam = {
     request: async () => {
-      throw new Error('connect ETIMEDOUT 10.0.0.1:9419');
+      throw new Error('connect ETIMEDOUT 192.0.2.1:9419');
     },
     reachability: VeeamHttpService.prototype.reachability,
   };
@@ -31,7 +31,7 @@ test('an unreachable server is an answer, not an exception', async () => {
   // to answer it differently.
   assert.deepEqual(await veeam.reachability(), {
     reachable: false,
-    error: 'connect ETIMEDOUT 10.0.0.1:9419',
+    error: 'connect ETIMEDOUT 192.0.2.1:9419',
   });
   veeam.request = async () => ({ serverTime: '2026-09-14T11:00:00+05:00' });
   assert.deepEqual(await veeam.reachability(), {
@@ -570,12 +570,12 @@ const configured = () => monitorWorld({}, [
       },
     },
     virtualMachines: {
-      includes: [{ name: 'EMMDB1-T3Q4', hostName: '10.11.1.194', size: '3,9 TB' }],
+      includes: [{ name: 'EMMDB1-T3Q4', hostName: '192.0.2.194', size: '3,9 TB' }],
       excludes: { vms: [] },
     },
   },
   '/api/v1/backupInfrastructure/repositories': { data: [{ id: 'repo-6', name: 'AST01_FAS8200_7K_BKP06' }] },
-  '/api/v1/backupInfrastructure/proxies': { data: [{ id: 'p1', name: '10.10.108.20' }] },
+  '/api/v1/backupInfrastructure/proxies': { data: [{ id: 'p1', name: '192.0.2.20' }] },
   '/api/v1/sessions': { data: [{
     id: 'sess-bad', jobId: '1',
     creationTime: '2026-09-16T03:44:58+05:00', endTime: '2026-09-16T03:45:17+05:00',
@@ -600,7 +600,7 @@ test('/job shows how the job is set up, not just how it ran', async () => {
   assert.match(reply, /Хранение:<\/b> 7 дней/);
   assert.match(reply, /Режим:<\/b> Incremental, активный полный: сб/);
   assert.match(reply, /Машины \(1\)/);
-  assert.match(reply, /EMMDB1-T3Q4 — 3,9 TB · 10\.11\.1\.194/);
+  assert.match(reply, /EMMDB1-T3Q4 — 3,9 TB · 192\.0\.2\.194/);
 });
 
 test('/job names the machine that failed, which the job name never does', async () => {
@@ -646,11 +646,11 @@ test('a named proxy is told apart from automatic selection', () => {
   const { settingsOf } = require('../dist/estate/job-card');
   const names = {
     repositories: new Map([['r1', 'AST01_BKP06']]),
-    proxies: new Map([['p1', '10.10.108.20'], ['p2', '10.10.108.21']]),
+    proxies: new Map([['p1', '192.0.2.20'], ['p2', '192.0.2.21']]),
   };
 
   const chosen = settingsOf({ storage: { backupProxies: { autoSelectEnabled: false, proxyIds: ['p1', 'p2'] } } }, names);
-  assert.equal(chosen.proxies, '10.10.108.20, 10.10.108.21');
+  assert.equal(chosen.proxies, '192.0.2.20, 192.0.2.21');
 
   // An empty proxyIds list means "Veeam picks" only when the flag says so;
   // without reading the flag the two are indistinguishable.
@@ -701,7 +701,7 @@ test('a button and its reader cannot disagree about what it means', () => {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
   }
   // The longest key configuration allows, beside a GUID.
-  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01ast01-baa' };
+  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01-backup-a' };
   assert.deepEqual(decode(encode(job)), job, 'сервер и GUID помещаются в 64 байта Telegram');
   // A job's Button from before there was a list names no server.
   assert.deepEqual(decode('a:job:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
@@ -1073,7 +1073,7 @@ const DAY = 24 * 60 * MINUTE;
 const at = (ms) => new Date(ms).toISOString();
 const VDDK =
   'Processing EMMDB1-T3Q4 Error: Failed to open VDDK disk [[AST01_A400_SSD_DATA09] EMMDB1-T3Q4/EMMDB1-T3Q4_1.vmdk] ( is read-only mode - [true] )\r\n' +
-  'Logon attempt with parameters [VC/ESX: [10.11.1.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]\r\n' +
+  'Logon attempt with parameters [VC/ESX: [192.0.2.194];Port: 443;Login: [svc@example.com];VMX Spec: [moref=vm-31466]]\r\n' +
   'Failed to open disk for read.\r\n' +
   "Failed to upload disk 'vddkConnSpec>'\r\n" +
   'Agent failed to process method {DataTransfer.SyncDisk}.';

@@ -200,15 +200,15 @@ test('the health gives every server\'s IP address beside its name', async () => 
     baas: [job('b1', 'Files', 'Success')],
   });
   // What each connection resolved the names to.
-  w.veeamAst.address = '10.10.0.162';
-  w.veeamBaas.address = '192.168.201.123';
+  w.veeamAst.address = '192.0.2.162';
+  w.veeamBaas.address = '198.51.100.123';
 
   await w.monitor.check();
 
   const health = texts(w).find((slot) => /Серверы:/.test(slot));
-  assert.match(health, /<b>Сервер:<\/b> <code>https:\/\/ast\.example:9419<\/code>\n<b>IP:<\/b> <code>10\.10\.0\.162<\/code>/);
-  assert.match(health, /🟢 <b>AST<\/b> · <code>10\.10\.0\.162<\/code>\n/);
-  assert.match(health, /⚪ BAAS · <code>192\.168\.201\.123<\/code>\n/);
+  assert.match(health, /<b>Сервер:<\/b> <code>https:\/\/ast\.example:9419<\/code>\n<b>IP:<\/b> <code>192\.0\.2\.162<\/code>/);
+  assert.match(health, /🟢 <b>AST<\/b> · <code>192\.0\.2\.162<\/code>\n/);
+  assert.match(health, /⚪ BAAS · <code>198\.51\.100\.123<\/code>\n/);
 });
 
 test('a server in trouble is red in the health whichever is shown, and says what the trouble is', async () => {

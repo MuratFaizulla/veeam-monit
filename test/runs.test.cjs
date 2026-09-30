@@ -308,7 +308,7 @@ test('a job the last scan did not know still gets its retry policy', async () =>
  * Session history: read whole once, then only its last days
  *
  * The Evidence needs every session Veeam keeps. Read whole on every scan, that
- * was twenty pages of up to seven seconds on veeam01ast01 — the heaviest
+ * was twenty pages of up to seven seconds on veeam01 — the heaviest
  * queries the bot sent — to learn about the hundred-odd sessions since the
  * scan before.
  * ------------------------------------------------------------------ */
@@ -328,7 +328,7 @@ const keeping = (sessions) => {
   const fake = veeamFake({
     '/api/v1/sessions': (req) => {
       veeam.asked.push(req.params?.createdAfterFilter);
-      if (veeam.down) throw new Error('connect ETIMEDOUT 10.10.0.162:9419');
+      if (veeam.down) throw new Error('connect ETIMEDOUT 192.0.2.162:9419');
       const after = req.params?.createdAfterFilter;
       return {
         data: after
@@ -408,7 +408,7 @@ test('a session history read Veeam did not answer loses nothing, and the next on
 });
 
 test('on a Veeam whose points name no session, the runs are the sessions on the clock, and the log says who failed, once', async () => {
-  // veam01baas01, REST API 1.1: no sessionId on a point and no task sessions.
+  // veeam02, REST API 1.1: no sessionId on a point and no task sessions.
   // Every machine's point used to be a run of its own, and the topic read
   // "пропущено 390535 запусков" of a job that ran once a night.
   const { VeeamApiError } = require('../dist/veeam/api.error');
@@ -560,7 +560,7 @@ test('a point written outside every session is judged by the id it carries, and 
 });
 
 test('points that name no session are one run a night: the session on the clock, or the points close by', () => {
-  // veam01baas01 (REST API 1.1). Two nights inside the session history, two
+  // veeam02 (REST API 1.1). Two nights inside the session history, two
   // older than it, three machines each.
   const night = (start) => ['app01', 'db01', 'web01'].map((name, i) => ({
     backupId: 'b1', name, creationTime: iso(start + i * 20 * MINUTE),
@@ -686,7 +686,7 @@ test('a session Veeam no longer has is not asked again; one it did not answer is
   const { VeeamApiError } = require('../dist/veeam/api.error');
   const { reader, asked } = answering({
     gone: new VeeamApiError('Not found', 404),
-    busy: new Error('connect ETIMEDOUT 10.10.0.162:9419'),
+    busy: new Error('connect ETIMEDOUT 192.0.2.162:9419'),
   });
   const outcomes = new MachineOutcomes(reader);
 

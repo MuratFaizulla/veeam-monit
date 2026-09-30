@@ -50,8 +50,8 @@ const repositoryLines = (repository: RepositoryCapacity, index: number): string[
     `${usageIcon} ${usage}  <b>${percent === undefined ? 'нет данных' : `${Math.round(percent)}% занято`}</b>`,
     `📦 ${formatGb(repository.usedGB)} / ${formatGb(repository.capacityGB)}`,
     `💧 Свободно: <b>${formatGb(repository.freeGB)}</b>`,
-    // Only when Veeam said. A build whose REST API does not report it (1.1,
-    // veam01baas01) printed "⚪ UNKNOWN" under every repository it has.
+    // Only when Veeam said. A build whose REST API does not report it (1.1)
+    // printed "⚪ UNKNOWN" under every repository it has.
     ...(repository.isOnline === undefined
       ? []
       : [repository.isOnline ? '🟢 Доступен' : '🔴 <b>Недоступен</b>']),

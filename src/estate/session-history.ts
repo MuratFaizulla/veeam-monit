@@ -37,7 +37,7 @@ const keepable = (sessions: VeeamSession[]): KeptSession[] =>
  * Every session one Veeam server keeps, kept current without reading it all.
  *
  * The Evidence needs all of them — a restore point from July is judged by the
- * run that wrote it — and on veeam01ast01 that was 9 800 sessions: twenty
+ * run that wrote it — and on the busiest server that was 9 800 sessions: twenty
  * pages of up to seven seconds each, the heaviest queries the bot sends, on
  * every scan, to learn about the hundred or so that had appeared since the
  * one before. Now the whole history is read on start and once a day; in

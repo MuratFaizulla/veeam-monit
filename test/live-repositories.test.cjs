@@ -29,7 +29,7 @@ test('repository live view renders usage, capacity, free space and online state'
 });
 
 test('a repository whose state Veeam does not report says nothing about it', () => {
-  // veam01baas01 (REST API 1.1) reports no state: every repository read
+  // veeam02 (REST API 1.1) reports no state: every repository read
   // "⚪ Статус: UNKNOWN".
   const text = render([{ id: 'r1', name: 'ALM01_7K_BACKUP', capacityGB: 40 * 1024, freeGB: 22 * 1024 }], clock);
   assert.doesNotMatch(text, /UNKNOWN|Статус|Доступен/);

@@ -55,7 +55,7 @@ test('the first cycle an installation ever sees only takes notes', () => {
 
 const repo = (id, freePercent) => ({
   id, name: `BKP_${id}`, capacityGB: 1000, freeGB: freePercent === undefined ? undefined : freePercent * 10,
-  hostName: '10.10.27.13', path: `\\10.10.27.13\${id}`,
+  hostName: '192.0.2.13', path: `\\192.0.2.13\${id}`,
 });
 
 test('a repository under the threshold warns, under half of it is critical, above it re-arms', () => {
