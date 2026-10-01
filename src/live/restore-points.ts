@@ -1,5 +1,15 @@
-import { ChainShape, Retention } from '../estate/evidence';
-import { describeFulls, FullSchedule, fullKindOf, missedFullDays } from '../estate/full-schedule';
+import { Retention } from '../estate/evidence';
+import { describeFulls, fullKindOf } from '../estate/full-schedule';
+import {
+  everyRunFull,
+  JobPoints,
+  missedRunsWords,
+  owedDaysWords,
+  PointStanding,
+  PointVerdict,
+  verdictIcon,
+  verdictOf,
+} from '../estate/point-verdict';
 import { escapeHtml } from '../telegram/format';
 import { chainWords } from '../telegram/words';
 import { dateOf, dayOf, footerOf, Clock, momentOf, paged, plural } from './format';
@@ -24,31 +34,9 @@ import { dateOf, dayOf, footerOf, Clock, momentOf, paged, plural } from './forma
  * seven days, and which made a job twice the size look twice as protected.
  */
 
-const DAY = 86_400_000;
-
-export interface JobDepth {
+/** One job's restore points, by name. Where they stand is `verdictOf`'s to say. */
+export interface JobDepth extends JobPoints {
   name: string;
-  /** Distinct runs retained — the moments each machine can be restored to. */
-  runs: number;
-  /** Restore point objects, which is runs × machines: Veeam's own count. */
-  points: number;
-  /** Machines the job protects. */
-  machines: number;
-  /** Epoch ms of the oldest and newest point. */
-  oldest?: number;
-  newest?: number;
-  /**
-   * The job's own interval in days, learned from its recent points. Null when
-   * there is too little history to tell, and then nothing is claimed about
-   * missed runs rather than a cadence being guessed.
-   */
-  intervalDays?: number | null;
-  /** Absent when Veeam did not say which points are full. */
-  chain?: ChainShape;
-  /** What the job is configured to keep; absent when its configuration did not say. */
-  retention?: Retention;
-  /** The periodic Fulls it is set to take; absent when its configuration did not say. */
-  fulls?: FullSchedule[];
 }
 
 export interface RestorePointsSnapshot {
@@ -86,22 +74,6 @@ export interface RestorePointsSnapshot {
 export const THIN_RUNS = 1;
 
 /**
- * Runs a job may be behind before it is called out.
- *
- * One is the honest threshold — a nightly job that skipped last night skipped a
- * backup — but a run still in progress, or one that started late, would read as
- * a miss. The count therefore only begins at the second interval.
- */
-const MISSED_ALERT = 1;
-
-/** How far behind its own schedule a job is, in runs. Null when unknowable. */
-const missedRuns = (job: JobDepth, now: number): number | null => {
-  if (!job.intervalDays || job.newest === undefined) return null;
-  const ageDays = (now - job.newest) / DAY;
-  return Math.max(0, Math.floor(ageDays / job.intervalDays) - 1);
-};
-
-/**
  * Messages this topic may occupy.
  *
  * Only the jobs that need somebody are listed, and on an ordinary day they fit
@@ -123,9 +95,10 @@ const MAX_PAGES = 5;
  *
  * The ones on time are not listed, only counted. All ninety used to be, and
  * the eight that needed somebody were three messages down among eighty-two
- * that did not; any one of those is a /job away.
+ * that did not; any one of those is a /points away.
  */
-type Standing = 'behind' | 'fullMissed' | 'unknown' | 'onTime';
+type Standing = PointStanding;
+type Judged = PointVerdict;
 type Listed = Exclude<Standing, 'onTime'>;
 const STANDINGS: readonly Standing[] = ['behind', 'fullMissed', 'unknown', 'onTime'];
 const HEADING: Record<Listed, string> = {
@@ -133,15 +106,6 @@ const HEADING: Record<Listed, string> = {
   fullMissed: '<b>Пропущен Full по расписанию</b> · <i>больше пропусков — выше</i>',
   unknown: '<b>Ритм ещё не ясен</b>',
 };
-
-/** What the list knows of one job at this moment. */
-interface Judged {
-  /** Runs it is behind its own rhythm; null when the rhythm is unknown. */
-  missed: number | null;
-  /** The days its scheduled Full was owed and not taken, as `Date.UTC` midnights. */
-  owed: number[];
-  standing: Standing;
-}
 
 /** Dates shown in a row's missed-Full line before the rest are only counted. */
 const OWED_SHOWN = 5;
@@ -170,7 +134,7 @@ export const renderRestorePoints = (
     ];
   }
 
-  const judged = new Map(snapshot.jobs.map((job) => [job, judge(job, clock)]));
+  const judged = new Map(snapshot.jobs.map((job) => [job, verdictOf(job, clock)]));
   const judgedOf = (job: JobDepth): Judged => judged.get(job) as Judged;
   const standing = (job: JobDepth): Standing => judgedOf(job).standing;
 
@@ -254,12 +218,12 @@ export const renderRestorePoints = (
     listed.length === 0
       ? [
           `🟢 <b>Все ${onTime} ${plural(onTime, 'задание', 'задания', 'заданий')} — по расписанию</b>, Full проходят вовремя.`,
-          'Любое задание подробно: /job часть имени',
+          'Точки любого задания: /points часть имени',
         ]
       : onTime > 0
         ? [
             `🟢 <b>Ещё ${onTime} ${plural(onTime, 'задание', 'задания', 'заданий')} — по расписанию</b>, в список не включены.`,
-            'Любое из них подробно: /job часть имени',
+            'Точки любого из них: /points часть имени',
           ]
         : [];
 
@@ -306,31 +270,6 @@ export const renderRestorePoints = (
   );
 };
 
-/**
- * Where one job stands now: how many runs it is behind, which scheduled Fulls
- * it went without since its newest one, and so which part of the list it is in.
- * A Full is only owed where Veeam said which points are full and the job's
- * configuration said when it takes them.
- */
-const judge = (job: JobDepth, clock: Clock): Judged => {
-  const now = clock.now.getTime();
-  const missed = missedRuns(job, now);
-  const since = job.chain ? job.chain.lastFull ?? job.oldest : undefined;
-  const owed =
-    job.fulls && job.fulls.length > 0 && since !== undefined
-      ? missedFullDays(job.fulls, since, now, clock.timezone)
-      : [];
-  const standing: Standing =
-    missed !== null && missed >= MISSED_ALERT
-      ? 'behind'
-      : owed.length > 0
-        ? 'fullMissed'
-        : missed === null
-          ? 'unknown'
-          : 'onTime';
-  return { missed, owed, standing };
-};
-
 /** Names shown in a summary line before the rest are only counted. */
 const NAMES_SHOWN = 10;
 
@@ -370,10 +309,6 @@ const byStanding =
  */
 const increments = (job: JobDepth): number => job.chain?.sinceFull ?? -1;
 
-/** Whether every retained run of the job wrote a Full, so it has no increments at all. */
-const everyRunFull = (job: JobDepth): boolean =>
-  job.runs > 1 && job.chain !== undefined && job.chain.fulls === job.runs;
-
 /**
  * Two lines: what the job is and when it last wrote, then how far back each of
  * its machines reaches, the chain it is adding to, when it is set to take a
@@ -385,24 +320,12 @@ const everyRunFull = (job: JobDepth): boolean =>
  * to be translated back into a moment before it can be checked against
  * anything. The rest are days: since when, and when the chain began.
  */
-const rowOf = (job: JobDepth, { missed, owed, standing }: Judged, clock: Clock): string[] => {
-  const icon =
-    standing === 'fullMissed'
-      ? '🟡'
-      : missed === null
-        ? '⚪'
-        : missed >= 2
-          ? '🔴'
-          : missed >= MISSED_ALERT
-            ? '🟠'
-            : '🟢';
-
-  let head = `${icon} <b>${escapeHtml(job.name)}</b>`;
+const rowOf = (job: JobDepth, verdict: Judged, clock: Clock): string[] => {
+  const { missed, owed, standing } = verdict;
+  let head = `${verdictIcon(verdict)} <b>${escapeHtml(job.name)}</b>`;
   if (job.machines > 0) head += ` · ${job.machines} ВМ`;
   if (job.newest !== undefined) head += ` — ${momentOf(job.newest, clock)}`;
-  if (missed !== null && missed >= MISSED_ALERT) {
-    head += `, ${plural(missed, 'пропущен', 'пропущено', 'пропущено')} ${missed} ${plural(missed, 'запуск', 'запуска', 'запусков')}`;
-  }
+  if (standing === 'behind' && missed !== null) head += `, ${missedRunsWords(missed)}`;
 
   let reach = `${job.runs} ${plural(job.runs, 'точка', 'точки', 'точек')}`;
   if (job.runs > 1 && job.oldest !== undefined) reach += ` с ${dateOf(job.oldest, clock)}`;
@@ -415,24 +338,8 @@ const rowOf = (job: JobDepth, { missed, owed, standing }: Judged, clock: Clock):
 
   if (owed.length === 0) return [head, `└ ${facts.join(' · ')}`];
 
-  const now = clock.now.getTime();
-  const days = owed.slice(-OWED_SHOWN).map((day) => dayLabel(day, now));
-  const more = owed.length > OWED_SHOWN ? ` и ещё ${owed.length - OWED_SHOWN} раньше` : '';
-  return [
-    head,
-    `├ ${facts.join(' · ')}`,
-    `└ ⚠️ Пропущен ${fullKindOf(job.fulls ?? [])}: ${days.join(', ')}${more}`,
-  ];
-};
-
-/**
- * "12.09", or "12.09.2025" in another year, from a `Date.UTC` midnight: the
- * calendar day itself, which a time zone would only move.
- */
-const dayLabel = (day: number, now: number): string => {
-  const date = new Date(day);
-  const label = `${String(date.getUTCDate()).padStart(2, '0')}.${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-  return date.getUTCFullYear() === new Date(now).getUTCFullYear() ? label : `${label}.${date.getUTCFullYear()}`;
+  const days = owedDaysWords(owed, clock.now.getTime(), OWED_SHOWN);
+  return [head, `├ ${facts.join(' · ')}`, `└ ⚠️ Пропущен ${fullKindOf(job.fulls ?? [])}: ${days}`];
 };
 
 const retentionOf = (retention: Retention | undefined): string | undefined => {

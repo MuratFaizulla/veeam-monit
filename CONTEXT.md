@@ -119,8 +119,11 @@ Saturday), so a day without one is a Full that did not happen, not a schedule
 that never asked for it. A day counts twelve hours after it ends, so a Full that
 starts at 23:40 is late rather than missed.
 
-Owned by `src/estate/full-schedule.ts`; judged against the clock when 🗂 is
-written, which lists those jobs apart, the most days missed first.
+Owned by `src/estate/full-schedule.ts`. Whether a job is behind, past a
+missed Full, too new to judge or fine is one verdict, `verdictOf` in
+`src/estate/point-verdict.ts`, judged against the clock when it is asked: 🗂
+lists by it, and /points answers about one job by it, so the two cannot
+disagree about the same job.
 
 ## Standing
 

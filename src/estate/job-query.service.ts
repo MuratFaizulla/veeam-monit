@@ -15,6 +15,8 @@ import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
 import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
+import { jobPointsOf, verdictOf } from './point-verdict';
+import { PointsCard, renderPointsCard } from './points-card';
 
 /**
  * Sessions read for one job — by its card and by its alert, which counts the
@@ -122,6 +124,99 @@ export class JobQueryService {
       text: renderJobCard(await this.cardFor(job), this.clock()),
       jobId: job.id,
     };
+  }
+
+  /**
+   * One job's restore points, named approximately — /job's search, answered
+   * from the Evidence rather than from the job's sessions.
+   *
+   * Asked without a name, it offers the jobs 🗂 lists: the ones that need
+   * somebody, which is what "show me the points" most often means.
+   */
+  async describePoints(query: string): Promise<Answer> {
+    const read = await this.jobsNow();
+    if (!read.ok) return { text: read.message };
+
+    if (!query.trim()) {
+      const needing = this.needingAttention(read.jobs);
+      return {
+        text: [
+          '🔎 <b>Укажите задание</b>',
+          '',
+          'Например: <code>/points OPS_Exchange</code>',
+          'Имя можно писать частями и в любом регистре: <code>/points kingston db</code>',
+          '',
+          needing.length > 0
+            ? 'Или выберите из тех, которым нужно внимание:'
+            : 'Сейчас все задания по расписанию.',
+        ].join('\n'),
+        jobs: needing.map(({ id, name }) => ({ id, name })),
+        about: 'points',
+      };
+    }
+
+    const match = matchJob(read.jobs, query);
+    if (match.found === 'none') {
+      return {
+        text: [
+          `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
+          '',
+          `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
+        ].join('\n'),
+      };
+    }
+    if (match.found === 'many') {
+      return {
+        text: renderChoices(match.jobs, query),
+        jobs: match.jobs.map(({ id, name }) => ({ id, name })),
+        about: 'points',
+      };
+    }
+    return this.pointsAnswer(match.job);
+  }
+
+  /** The same, addressed by id: what a /points Button presses. */
+  async describePointsById(id: string): Promise<Answer> {
+    const read = await this.jobsNow();
+    if (!read.ok) return { text: read.message };
+    const job = read.jobs.find((candidate) => candidate.id === id);
+    if (!job) {
+      return {
+        text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.',
+      };
+    }
+    return this.pointsAnswer(job);
+  }
+
+  private pointsAnswer(job: Job): Answer {
+    const evidence = this.evidence.evidence;
+    const card: PointsCard =
+      evidence.status === 'ready'
+        ? {
+            name: job.name,
+            excused: isDisabled(job) ? 'disabled' : evidence.unscheduled.has(job.id) ? 'unscheduled' : undefined,
+            points: jobPointsOf(evidence, job.id),
+            elsewhere: evidence.provenByRuns.has(job.id),
+          }
+        : { name: job.name, unavailable: evidence.reason };
+    return { text: renderPointsCard(card, this.clock()), jobId: job.id, about: 'points' };
+  }
+
+  /** The jobs owed points whose verdict is anything but "on time", the way 🗂 orders them. */
+  private needingAttention(jobs: Job[]): Job[] {
+    const evidence = this.evidence.evidence;
+    if (evidence.status !== 'ready') return [];
+    const clock = this.clock();
+    const order = ['behind', 'fullMissed', 'unknown'];
+    return jobs
+      .filter((job) => !isDisabled(job) && !evidence.unscheduled.has(job.id))
+      .flatMap((job) => {
+        const points = jobPointsOf(evidence, job.id);
+        const standing = points ? verdictOf(points, clock).standing : undefined;
+        return standing && standing !== 'onTime' ? [{ job, rank: order.indexOf(standing) }] : [];
+      })
+      .sort((a, b) => a.rank - b.rank || a.job.name.localeCompare(b.job.name))
+      .map(({ job }) => job);
   }
 
 

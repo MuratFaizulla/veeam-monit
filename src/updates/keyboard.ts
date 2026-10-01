@@ -27,7 +27,12 @@ export type Action =
    * One job's card. `server` is the key of the server the job is on; a Button
    * from before there was a list carries none.
    */
-  | { kind: 'job'; id: string; server?: string };
+  | { kind: 'job'; id: string; server?: string }
+  /** One job's restore points, addressed the same way. */
+  | { kind: 'points'; id: string; server?: string };
+
+/** The Actions that address one job, and so carry its id. */
+type JobAction = Extract<Action, { id: string }>;
 
 const PREFIX = {
   summary: 'a:sum',
@@ -35,6 +40,7 @@ const PREFIX = {
   help: 'a:hlp',
   status: 'a:sts',
   job: 'a:job:',
+  points: 'a:pts:',
 } as const;
 
 /** Telegram's own limit. A longer id is not encoded rather than truncated. */
@@ -44,10 +50,10 @@ const fits = (data: string): string | undefined =>
   Buffer.byteLength(data) <= DATA_LIMIT ? data : undefined;
 
 export const encode = (action: Action): string | undefined => {
-  if (action.kind === 'job') {
+  if (action.kind === 'job' || action.kind === 'points') {
     // A job id is a GUID and never holds a colon, so the server goes first.
     const server = action.server === undefined ? '' : `${action.server}:`;
-    return fits(`${PREFIX.job}${server}${action.id}`);
+    return fits(`${PREFIX[action.kind]}${server}${action.id}`);
   }
   return PREFIX[action.kind];
 };
@@ -59,13 +65,14 @@ export const decode = (data: string | undefined): Action | undefined => {
   if (data === PREFIX.check) return { kind: 'check' };
   if (data === PREFIX.help) return { kind: 'help' };
   if (data === PREFIX.status) return { kind: 'status' };
-  if (data.startsWith(PREFIX.job)) {
-    const rest = data.slice(PREFIX.job.length);
+  for (const kind of ['job', 'points'] as const) {
+    if (!data.startsWith(PREFIX[kind])) continue;
+    const rest = data.slice(PREFIX[kind].length);
     const colon = rest.indexOf(':');
-    if (colon === -1) return rest ? { kind: 'job', id: rest } : undefined;
+    if (colon === -1) return rest ? { kind, id: rest } : undefined;
     const server = rest.slice(0, colon);
     const id = rest.slice(colon + 1);
-    return server && id ? { kind: 'job', id, server } : undefined;
+    return server && id ? { kind, id, server } : undefined;
   }
   return undefined;
 };
@@ -95,19 +102,37 @@ export const mainKeyboard = (): TelegramKeyboard | undefined =>
 /** Buttons that are the whole point of the message: a job each. */
 const MAX_JOB_BUTTONS = 8;
 
+/** `opens` is what a job's Button shows: its card, or its restore points. */
 export const jobsKeyboard = (
   jobs: Array<{ id: string; name: string }>,
   tail: Array<[string, Action]> = [],
   server?: string,
+  opens: JobAction['kind'] = 'job',
 ): TelegramKeyboard | undefined =>
   keyboard([
     // One per row: a job name is long, and two to a row truncates both.
     ...jobs
       .slice(0, MAX_JOB_BUTTONS)
-      .map((job): Array<[string, Action]> => [[job.name, { kind: 'job', id: job.id, server }]]),
+      .map((job): Array<[string, Action]> => [[job.name, { kind: opens, id: job.id, server }]]),
     tail,
   ]);
 
-/** Under a job card: ask the same question again, or step back out. */
+/** Under a job card: ask the same question again, see its points, or step back out. */
 export const cardKeyboard = (id: string, server?: string): TelegramKeyboard | undefined =>
-  keyboard([[['🔄 Обновить', { kind: 'job', id, server }], ['📊 Сводка', { kind: 'summary' }]]]);
+  keyboard([
+    [
+      ['🔄 Обновить', { kind: 'job', id, server }],
+      ['🗂 Точки', { kind: 'points', id, server }],
+      ['📊 Сводка', { kind: 'summary' }],
+    ],
+  ]);
+
+/** Under a job's points: ask again, see its card, or step back out. */
+export const pointsKeyboard = (id: string, server?: string): TelegramKeyboard | undefined =>
+  keyboard([
+    [
+      ['🔄 Обновить', { kind: 'points', id, server }],
+      ['📋 Карточка', { kind: 'job', id, server }],
+      ['📊 Сводка', { kind: 'summary' }],
+    ],
+  ]);

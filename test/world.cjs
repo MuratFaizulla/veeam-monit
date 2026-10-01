@@ -157,6 +157,8 @@ function idleMonitor() {
     summary: async () => ({ text: 'сводка' }),
     describeJob: async (query) => ({ text: `карточка ${query}` }),
     describeJobById: async (id, server) => ({ text: `карточка ${id}`, jobId: id, server }),
+    describePoints: async (query) => ({ text: `точки ${query}`, about: 'points' }),
+    describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
       trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
