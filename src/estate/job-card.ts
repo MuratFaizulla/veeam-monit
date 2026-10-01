@@ -1,8 +1,8 @@
 import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '../telegram/time';
-import { jobTypeWord, resultWord } from '../telegram/words';
+import { chainWords, jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
-import { VeeamJob, VeeamJobStorage } from '../veeam/types';
+import { VeeamFullBackups, VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './evidence';
 import { iconOf, isBadResult } from './job-state';
 import { runsOf } from './runs';
@@ -211,16 +211,40 @@ const modeOf = (storage: VeeamJobStorage | undefined): string | undefined => {
   const advanced = storage?.advancedSettings;
   if (!advanced) return undefined;
   const parts = [advanced.backupModeType].filter((part): part is string => Boolean(part));
-  const active = advanced.activeFulls;
-  const synthetic = advanced.synthenticFulls;
-  if (active?.isEnabled && active.weekly?.isEnabled) {
-    const days = daysOf(active.weekly.days);
-    parts.push(days ? `активный полный: ${days}` : 'активный полный еженедельно');
-  } else if (synthetic?.isEnabled && synthetic.weekly?.isEnabled) {
-    const days = daysOf(synthetic.weekly.days);
-    parts.push(days ? `синтетический полный: ${days}` : 'синтетический полный еженедельно');
-  }
+  const fulls =
+    fullsOf('активный полный', advanced.activeFulls) ??
+    fullsOf('синтетический полный', advanced.synthenticFulls);
+  if (fulls) parts.push(fulls);
   return parts.length > 0 ? parts.join(', ') : undefined;
+};
+
+/** Veeam's "Third" of "Third wednesday", as it is said. */
+const NTH: Record<string, string> = {
+  first: '1-я',
+  second: '2-я',
+  third: '3-я',
+  fourth: '4-я',
+  last: 'последняя',
+};
+
+/**
+ * "активный полный: сб", or "…: ежемесячно, 3-я ср".
+ *
+ * Monthly ones were not read, and TTC_Billing_Prod's card said nothing about
+ * fulls at all while it took one every third Wednesday.
+ */
+const fullsOf = (kind: string, fulls: VeeamFullBackups | undefined): string | undefined => {
+  if (!fulls?.isEnabled) return undefined;
+  if (fulls.weekly?.isEnabled) {
+    const days = daysOf(fulls.weekly.days);
+    return days ? `${kind}: ${days}` : `${kind} еженедельно`;
+  }
+  if (fulls.monthly?.isEnabled) {
+    const nth = NTH[(fulls.monthly.dayNumberInMonth ?? '').toLowerCase()];
+    const day = daysOf(fulls.monthly.dayOfWeek ? [fulls.monthly.dayOfWeek] : []);
+    return nth && day ? `${kind}: ежемесячно, ${nth} ${day}` : `${kind} ежемесячно`;
+  }
+  return undefined;
 };
 
 const proxiesOf = (
@@ -426,12 +450,13 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
 
   lines.push('', '<b>🗂 Точки восстановления</b>');
   if (card.depth) {
-    const { runs, points, machines, newest: freshest, oldest } = card.depth;
+    const { runs, points, machines, newest: freshest, oldest, chain } = card.depth;
     lines.push(
       `Запусков в хранении: <b>${runs}</b> · точек: ${points} · машин: ${machines}`,
       `Новейшая: ${momentOf(freshest, clock)}`,
       `Старейшая: ${momentOf(oldest, clock)}`,
     );
+    if (chain) lines.push(`Цепочка: ${chainWords(runs, chain, clock)}`);
     const cadence = cadenceLabel(card.cadenceDays);
     if (cadence) lines.push(`Периодичность: ${cadence}`);
   } else if (card.pointsElsewhere && !card.pointsUnavailable) {

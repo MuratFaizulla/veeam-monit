@@ -110,6 +110,16 @@ export const dayOf = (iso: string, clock: Clock): string => {
 };
 
 /**
+ * The day alone, from epoch milliseconds: "19.09", or "19.09.2025" when it is
+ * not this year. For where a day is the answer — since when a job can be
+ * restored, when its chain began — and "сегодня в 01:25" would be too exact.
+ */
+export const dateOf = (at: number, clock: Clock): string => {
+  const target = dayKey(new Date(at), clock);
+  return target.slice(-4) === dayKey(clock.now, clock).slice(-4) ? target.slice(0, 5) : target;
+};
+
+/**
  * How often something happens, from a cadence in days: "раз в сутки",
  * "раз в 5 дней", "раз в 7 часов". 🛡 and the job card each wrote their own,
  * and the card's said "раз в 5.0 сут".

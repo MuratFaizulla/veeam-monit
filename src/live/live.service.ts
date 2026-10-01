@@ -65,8 +65,14 @@ export class TelegramLiveService {
 
     for (const [chatId, chat] of this.store.chats()) {
       try {
+        // A page posted anew lands at the bottom of the topic, under the pages
+        // after it, so those are posted again too. Each page used to be
+        // retired on its own clock: 🗂's continuation was replaced at 11:48,
+        // its first page at 11:54, and the topic read "— продолжение" above
+        // the list it continued for a day and a half at a time.
+        let reposted = false;
         for (const [index, page] of pages.entries()) {
-          await this.publishTo(chatId, chat, slot, page, index);
+          reposted = (await this.publishTo(chatId, chat, slot, page, index, reposted)) || reposted;
         }
         await this.prune(chatId, slot, pages.length);
       } catch (error) {
@@ -96,13 +102,19 @@ export class TelegramLiveService {
     }
   }
 
+  /**
+   * Makes one page current, and says whether that took a new message.
+   * `repost` replaces the page's message even when it could be edited, because
+   * a page before it was just posted below it.
+   */
   private async publishTo(
     chatId: string,
     chat: TelegramChat,
     slot: LiveSlot,
     text: string,
     index = 0,
-  ): Promise<void> {
+    repost = false,
+  ): Promise<boolean> {
     const key = this.key(slot, index);
     const hash = this.hash(text);
     const held = this.store.liveMessages.of(chatId, key);
@@ -114,7 +126,7 @@ export class TelegramLiveService {
     // that fails and a delete that fails with it, and is left with a message
     // frozen at its last good content and a second one posted beside it. That
     // is what the ▶️ topic did: two messages, one stuck a day behind.
-    const previous = held && !this.expired(held) ? held : undefined;
+    const previous = held && !repost && !this.expired(held) ? held : undefined;
     if (held && !previous) {
       this.store.liveMessages.forget(chatId, key);
       await this.remove(chatId, held.messageId);
@@ -125,7 +137,7 @@ export class TelegramLiveService {
     // and then, so a frozen "обновлено" is evidence the monitor stopped — and
     // a message somebody deleted, or took with its topic, is noticed.
     const current = previous;
-    if (current && current.hash === hash && Date.now() - current.at < this.config.liveRefreshMs) return;
+    if (current && current.hash === hash && Date.now() - current.at < this.config.liveRefreshMs) return false;
 
     if (current) {
       const outcome = await this.edit(chatId, current.messageId, text);
@@ -137,7 +149,7 @@ export class TelegramLiveService {
           createdAt: current.createdAt,
           threadId: current.threadId,
         });
-        return;
+        return false;
       }
 
       // A failed call is not a lost message. Every failure used to count as
@@ -150,7 +162,7 @@ export class TelegramLiveService {
           `Live "${slot}" message ${current.messageId} in chat ${chatId} was not refreshed, ` +
             `kept for the next cycle: ${outcome.message}`,
         );
-        return;
+        return false;
       }
 
       this.store.liveMessages.forget(chatId, key);
@@ -181,6 +193,7 @@ export class TelegramLiveService {
       createdAt: now,
       threadId: posted.threadId,
     });
+    return true;
   }
 
   /**

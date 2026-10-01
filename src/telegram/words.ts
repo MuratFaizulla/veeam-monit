@@ -1,3 +1,5 @@
+import { Clock, dateOf } from './time';
+
 /**
  * Veeam's own words, as the bot writes them in Russian.
  *
@@ -72,3 +74,23 @@ export const bottleneckWord = lookup({
   network: 'сеть',
   target: 'репозиторий',
 });
+
+/**
+ * The chain a job is adding to: "Full 26.09 + 4 инкр.", or that it has
+ * nothing but Fulls.
+ *
+ * Written here once for 🗂 and the job card. `chain` is what the Evidence
+ * worked out for the job's `runs` retained runs; the shape is spelled out
+ * rather than imported, the Evidence being a layer above this one.
+ */
+export const chainWords = (
+  runs: number,
+  chain: { fulls: number; lastFull?: number; sinceFull: number },
+  clock: Clock,
+): string => {
+  if (chain.lastFull === undefined) return 'Full среди точек нет';
+  if (runs > 1 && chain.fulls === runs) return 'каждый запуск — Full';
+  const full = `Full ${dateOf(chain.lastFull, clock)}`;
+  if (chain.sinceFull === 0) return runs === 1 ? full : `${full}, инкрементов после него нет`;
+  return `${full} + ${chain.sinceFull} инкр.`;
+};

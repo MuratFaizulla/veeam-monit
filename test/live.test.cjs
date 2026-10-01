@@ -311,6 +311,48 @@ test('a slot too long for one message owns a second, and drops it when it shrink
   assert.equal(w.api.sent().length, 0);
 });
 
+test('a page posted anew takes the pages after it along, so the topic still reads in order', async () => {
+  // 🗂's continuation was replaced at 11:48 and its first page at 11:54, each
+  // on its own clock, and the topic read "— продолжение" above the list.
+  let lost;
+  const w = world({ TELEGRAM_LIVE: 'true' }, {
+    editMessageText: (payload) =>
+      payload.message_id === lost ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
+  });
+  await w.live.publish('restorePoints', ['страница 1', 'страница 2', 'страница 3']);
+  const second = w.store.liveMessages.of(CHAT, 'restorePoints#1').messageId;
+  lost = w.store.liveMessages.of(CHAT, 'restorePoints').messageId;
+
+  w.api.reset();
+  await w.live.publish('restorePoints', ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе']);
+
+  assert.deepEqual(
+    w.api.sent().map((message) => message.text),
+    ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе'],
+    'posted again top to bottom',
+  );
+  assert.ok(
+    w.api.of('deleteMessage').some((payload) => payload.message_id === second),
+    'and the continuation left above the new first page is gone',
+  );
+
+  // The rest is edited in place again, all three pages now on one clock.
+  w.api.reset();
+  await w.live.publish('restorePoints', ['страница 1, снова', 'страница 2, снова', 'страница 3, снова']);
+  assert.equal(w.api.sent().length, 0);
+  assert.equal(w.api.of('editMessageText').length, 3);
+});
+
+test('a page that only changed is edited in place and leaves the pages after it alone', async () => {
+  const w = world({ TELEGRAM_LIVE: 'true' });
+  await w.live.publish('restorePoints', ['страница 1', 'страница 2']);
+
+  w.api.reset();
+  await w.live.publish('restorePoints', ['страница 1, иначе', 'страница 2']);
+  assert.equal(w.api.sent().length, 0);
+  assert.deepEqual(w.api.of('deleteMessage'), []);
+});
+
 test('the live message survives a restart instead of starting a second one', async () => {
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
@@ -552,6 +594,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
       provenByRuns: new Set(),
       streakByJob,
       depthByJob: new Map(),
+      retentionByJob: new Map(),
       orphanChains: [],
       totalPoints: 0,
       failedPoints: 0,
@@ -757,7 +800,7 @@ const depthPages = (over) => {
 /** The whole topic as one string, for assertions that do not care about pages. */
 const depth = (over) => depthPages(over).join('\n');
 
-test('a row says the name, the point count and exactly when the newest was taken', async () => {
+test('a row says the name, when the newest point was taken, and how far back the job reaches', async () => {
   const text = depth({
     jobs: [
       {
@@ -774,7 +817,45 @@ test('a row says the name, the point count and exactly when the newest was taken
 
   // A date and a minute, because this is the line somebody reads before
   // opening Veeam; not "17 июня 2026 г. в 21:32:09" eighty-five times over.
-  assert.match(text, /^🔴 TTC_Call_Center — 7 точек · пропущено \d+ запусков · 17\.06 в 21:32$/mu);
+  assert.match(text, /^🔴 <b>TTC_Call_Center<\/b> · 1 ВМ — 17\.06 в 21:32, пропущено \d+ запусков\n└ 7 точек с 08\.09$/mu);
+});
+
+test('a job counts its points per machine, and Veeam\'s own sum is kept for the total', async () => {
+  // TTC_Billing_Prod read "69 точек": three nights of twenty-three machines,
+  // against a retention of seven days.
+  const text = depth({
+    jobs: [
+      { name: 'TTC_Billing_Prod', runs: 3, points: 69, machines: 23, intervalDays: 7,
+        oldest: Date.UTC(2026, 8, 2, 17), newest: NOW - 2 * DAY },
+    ],
+  });
+
+  assert.match(text, /^🟢 <b>TTC_Billing_Prod<\/b> · 23 ВМ — 13\.09 в 12:00\n└ 3 точки с 02\.09$/mu);
+  assert.ok(!/69 точ/u.test(text.split('<b>Заданий')[0]), 'the sum is not the job\'s count');
+  assert.match(text, /Точек в Veeam у этих заданий:<\/b> 69 \(по точке на каждую ВМ в каждом запуске\)/u);
+});
+
+test('a row names the chain being written and what the job is told to keep', async () => {
+  const at = (day) => Date.UTC(2026, 8, day, 1);
+  const text = depth({
+    jobs: [
+      // Two chains on disk, the newer one begun on the 12th.
+      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: 1, oldest: at(5), newest: NOW,
+        chain: { fulls: 2, lastFull: at(12), sinceFull: 3 }, retention: { quantity: 7, unit: 'days' } },
+      // Runs on Fridays with its Active Full on Fridays.
+      { name: 'TTC_Exchange', runs: 3, points: 3, machines: 1, intervalDays: 7, oldest: at(1), newest: NOW - DAY,
+        chain: { fulls: 3, lastFull: at(14), sinceFull: 0 }, retention: { quantity: 14, unit: 'points' } },
+      { name: 'JUST_FULL', runs: 4, points: 4, machines: 1, intervalDays: 1, oldest: at(11), newest: NOW,
+        chain: { fulls: 2, lastFull: at(14), sinceFull: 0 } },
+      { name: 'OLD_API', runs: 5, points: 5, machines: 1, intervalDays: 1, oldest: at(10), newest: NOW },
+    ],
+  });
+
+  assert.match(text, /^└ 11 точек с 05\.09 · Full 12\.09 \+ 3 инкр\. · хранение 7 дн\.$/mu);
+  assert.match(text, /^└ 3 точки с 01\.09 · каждый запуск — Full · хранение 14 точек$/mu);
+  assert.match(text, /^└ 4 точки с 11\.09 · Full 14\.09, инкрементов после него нет$/mu);
+  assert.match(text, /^└ 5 точек с 10\.09$/mu, 'a server that does not type its points: nothing claimed');
+  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> 1 задание/u);
 });
 
 test('the same staleness means opposite things at different cadences', async () => {
@@ -793,10 +874,23 @@ test('the same staleness means opposite things at different cadences', async () 
   const nightly = lines.findIndex((l) => l.includes('CLT_nightly'));
   const weekly = lines.findIndex((l) => l.includes('CLT_weekly'));
   assert.ok(nightly < weekly, 'the one behind its own schedule comes first');
-  assert.match(lines[nightly], /^🔴 CLT_nightly — 30 точек · пропущено 2 запуска/u);
-  assert.match(lines[weekly], /^🟢 CLT_weekly — 9 точек · /u);
+  assert.equal(lines[nightly - 1], '<b>Отстают от своего расписания</b>');
+  assert.equal(lines[weekly - 1], '<b>По расписанию</b>', 'and the two are listed apart');
+  assert.match(lines[nightly], /^🔴 <b>CLT_nightly<\/b> · 1 ВМ — 12\.09 в 12:00, пропущено 2 запуска$/u);
+  assert.match(lines[weekly], /^🟢 <b>CLT_weekly<\/b> · 1 ВМ — 12\.09 в 12:00$/u);
   assert.ok(!/CLT_weekly.*пропущен/u.test(lines[weekly]), 'nothing is claimed about a job that is on time');
   assert.match(text, /Отстают от расписания:<\/b> 1/);
+});
+
+test('the jobs on time are listed by name, so one can be found', async () => {
+  const text = depth({
+    jobs: ['TTC_Zabbix', 'CLT_AIFC', 'TTC_Exchange'].map((name, i) => ({
+      name, runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW - i * 3_600_000,
+    })),
+  });
+
+  const order = ['CLT_AIFC', 'TTC_Exchange', 'TTC_Zabbix'].map((name) => text.indexOf(name));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 
 test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
@@ -807,7 +901,7 @@ test('a job whose cadence cannot be learned claims nothing about missed runs', a
     ],
   });
 
-  assert.match(text, /^⚪ CLT_KMG_PETROCHEM — 1 точка · /mu);
+  assert.match(text, /^<b>Ритм ещё не ясен<\/b>\n⚪ <b>CLT_KMG_PETROCHEM<\/b> · 1 ВМ — 06\.08 в 12:00\n└ 1 точка$/mu);
   assert.ok(!/пропущен/u.test(text), 'two points are not enough to know a rhythm');
   assert.match(text, /Только одна точка:<\/b> 1 задание/);
 });
@@ -828,30 +922,41 @@ const estate = (size) =>
   Array.from({ length: size }, (_, i) => ({
     name: `TTC_JOB_${String(i).padStart(3, '0')}`,
     runs: 10,
-    points: 10,
-    machines: 1,
+    points: 40,
+    machines: 4,
     intervalDays: 1,
+    oldest: NOW - 10 * DAY,
     // Job 000 is three days behind, the rest are current.
     newest: NOW - (size - i) * 0.01 * DAY - (i === 0 ? 3 * DAY : 0),
+    chain: { fulls: 2, lastFull: NOW - 4 * DAY, sinceFull: 3 },
+    retention: { quantity: 7, unit: 'days' },
   }));
 
-test('a list too long for one message continues into a second', async () => {
+test('a list too long for one message continues into further ones, numbered', async () => {
   const pages = depthPages({ jobs: estate(90) });
 
-  assert.equal(pages.length, 2, 'ninety spelled-out rows do not fit in one message');
+  assert.ok(pages.length > 1, 'ninety spelled-out rows do not fit in one message');
   for (const page of pages) {
     assert.ok(page.length <= 4096, `page is ${page.length} characters`);
   }
-  assert.match(pages[1], /^🗂 <b>Точки восстановления — продолжение<\/b>/);
+  pages.forEach((page, i) => {
+    assert.ok(page.startsWith(`🗂 <b>Точки восстановления</b> · ${i + 1}/${pages.length}\n`), page.slice(0, 60));
+  });
   // The totals belong to the list, not to a page: repeated under the first
   // message they would be read as that page's own count.
   assert.ok(!/Заданий:/.test(pages[0]));
-  assert.match(pages[1], /Заданий:<\/b> 90/);
+  assert.match(pages.at(-1), /Заданий:<\/b> 90/);
   assert.equal(
     pages.join('\n').match(/TTC_JOB_/g).length,
     90,
     'every job appears exactly once across the pages',
   );
+});
+
+test('a list that fits in one message is not numbered', async () => {
+  const pages = depthPages({ jobs: estate(3) });
+  assert.equal(pages.length, 1);
+  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n/);
 });
 
 test('the pages fill up, keeping the ones that are behind', async () => {
@@ -884,7 +989,7 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
-  assert.match(topic.text, /TTC_Exchange — 1 точка · 23\.08 в 01:31/u);
+  assert.match(topic.text, /<b>TTC_Exchange<\/b> · 1 ВМ — 23\.08 в 01:31\n└ 1 точка/u);
 });
 
 const HOUR_MS = 3_600_000;
@@ -918,7 +1023,9 @@ test('a failed run\'s points count for the machines that got through it, not for
 
   const texts = w.api.sent().map((message) => message.text);
   const depth = texts.find((text) => /Точки восстановления/.test(text));
-  assert.match(depth, /REMS_DBS03 — 2 точки/u, 'the machines that got through are backed up');
+  // One night, and the two machines that got through it are backed up.
+  assert.match(depth, /<b>REMS_DBS03<\/b> · 2 ВМ — .*\n└ 1 точка/u, 'the machines that got through are backed up');
+  assert.match(depth, /Точек в Veeam у этих заданий:<\/b> 2 /u);
   assert.match(depth, /Не в счёт:<\/b> 1 точка машин, упавших в своём прогоне/u);
   const protection = texts.find((text) => /Все задания защищены|Требуют внимания/.test(text));
   assert.ok(!/точек восстановления нет/.test(protection), protection);
