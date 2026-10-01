@@ -363,7 +363,7 @@ test('a job is only excused on positive evidence, never on a gap', async () => {
   const { standingsOf } = require('../dist/estate/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
-    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(),
+    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(), retentionByJob: new Map(),
     orphanChains: [], totalPoints: 0, failedPoints: 0,
   };
 
@@ -656,6 +656,42 @@ test('a named proxy is told apart from automatic selection', () => {
   // without reading the flag the two are indistinguishable.
   const auto = settingsOf({ storage: { backupProxies: { autoSelectEnabled: true, proxyIds: [] } } }, names);
   assert.equal(auto.proxies, 'автоматически');
+});
+
+test('a monthly Active Full is said, not dropped', () => {
+  // OPS_Billing_Prod takes its fulls every third Wednesday; the card said
+  // nothing about fulls at all.
+  const { settingsOf } = require('../dist/estate/job-card');
+  const names = { repositories: new Map(), proxies: new Map() };
+  const advancedSettings = {
+    backupModeType: 'Incremental',
+    activeFulls: {
+      isEnabled: true,
+      weekly: { isEnabled: false, days: ['saturday'] },
+      monthly: { isEnabled: true, dayOfWeek: 'wednesday', dayNumberInMonth: 'Third' },
+    },
+    synthenticFulls: { isEnabled: false, weekly: { isEnabled: true, days: ['saturday'] } },
+  };
+  assert.equal(
+    settingsOf({ storage: { advancedSettings } }, names).mode,
+    'Incremental, активный полный: ежемесячно, 3-я ср',
+  );
+});
+
+test('the card names the chain being written', () => {
+  const { renderJobCard } = require('../dist/estate/job-card');
+  const now = Date.UTC(2026, 9, 1, 7);
+  const at = (day) => Date.UTC(2026, 8, day, 20);
+  const card = renderJobCard(
+    {
+      name: 'ESBTST', type: 'Backup', disabled: false, lastResult: 'success',
+      sessions: [], sessionsCut: false, retryWindowMs: 0, failedObjects: [], machines: [], excluded: 0, cadenceDays: 1,
+      depth: { runs: 11, points: 43, machines: 4, oldest: at(19), newest: now,
+        chain: { fulls: 2, lastFull: at(26), sinceFull: 4 } },
+    },
+    { now: new Date(now), timezone: 'UTC' },
+  );
+  assert.match(card, /Цепочка: Full 26\.09 \+ 4 инкр\./u);
 });
 
 test('the reason is said once: at length by object, or briefly by run', async () => {

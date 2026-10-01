@@ -348,7 +348,7 @@ export class LiveSnapshotsService {
         else without += 1;
         continue;
       }
-      listed.push({ name: job.name, ...job.depth, intervalDays: job.cadenceDays });
+      listed.push({ name: job.name, ...job.depth, intervalDays: job.cadenceDays, retention: job.retention });
     }
 
     const newest = listed.reduce<{ name: string; at: number } | undefined>(

@@ -56,6 +56,31 @@ export interface RetainedHistory {
   machines: number;
   oldest: number;
   newest: number;
+  /** Absent when Veeam did not say which points are full. */
+  chain?: ChainShape;
+}
+
+/**
+ * How a job's retained runs line up into backup chains.
+ *
+ * A Full begins a chain and every increment after it depends on it, so the
+ * chain still being added to is "the newest Full and the runs since". The
+ * chains before it stay on disk until retention lets the whole of each go,
+ * which is why a job kept for seven days can hold eleven points.
+ */
+export interface ChainShape {
+  /** Retained runs that wrote a Full, each of which began a chain. */
+  fulls: number;
+  /** When the newest of them began, epoch ms; absent when no retained run wrote one. */
+  lastFull?: number;
+  /** Runs after that Full: the increments of the chain still being added to. */
+  sinceFull: number;
+}
+
+/** How long Veeam is told to keep a job's points, as its configuration says. */
+export interface Retention {
+  quantity: number;
+  unit: 'days' | 'points';
 }
 
 /** A backup chain no live job owns. */
@@ -89,6 +114,8 @@ export interface ScannedEvidence {
   provenByRuns: ReadonlySet<string>;
   /** Full schedules, used to validate and describe today's nextRun values. */
   schedulesByJob: ReadonlyMap<string, VeeamSchedule>;
+  /** Each job's retention, where its configuration gave one. */
+  retentionByJob: ReadonlyMap<string, Retention>;
   depthByJob: Map<string, RetainedHistory>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
@@ -165,6 +192,16 @@ interface Placed {
   run?: string;
   /** The failed session that wrote it, when it was a failed one. */
   failedBy?: string;
+  /** Lower-cased: `full`, `increment`, … */
+  type?: string;
+}
+
+/** One retained run of a job, as its points add up. */
+interface RunTally {
+  /** Its earliest point: when the run began writing. */
+  at: number;
+  points: number;
+  fulls: number;
 }
 
 /** Places every point of `read` in the run that wrote it. */
@@ -183,6 +220,12 @@ export const readingOf = (read: EstateRead): Reading => {
     configurations
       .filter((job): job is VeeamJob & { id: string; schedule: VeeamSchedule } => Boolean(job.id && job.schedule))
       .map((job) => [job.id, job.schedule]),
+  );
+  const retentionByJob = new Map(
+    configurations.flatMap((job): [string, Retention][] => {
+      const retention = retentionOf(job);
+      return job.id && retention ? [[job.id, retention]] : [];
+    }),
   );
 
   // Backups whose job no longer exists. Every other check starts from the
@@ -240,6 +283,7 @@ export const readingOf = (read: EstateRead): Reading => {
       sessionId: point.sessionId,
       run: covering?.run,
       failedBy: failedSessionOf(covering, point.sessionId, resultOfSession),
+      type: point.type?.toLowerCase(),
     });
   }
 
@@ -252,13 +296,20 @@ export const readingOf = (read: EstateRead): Reading => {
     const runsByJob = new Map<string, Map<string, number>>();
     const depth = new Map<
       string,
-      { runs: Set<string>; points: number; machines: Set<string>; oldest: number; newest: number }
+      {
+        runs: Map<string, RunTally>;
+        points: number;
+        machines: Set<string>;
+        oldest: number;
+        newest: number;
+        typed: boolean;
+      }
     >();
     const nearest = new Map<string, { key: string; at: number }>();
     let failedPoints = 0;
     let keptFromFailed = 0;
 
-    for (const { jobId, at, name, sessionId, run: coveringRun, failedBy } of placed) {
+    for (const { jobId, at, name, sessionId, run: coveringRun, failedBy, type } of placed) {
       // A failed run is not a failed machine. Veeam marks the whole run failed
       // when one machine of fifteen does, and every point of it used to be
       // discarded: OPS_ERP_REMS_DBS03 read "точек восстановления нет" with
@@ -279,13 +330,19 @@ export const readingOf = (read: EstateRead): Reading => {
       // Depth is counted over every point, uncapped: how far back a job can
       // be restored is exactly the question the cap would answer wrongly.
       const seen = depth.get(jobId) ?? {
-        runs: new Set<string>(),
+        runs: new Map<string, RunTally>(),
         points: 0,
         machines: new Set<string>(),
         oldest: at,
         newest: at,
+        typed: false,
       };
-      seen.runs.add(run);
+      const tally = seen.runs.get(run) ?? { at, points: 0, fulls: 0 };
+      tally.at = Math.min(tally.at, at);
+      tally.points += 1;
+      if (type === 'full') tally.fulls += 1;
+      seen.runs.set(run, tally);
+      if (type) seen.typed = true;
       seen.points += 1;
       if (name) seen.machines.add(name);
       seen.oldest = Math.min(seen.oldest, at);
@@ -326,8 +383,9 @@ export const readingOf = (read: EstateRead): Reading => {
       unscheduled,
       provenByRuns,
       schedulesByJob,
+      retentionByJob,
       depthByJob: new Map(
-        [...depth].map(([jobId, seen]) => [
+        [...depth].map(([jobId, seen]): [string, RetainedHistory] => [
           jobId,
           {
             runs: seen.runs.size,
@@ -335,6 +393,7 @@ export const readingOf = (read: EstateRead): Reading => {
             machines: seen.machines.size,
             oldest: seen.oldest,
             newest: seen.newest,
+            ...(seen.typed ? { chain: chainOf([...seen.runs.values()]) } : {}),
           },
         ]),
       ),
@@ -370,6 +429,28 @@ export const cadenceOf = (newestFirst: number[]): number | null => {
   gaps.sort((a, b) => a - b);
   const middle = gaps[Math.floor(gaps.length / 2)] / 86_400_000;
   return Number.isFinite(middle) && middle > 0 ? middle : null;
+};
+
+/**
+ * Which retained runs began a chain, and how far the newest chain has grown.
+ *
+ * A run is a Full when most of its points are: a machine added to a job gets
+ * its first, full, point on an ordinary incremental night, and that night did
+ * not begin a chain for the other fourteen.
+ */
+const chainOf = (runs: RunTally[]): ChainShape => {
+  const fulls = runs.filter((run) => run.fulls * 2 > run.points);
+  if (fulls.length === 0) return { fulls: 0, sinceFull: runs.length };
+  const lastFull = Math.max(...fulls.map((run) => run.at));
+  return { fulls: fulls.length, lastFull, sinceFull: runs.filter((run) => run.at > lastFull).length };
+};
+
+/** "7 days" or "14 restore points", as the job is configured to keep. */
+const retentionOf = (job: VeeamJob): Retention | undefined => {
+  const policy = job.storage?.retentionPolicy;
+  if (!policy?.quantity) return undefined;
+  const unit = (policy.type ?? '').toLowerCase() === 'days' ? 'days' : 'points';
+  return { quantity: policy.quantity, unit };
 };
 
 /**

@@ -4,7 +4,7 @@ import { jobTypeWord } from '../telegram/words';
 import { ScheduledRun } from '../estate/schedule-planner';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
-export { dayOf, Clock, everyLabel, momentOf, plural } from '../telegram/time';
+export { dateOf, dayOf, Clock, everyLabel, momentOf, plural } from '../telegram/time';
 
 /**
  * Renders the two always-current status messages.
