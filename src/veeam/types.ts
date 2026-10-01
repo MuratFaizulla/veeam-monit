@@ -135,6 +135,11 @@ export interface VeeamRestorePoint {
   /** Identifies the run. Every VM of one run shares it. */
   sessionId?: string;
   creationTime?: string;
+  /**
+   * `Full` or `Increment` (also `Rollback`, `Snapshot`, …): whether this point
+   * began a backup chain or continues one. Absent on servers that predate it.
+   */
+  type?: string;
 }
 
 /**
@@ -207,6 +212,19 @@ export interface VeeamJobStorage {
 export interface VeeamFullBackups {
   isEnabled?: boolean;
   weekly?: { isEnabled?: boolean; days?: string[] };
+  /**
+   * "Third wednesday" of the month, which is how TTC_Billing_Prod takes its
+   * fulls; or, with `dayNumberInMonth: OnDay`, the date in `dayOfMonths`.
+   */
+  monthly?: {
+    isEnabled?: boolean;
+    dayOfWeek?: string;
+    /** `First` … `Fourth`, `Last` or `OnDay`. */
+    dayNumberInMonth?: string;
+    dayOfMonths?: number;
+    /** `January` …; every month when absent. */
+    months?: string[];
+  };
 }
 
 export interface VeeamJob {
@@ -217,7 +235,10 @@ export interface VeeamJob {
   isDisabled?: boolean;
   /** `runAutomatically: false` when the job only ever runs by hand. */
   schedule?: VeeamSchedule;
-  /** Only present on a single job read by id, not in the collection. */
+  /**
+   * In the collection too, not only on a job read by id: veeam01ast01 gave it
+   * for 108 of its 111 jobs. Absent on the job types that have no storage.
+   */
   storage?: VeeamJobStorage;
   virtualMachines?: {
     includes?: VeeamJobObject[];

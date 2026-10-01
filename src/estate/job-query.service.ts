@@ -216,7 +216,7 @@ export class JobQueryService {
    * The job's own configuration — schedule, repository, proxies, machines.
    *
    * Read by id rather than taken from the estate scan's copy: that copy keeps
-   * only the schedules of all 112 jobs, and holding every job's full storage
+   * only the schedules and retention of all 112 jobs, and holding every job's full storage
    * settings in memory to answer a question nobody may ask is the wrong trade.
    *
    * Public because an alert sent before any scan has finished needs the retry

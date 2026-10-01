@@ -1,12 +1,13 @@
 import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '../telegram/time';
-import { jobTypeWord, resultWord } from '../telegram/words';
+import { chainWords, jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './evidence';
+import { describeFulls, fullSchedulesOf } from './full-schedule';
 import { iconOf, isBadResult } from './job-state';
 import { runsOf } from './runs';
-import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
+import { describeRetry, describeSchedule } from './schedule-planner';
 
 /**
  * One job, answered for.
@@ -211,15 +212,11 @@ const modeOf = (storage: VeeamJobStorage | undefined): string | undefined => {
   const advanced = storage?.advancedSettings;
   if (!advanced) return undefined;
   const parts = [advanced.backupModeType].filter((part): part is string => Boolean(part));
-  const active = advanced.activeFulls;
-  const synthetic = advanced.synthenticFulls;
-  if (active?.isEnabled && active.weekly?.isEnabled) {
-    const days = daysOf(active.weekly.days);
-    parts.push(days ? `активный полный: ${days}` : 'активный полный еженедельно');
-  } else if (synthetic?.isEnabled && synthetic.weekly?.isEnabled) {
-    const days = daysOf(synthetic.weekly.days);
-    parts.push(days ? `синтетический полный: ${days}` : 'синтетический полный еженедельно');
-  }
+  // Said the way 🗂 says it. Monthly fulls were not read here at all, and
+  // TTC_Billing_Prod's card said nothing about fulls while it took one every
+  // third Wednesday.
+  const fulls = fullSchedulesOf(storage);
+  if (fulls && fulls.length > 0) parts.push(describeFulls(fulls));
   return parts.length > 0 ? parts.join(', ') : undefined;
 };
 
@@ -426,12 +423,13 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
 
   lines.push('', '<b>🗂 Точки восстановления</b>');
   if (card.depth) {
-    const { runs, points, machines, newest: freshest, oldest } = card.depth;
+    const { runs, points, machines, newest: freshest, oldest, chain } = card.depth;
     lines.push(
       `Запусков в хранении: <b>${runs}</b> · точек: ${points} · машин: ${machines}`,
       `Новейшая: ${momentOf(freshest, clock)}`,
       `Старейшая: ${momentOf(oldest, clock)}`,
     );
+    if (chain) lines.push(`Цепочка: ${chainWords(runs, chain, clock)}`);
     const cadence = cadenceLabel(card.cadenceDays);
     if (cadence) lines.push(`Периодичность: ${cadence}`);
   } else if (card.pointsElsewhere && !card.pointsUnavailable) {

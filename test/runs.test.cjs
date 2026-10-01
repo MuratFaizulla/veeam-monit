@@ -597,6 +597,66 @@ test('a job keeps its newest eleven runs for the rhythm, and all of them for how
   assert.ok(Math.abs(evidence.cadenceByJob.get('1') - 1) < 0.01);
 });
 
+/** One night of job 1: a point per machine, typed as Veeam types them, a minute apart. */
+const typedNight = (n, at, types) =>
+  Object.entries(types).map(([name, type], i) => ({
+    backupId: 'b1', sessionId: `n${n}`, name, type, creationTime: iso(at + i * MINUTE),
+  }));
+
+test('the chain being written is the newest Full and the runs after it; the one before it is still there', () => {
+  // TTC_ASUEDT_ESBTST on 1 October: a Full on 19 and on 26 September, four
+  // machines, seven days kept — and eleven points, because the chain of the
+  // 19th goes only when the last of its increments is past retention.
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const types = ['Full', 'Increment', 'Increment', 'Increment', 'Full', 'Increment', 'Increment', 'Increment'];
+  const evidence = readingOver({
+    jobs: [job('1', 'ESBTST', 'Success')],
+    configurations: [{ id: '1', storage: { retentionPolicy: { type: 'Days', quantity: 7 } } }],
+    backups: [{ id: 'b1', jobId: '1', name: 'ESBTST' }],
+    points: types.flatMap((type, n) => typedNight(n, now - (8 - n) * DAY, { esbtst1: type, esbtst2: type })),
+  }).evidence(new Map(), now);
+
+  const depth = evidence.depthByJob.get('1');
+  assert.deepEqual([depth.runs, depth.points, depth.machines], [8, 16, 2]);
+  assert.deepEqual(depth.chain, { fulls: 2, lastFull: now - 4 * DAY, sinceFull: 3 });
+  assert.deepEqual(evidence.retentionByJob.get('1'), { quantity: 7, unit: 'days' });
+});
+
+test('a machine added on an incremental night gets its first point as a Full, and that night begins no chain', () => {
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const evidence = readingOver({
+    jobs: [job('1', 'J', 'Success')],
+    backups: [{ id: 'b1', jobId: '1', name: 'J' }],
+    points: [
+      ...typedNight(0, now - 3 * DAY, { vm1: 'Full', vm2: 'Full' }),
+      ...typedNight(1, now - 2 * DAY, { vm1: 'Increment', vm2: 'Increment' }),
+      ...typedNight(2, now - DAY, { vm1: 'Increment', vm2: 'Increment', added: 'Full' }),
+    ],
+  }).evidence(new Map(), now);
+
+  assert.deepEqual(evidence.depthByJob.get('1').chain, { fulls: 1, lastFull: now - 3 * DAY, sinceFull: 2 });
+});
+
+test('a job whose every run is a Full has no increments; a server that does not type its points has no chain', () => {
+  // TTC_Exchange ran on Fridays and took its Active Full on Fridays.
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const fridays = [now - 39 * DAY, now - 11 * DAY, now - 6 * DAY];
+  const evidence = readingOver({
+    jobs: [job('1', 'TTC_Exchange', 'Success'), job('2', 'OLD_API', 'Success')],
+    configurations: [{ id: '2', storage: { retentionPolicy: { type: 'RestorePoints', quantity: 14 } } }],
+    backups: [{ id: 'b1', jobId: '1', name: 'TTC_Exchange' }, { id: 'b2', jobId: '2', name: 'OLD_API' }],
+    points: [
+      ...fridays.flatMap((at, n) => typedNight(n, at, { TTCMTA005: 'Full' })),
+      { backupId: 'b2', sessionId: 'old', name: 'vm', creationTime: iso(now - DAY) },
+    ],
+  }).evidence(new Map(), now);
+
+  assert.deepEqual(evidence.depthByJob.get('1').chain, { fulls: 3, lastFull: now - 6 * DAY, sinceFull: 0 });
+  assert.equal(evidence.depthByJob.get('2').chain, undefined, 'nothing is claimed about a chain nobody described');
+  assert.deepEqual(evidence.retentionByJob.get('2'), { quantity: 14, unit: 'points' });
+  assert.equal(evidence.retentionByJob.has('1'), false, 'no configuration, no retention');
+});
+
 test('a chain whose job is gone is an orphan, and a point of a backup nobody knows is only counted', () => {
   const t = (hours) => Date.parse('2026-09-01T00:00:00Z') + hours * HOUR;
   const evidence = readingOver({
@@ -641,6 +701,94 @@ test('a replica is proven by the runs that worked; a job that runs by hand is ow
   assert.deepEqual(evidence.runsByJob.get('1'), [now - 2 * DAY, now - 3 * DAY], 'the good runs, from when they began');
   assert.deepEqual([...evidence.unscheduled], ['2']);
   assert.deepEqual([...evidence.schedulesByJob.keys()], ['1', '2']);
+});
+
+/* ------------------------------------------------------------------ *
+ * Full schedule: when a Full is owed, and which ones did not happen
+ * ------------------------------------------------------------------ */
+
+const { fullSchedulesOf, missedFullDays, describeFulls } = require('../dist/estate/full-schedule');
+
+const fullsOver = (activeFulls, synthenticFulls) =>
+  fullSchedulesOf({ advancedSettings: { backupModeType: 'Incremental', activeFulls, synthenticFulls } });
+const SATURDAYS = { isEnabled: true, weekly: { isEnabled: true, days: ['saturday'] } };
+const QYZYLORDA = 'Asia/Qyzylorda';
+const dayOf = (iso) => Date.parse(`${iso}T00:00:00Z`);
+
+test('a job\'s Fulls are read from its storage settings, weekly or monthly, active or synthetic', () => {
+  assert.deepEqual(fullsOver(SATURDAYS), [{ kind: 'active', weekdays: [6] }]);
+  assert.deepEqual(
+    fullsOver({ isEnabled: true, weekly: { isEnabled: false }, monthly: {
+      isEnabled: true, dayOfWeek: 'wednesday', dayNumberInMonth: 'Third', dayOfMonths: 1, months: ['January', 'October'],
+    } }),
+    [{ kind: 'active', monthly: { nth: 3, weekday: 3, months: [1, 10] } }],
+  );
+  assert.deepEqual(
+    fullsOver({ ...SATURDAYS, isEnabled: false }, { isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'OnDay', dayOfMonths: 1 } }),
+    [{ kind: 'synthetic', monthly: { date: 1, months: [] } }],
+  );
+  assert.deepEqual(fullsOver({ isEnabled: false }, { isEnabled: false }), [], 'a job set to take no periodic Full');
+  assert.equal(fullSchedulesOf(undefined), undefined, 'a configuration that did not say');
+});
+
+test('a Full owed on a Saturday and not taken is missed; one taken, or still within the night, is not', () => {
+  // TTC_TelegramBot: Active Full on Saturdays, the last one on 5 September.
+  const fulls = fullsOver(SATURDAYS);
+  const since = Date.parse('2026-09-05T21:43:00+05:00');
+  assert.deepEqual(
+    missedFullDays(fulls, since, Date.parse('2026-10-01T10:23:00+05:00'), QYZYLORDA),
+    [dayOf('2026-09-12'), dayOf('2026-09-19'), dayOf('2026-09-26')],
+  );
+
+  // The Full of the 26th was taken; nothing owed after it.
+  assert.deepEqual(missedFullDays(fulls, Date.parse('2026-09-26T23:44:00+05:00'), Date.parse('2026-10-01T10:00:00+05:00'), QYZYLORDA), []);
+
+  // A Saturday Full that starts at 23:40 has the rest of the night to show.
+  const sinceTheNineteenth = Date.parse('2026-09-19T23:44:00+05:00');
+  assert.deepEqual(missedFullDays(fulls, sinceTheNineteenth, Date.parse('2026-09-27T10:00:00+05:00'), QYZYLORDA), []);
+  assert.deepEqual(
+    missedFullDays(fulls, sinceTheNineteenth, Date.parse('2026-09-27T13:00:00+05:00'), QYZYLORDA),
+    [dayOf('2026-09-26')],
+  );
+});
+
+test('a monthly Full is owed on its week of the month, its last weekday, or its date, in its months', () => {
+  const since = Date.parse('2026-09-16T22:00:00+05:00');
+  const now = Date.parse('2026-11-05T12:00:00+05:00');
+  const monthly = (fields) => fullsOver({ isEnabled: true, monthly: { isEnabled: true, ...fields } });
+
+  // TTC_Billing_Prod: the third Wednesday — 21 October.
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'Third', dayOfWeek: 'wednesday' }), since, now, QYZYLORDA), [dayOf('2026-10-21')]);
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'Last', dayOfWeek: 'wednesday' }), since, now, QYZYLORDA), [dayOf('2026-09-30'), dayOf('2026-10-28')]);
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'OnDay', dayOfMonths: 1 }), since, now, QYZYLORDA), [dayOf('2026-10-01'), dayOf('2026-11-01')]);
+  assert.deepEqual(
+    missedFullDays(monthly({ dayNumberInMonth: 'OnDay', dayOfMonths: 1, months: ['November'] }), since, now, QYZYLORDA),
+    [dayOf('2026-11-01')],
+  );
+});
+
+test('a Full schedule is said as the operator would say it', () => {
+  assert.equal(describeFulls(fullsOver(SATURDAYS)), 'Active Full по сб');
+  assert.equal(
+    describeFulls(fullsOver({ isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'Third', dayOfWeek: 'wednesday' } })),
+    'Active Full в 3-ю ср месяца',
+  );
+  assert.equal(
+    describeFulls(fullsOver({ isEnabled: true, weekly: { isEnabled: true, days: ['saturday', 'tuesday'] } }, { isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'OnDay', dayOfMonths: 1 } })),
+    'Active Full по вт, сб, Synthetic Full 1-го числа',
+  );
+  assert.equal(describeFulls([]), 'без периодического Full');
+});
+
+test('the Evidence keeps each job\'s Full schedule from its configuration', () => {
+  const evidence = readingOver({
+    configurations: [
+      { id: '1', storage: { advancedSettings: { activeFulls: SATURDAYS } } },
+      { id: '2', schedule: { runAutomatically: true } },
+    ],
+  }).evidence(new Map(), Date.now());
+  assert.deepEqual(evidence.fullsByJob.get('1'), [{ kind: 'active', weekdays: [6] }]);
+  assert.equal(evidence.fullsByJob.has('2'), false);
 });
 
 /* ------------------------------------------------------------------ *
