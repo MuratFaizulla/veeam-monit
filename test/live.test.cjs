@@ -826,29 +826,31 @@ test('a job counts its points per machine, and Veeam\'s own sum is kept for the 
   // against a retention of seven days.
   const text = depth({
     jobs: [
-      { name: 'TTC_Billing_Prod', runs: 3, points: 69, machines: 23, intervalDays: 7,
+      // Its rhythm not yet known, so it is listed.
+      { name: 'TTC_Billing_Prod', runs: 3, points: 69, machines: 23, intervalDays: null,
         oldest: Date.UTC(2026, 8, 2, 17), newest: NOW - 2 * DAY },
     ],
   });
 
-  assert.match(text, /^🟢 <b>TTC_Billing_Prod<\/b> · 23 ВМ — 13\.09 в 12:00\n└ 3 точки с 02\.09$/mu);
+  assert.match(text, /^⚪ <b>TTC_Billing_Prod<\/b> · 23 ВМ — 13\.09 в 12:00\n└ 3 точки с 02\.09$/mu);
   assert.ok(!/69 точ/u.test(text.split('<b>Заданий')[0]), 'the sum is not the job\'s count');
   assert.match(text, /Точек в Veeam у этих заданий:<\/b> 69 \(по точке на каждую ВМ в каждом запуске\)/u);
 });
 
 test('a row names the chain being written and what the job is told to keep', async () => {
   const at = (day) => Date.UTC(2026, 8, day, 1);
+  // Rhythms not yet known, so all four are listed.
   const text = depth({
     jobs: [
       // Two chains on disk, the newer one begun on the 12th.
-      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: 1, oldest: at(5), newest: NOW,
+      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: null, oldest: at(5), newest: NOW,
         chain: { fulls: 2, lastFull: at(12), sinceFull: 3 }, retention: { quantity: 7, unit: 'days' } },
       // Runs on Fridays with its Active Full on Fridays.
-      { name: 'TTC_Exchange', runs: 3, points: 3, machines: 1, intervalDays: 7, oldest: at(1), newest: NOW - DAY,
+      { name: 'TTC_Exchange', runs: 3, points: 3, machines: 1, intervalDays: null, oldest: at(1), newest: NOW - DAY,
         chain: { fulls: 3, lastFull: at(14), sinceFull: 0 }, retention: { quantity: 14, unit: 'points' } },
-      { name: 'JUST_FULL', runs: 4, points: 4, machines: 1, intervalDays: 1, oldest: at(11), newest: NOW,
+      { name: 'JUST_FULL', runs: 4, points: 4, machines: 1, intervalDays: null, oldest: at(11), newest: NOW,
         chain: { fulls: 2, lastFull: at(14), sinceFull: 0 } },
-      { name: 'OLD_API', runs: 5, points: 5, machines: 1, intervalDays: 1, oldest: at(10), newest: NOW },
+      { name: 'OLD_API', runs: 5, points: 5, machines: 1, intervalDays: null, oldest: at(10), newest: NOW },
     ],
   });
 
@@ -856,7 +858,17 @@ test('a row names the chain being written and what the job is told to keep', asy
   assert.match(text, /^└ 3 точки с 01\.09 · каждый запуск — Full · хранение 14 точек$/mu);
   assert.match(text, /^└ 4 точки с 11\.09 · Full 14\.09, инкрементов после него нет$/mu);
   assert.match(text, /^└ 5 точек с 10\.09$/mu, 'a server that does not type its points: nothing claimed');
-  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> 1 задание/u);
+  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> TTC_Exchange$/mu);
+});
+
+test('the jobs whose every run is a Full are named, being mostly on time and so not listed', async () => {
+  const text = depth({
+    jobs: Array.from({ length: 12 }, (_, i) => ({
+      name: `FULL_${String(i).padStart(2, '0')}`, runs: 3, points: 3, machines: 1, intervalDays: 7,
+      oldest: NOW - 14 * DAY, newest: NOW - DAY, chain: { fulls: 3, lastFull: NOW - DAY, sinceFull: 0 },
+    })),
+  });
+  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> FULL_00, FULL_01, .*, FULL_09 и ещё 2$/mu);
 });
 
 test('the same staleness means opposite things at different cadences', async () => {
@@ -873,13 +885,10 @@ test('the same staleness means opposite things at different cadences', async () 
 
   const lines = text.split('\n');
   const nightly = lines.findIndex((l) => l.includes('CLT_nightly'));
-  const weekly = lines.findIndex((l) => l.includes('CLT_weekly'));
-  assert.ok(nightly < weekly, 'the one behind its own schedule comes first');
   assert.equal(lines[nightly - 1], '<b>Отстают от своего расписания</b>');
-  assert.match(lines[weekly - 1], /^<b>По расписанию<\/b>/, 'and the two are listed apart');
   assert.match(lines[nightly], /^🔴 <b>CLT_nightly<\/b> · 1 ВМ — 12\.09 в 12:00, пропущено 2 запуска$/u);
-  assert.match(lines[weekly], /^🟢 <b>CLT_weekly<\/b> · 1 ВМ — 12\.09 в 12:00$/u);
-  assert.ok(!/CLT_weekly.*пропущен/u.test(lines[weekly]), 'nothing is claimed about a job that is on time');
+  assert.ok(!text.includes('CLT_weekly'), 'the weekly one is not due yet, and is only counted');
+  assert.match(text, /^🟢 <b>Ещё 1 задание — по расписанию<\/b>, в список не включены\.$/mu);
   assert.match(text, /Отстают от расписания:<\/b> 1/);
 });
 
@@ -908,9 +917,8 @@ test('a job whose scheduled Full did not happen is listed apart, with the days i
   assert.match(lines[heading + 4], /^🟡 <b>ONE_MISSED<\/b>/u);
   assert.equal(lines[heading + 6], '└ ⚠️ Пропущен Active Full: 12.09');
 
-  const onTime = lines.findIndex((line) => line.includes('<b>ON_TIME</b>'));
-  assert.ok(onTime > heading + 6 && lines[onTime].startsWith('🟢'), 'the one whose Full happened is on time');
-  assert.equal(lines[onTime + 1], '└ 8 точек с 12.09 · Full 12.09 + 7 инкр. · Active Full по сб');
+  assert.ok(!text.includes('ON_TIME'), 'the one whose Full happened is on time, and only counted');
+  assert.match(text, /^🟢 <b>Ещё 1 задание — по расписанию<\/b>/mu);
   assert.match(text, /Пропущен Full по расписанию:<\/b> 2 задания/u);
 });
 
@@ -920,11 +928,12 @@ test('a long run of missed Fulls is counted, not listed', async () => {
 });
 
 test('a Full is owed only where Veeam typed the points and the configuration said when', async () => {
+  // Rhythms not yet known, so they are listed whatever their Fulls.
   const text = depth({
     jobs: [
-      saturdayJob('UNTYPED', Date.UTC(2026, 7, 1), { chain: undefined }),
-      saturdayJob('UNSAID', Date.UTC(2026, 7, 1), { fulls: undefined }),
-      saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [] }),
+      saturdayJob('UNTYPED', Date.UTC(2026, 7, 1), { chain: undefined, intervalDays: null }),
+      saturdayJob('UNSAID', Date.UTC(2026, 7, 1), { fulls: undefined, intervalDays: null }),
+      saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [], intervalDays: null }),
     ],
   });
   assert.ok(!/⚠️/u.test(text), text);
@@ -943,26 +952,30 @@ test('a job behind its schedule stays with the ones behind, its missed Full stil
   assert.equal(lines[row + 2], '└ ⚠️ Пропущен Active Full: 05.09, 12.09');
 });
 
-test('among the jobs on time, the one with the most increments on its Full comes first', async () => {
-  // A chain that keeps growing is a Full that is not happening.
-  const row = (name, chain) => ({
-    name, runs: 17, points: 17, machines: 1, intervalDays: 1, newest: NOW, chain,
-  });
+test('the jobs on time are counted, not listed, and any of them can be asked about', async () => {
+  // Eight jobs needed somebody on 1 October, three messages down among
+  // eighty-two that did not.
   const text = depth({
     jobs: [
-      row('OLD_API'),
-      row('TTC_Exchange', { fulls: 17, lastFull: NOW, sinceFull: 0 }),
-      row('CLT_short', { fulls: 2, lastFull: NOW - 2 * DAY, sinceFull: 2 }),
-      row('TTC_TelegramBot', { fulls: 1, lastFull: NOW - 16 * DAY, sinceFull: 16 }),
-      row('AAA_short', { fulls: 2, lastFull: NOW - 2 * DAY, sinceFull: 2 }),
+      saturdayJob('NEEDS_A_LOOK', Date.UTC(2026, 8, 5, 22)),
+      ...['CLT_AIFC', 'TTC_Exchange', 'TTC_Zabbix'].map((name) => saturdayJob(name, Date.UTC(2026, 8, 12, 22))),
     ],
   });
 
-  const order = ['TTC_TelegramBot', 'AAA_short', 'CLT_short', 'TTC_Exchange', 'OLD_API'].map((name) =>
-    text.indexOf(`<b>${name}</b>`),
-  );
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'and by name where the count is the same');
-  assert.match(text, /^<b>По расписанию<\/b> · <i>больше инкрементов — выше<\/i>$/mu);
+  assert.match(text, /<b>NEEDS_A_LOOK<\/b>/u);
+  for (const name of ['CLT_AIFC', 'TTC_Exchange', 'TTC_Zabbix']) assert.ok(!text.includes(name), name);
+  assert.match(text, /^🟢 <b>Ещё 3 задания — по расписанию<\/b>, в список не включены\.\nЛюбое из них подробно: \/job часть имени$/mu);
+  assert.match(text, /Заданий:<\/b> 4/u, 'and still counted in the totals');
+});
+
+test('a day with nothing to look at says so in one line', async () => {
+  const pages = depthPages({
+    jobs: ['CLT_AIFC', 'TTC_Exchange'].map((name) => saturdayJob(name, Date.UTC(2026, 8, 12, 22))),
+  });
+
+  assert.equal(pages.length, 1);
+  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания — по расписанию<\/b>, Full проходят вовремя\.\nЛюбое задание подробно: \/job часть имени\n/u);
+  assert.ok(!/Только задания, которым нужно внимание/u.test(pages[0]), 'no legend for a list that is not there');
 });
 
 test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
@@ -990,6 +1003,10 @@ test('jobs that are not supposed to run are left out, and said to be left out', 
   assert.match(text, /Не учитываются:<\/b> 31 без расписания, 4 выключено/);
 });
 
+/**
+ * A bad day: every nightly job two days or more without a point, job 000 the
+ * longest, as when a repository goes and takes the whole estate with it.
+ */
 const estate = (size) =>
   Array.from({ length: size }, (_, i) => ({
     name: `TTC_JOB_${String(i).padStart(3, '0')}`,
@@ -998,8 +1015,7 @@ const estate = (size) =>
     machines: 4,
     intervalDays: 1,
     oldest: NOW - 10 * DAY,
-    // Job 000 is three days behind, the rest are current.
-    newest: NOW - (size - i) * 0.01 * DAY - (i === 0 ? 3 * DAY : 0),
+    newest: NOW - (2 + (size - i) * 0.01) * DAY,
     chain: { fulls: 2, lastFull: NOW - 4 * DAY, sinceFull: 3 },
     retention: { quantity: 7, unit: 'days' },
   }));
@@ -1007,7 +1023,7 @@ const estate = (size) =>
 test('a list too long for one message continues into further ones, numbered', async () => {
   const pages = depthPages({ jobs: estate(90) });
 
-  assert.ok(pages.length > 1, 'ninety spelled-out rows do not fit in one message');
+  assert.ok(pages.length > 1, 'ninety jobs behind do not fit in one message');
   for (const page of pages) {
     assert.ok(page.length <= 4096, `page is ${page.length} characters`);
   }
@@ -1035,10 +1051,10 @@ test('the pages fill up, keeping the ones that are behind', async () => {
   const pages = depthPages({ jobs: estate(400) });
   const text = pages.join('\n');
 
-  const hidden = /…и ещё (\d+) задани\S* по графику/.exec(text);
-  assert.ok(hidden, 'the ones on schedule are the ones worth dropping');
+  const hidden = /…и ещё (\d+) задани\S* — не поместились/.exec(text);
+  assert.ok(hidden, 'what did not fit is counted');
   assert.equal(text.match(/TTC_JOB_/g).length + Number(hidden[1]), 400);
-  assert.match(pages[0], /TTC_JOB_000/, 'the one that is behind is always shown');
+  assert.match(pages[0], /TTC_JOB_000/, 'the one furthest behind is always shown');
 });
 
 

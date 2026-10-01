@@ -104,11 +104,10 @@ const missedRuns = (job: JobDepth, now: number): number | null => {
 /**
  * Messages this topic may occupy.
  *
- * A job takes two lines — what it is and when it last wrote, then how far back
- * it reaches, what chain it is on and when its Full is due — and a third when
- * that Full was missed, so one message holds about twenty-five, and the estate
- * has ninety: four messages on 1 October, and one more of room. The list
- * continues into further messages instead, each kept current exactly like the
+ * Only the jobs that need somebody are listed, and on an ordinary day they fit
+ * in one message. On a bad one — a repository gone and every job behind — a
+ * job takes two or three lines and one message holds about twenty-five, so the
+ * list continues into further messages, each kept current exactly like the
  * first and numbered so their order shows.
  */
 const MAX_PAGES = 5;
@@ -120,17 +119,19 @@ const MAX_PAGES = 5;
  * is the end that survives the trim. Then the ones that back up on time but
  * whose scheduled Full did not happen, the most such days first: their chain
  * grows past what was planned, and every restore reads through all of it.
- * "We cannot tell" next, because it is not the same as "fine". The ones on time
- * last, the longest chain first — TTC_TelegramBot had sixteen increments on
- * one Full.
+ * "We cannot tell" next, because it is not the same as "fine".
+ *
+ * The ones on time are not listed, only counted. All ninety used to be, and
+ * the eight that needed somebody were three messages down among eighty-two
+ * that did not; any one of those is a /job away.
  */
 type Standing = 'behind' | 'fullMissed' | 'unknown' | 'onTime';
+type Listed = Exclude<Standing, 'onTime'>;
 const STANDINGS: readonly Standing[] = ['behind', 'fullMissed', 'unknown', 'onTime'];
-const HEADING: Record<Standing, string> = {
+const HEADING: Record<Listed, string> = {
   behind: '<b>Отстают от своего расписания</b>',
   fullMissed: '<b>Пропущен Full по расписанию</b> · <i>больше пропусков — выше</i>',
   unknown: '<b>Ритм ещё не ясен</b>',
-  onTime: '<b>По расписанию</b> · <i>больше инкрементов — выше</i>',
 };
 
 /** What the list knows of one job at this moment. */
@@ -196,11 +197,14 @@ export const renderRestorePoints = (
   }
 
   const sorted = [...snapshot.jobs].sort(byStanding(judgedOf));
+  const listed = sorted.filter((job) => standing(job) !== 'onTime');
+  const onTime = sorted.length - listed.length;
   const behind = sorted.filter((job) => standing(job) === 'behind').length;
   const fullMissed = sorted.filter((job) => judgedOf(job).owed.length > 0).length;
   const totalPoints = sorted.reduce((sum, job) => sum + job.points, 0);
   const thin = sorted.filter((job) => job.runs <= THIN_RUNS).length;
-  const fullsOnly = sorted.filter(everyRunFull).length;
+  // Named, because most of them are on time and so not in the list above.
+  const fullsOnly = sorted.filter(everyRunFull).map((job) => job.name);
 
   const tail = [
     '',
@@ -216,8 +220,8 @@ export const renderRestorePoints = (
     // disk: a job whose every run is a Full reads its machines whole each
     // time. TTC_Exchange ran on Fridays with its Active Full on Fridays, and
     // had no increment at all.
-    fullsOnly
-      ? `<b>Каждый запуск — Full, без инкрементов:</b> ${fullsOnly} ${plural(fullsOnly, 'задание', 'задания', 'заданий')}`
+    fullsOnly.length
+      ? `<b>Каждый запуск — Full, без инкрементов:</b> ${namesOf(fullsOnly)}`
       : null,
     skippedLine,
     // Veeam's own count, one point per machine per run, so the two can be
@@ -245,23 +249,38 @@ export const renderRestorePoints = (
     footer,
   ].filter((line): line is string => line !== null);
 
-  const pages = paged(sorted.length, MAX_PAGES, (from, take, closing) => {
+  // Where the rest went, and how to ask about any one of them.
+  const onTimeLines =
+    listed.length === 0
+      ? [
+          `🟢 <b>Все ${onTime} ${plural(onTime, 'задание', 'задания', 'заданий')} — по расписанию</b>, Full проходят вовремя.`,
+          'Любое задание подробно: /job часть имени',
+        ]
+      : onTime > 0
+        ? [
+            `🟢 <b>Ещё ${onTime} ${plural(onTime, 'задание', 'задания', 'заданий')} — по расписанию</b>, в список не включены.`,
+            'Любое из них подробно: /job часть имени',
+          ]
+        : [];
+
+  const pages = paged(listed.length, MAX_PAGES, (from, take, closing) => {
     const lines = [`🗂 <b>Точки восстановления</b>${PAGE_MARK}`];
-    if (from === 0) {
+    if (from === 0 && listed.length > 0) {
       lines.push(
-        '<i>«3 точки» — на столько моментов можно откатить каждую ВМ задания.' +
+        '<i>Только задания, которым нужно внимание.' +
+          ' «3 точки» — на столько моментов можно откатить каждую ВМ задания.' +
           ' «Full 16.09 + 2 инкр.» — цепочка, которая пишется сейчас: полный бэкап' +
           ' и инкременты после него.</i>',
       );
     }
 
     let previous: Standing | undefined;
-    for (const job of sorted.slice(from, from + take)) {
+    for (const job of listed.slice(from, from + take)) {
       // Every page opens with its heading, so a page read on its own still
       // says which part of the list it holds.
       if (standing(job) !== previous) {
         previous = standing(job);
-        lines.push('', HEADING[previous]);
+        lines.push('', HEADING[previous as Listed]);
       }
       lines.push(...rowOf(job, judgedOf(job), clock));
     }
@@ -273,10 +292,11 @@ export const renderRestorePoints = (
       return lines.join('\n');
     }
 
-    const rest = sorted.length - (from + take);
+    const rest = listed.length - (from + take);
     if (rest > 0) {
-      lines.push('', `…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} по графику`);
+      lines.push('', `…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} — не поместились`);
     }
+    if (onTimeLines.length > 0) lines.push('', ...onTimeLines);
     lines.push(...tail);
     return lines.join('\n');
   });
@@ -311,11 +331,20 @@ const judge = (job: JobDepth, clock: Clock): Judged => {
   return { missed, owed, standing };
 };
 
+/** Names shown in a summary line before the rest are only counted. */
+const NAMES_SHOWN = 10;
+
+/** "TTC_Exchange, TTC_WAP и ещё 3", escaped. */
+const namesOf = (names: string[]): string => {
+  const shown = names.slice(0, NAMES_SHOWN).map(escapeHtml).join(', ');
+  return names.length > NAMES_SHOWN ? `${shown} и ещё ${names.length - NAMES_SHOWN}` : shown;
+};
+
 /**
  * Behind first, most runs behind first; then the ones whose scheduled Full did
  * not happen, most such days first; then the ones nobody can judge, stalest
- * first; then the rest by how many increments their chain has, the number the
- * row shows. By name where all that is the same.
+ * first; then the rest, which are counted rather than listed. By name where
+ * all that is the same.
  */
 const byStanding =
   (judgedOf: (job: JobDepth) => Judged) =>
@@ -331,7 +360,7 @@ const byStanding =
       case 'unknown':
         return (a.newest ?? 0) - (b.newest ?? 0) || a.name.localeCompare(b.name);
       case 'onTime':
-        return increments(b) - increments(a) || a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name);
     }
   };
 
