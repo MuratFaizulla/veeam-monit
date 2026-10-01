@@ -88,6 +88,40 @@ Which Run wrote a point is decided by *when the point appeared*, not by the
 session id the point carries: Veeam stamps a point with the session that opened
 the Run, and a retried Run keeps writing into the same point.
 
+A job's points are told **per machine**: "3 точки" is three moments each of its
+machines can be restored to, which is the number to hold against retention.
+Veeam's own count — one per machine per Run — is given once, as the total. It
+used to be each job's count, and OPS_Billing_Prod read "69 точек" for three
+nights of twenty-three machines.
+
+## Chain
+
+A Full and the increments written after it, each depending on the ones before.
+A Run is a Full when most of its points are `Full`; a machine added to a job
+gets a full first point on an incremental night, and that night begins no
+chain. The chain being written is "the newest Full and the Runs since".
+
+The chain before it stays on disk until retention lets the whole of it go, so a
+job kept for seven days can hold eleven points. A job whose every Run is a Full
+has no increments at all, and reads its machines whole each time: OPS_Exchange
+ran on Fridays with its Active Full on Fridays.
+
+Worked out from the point types in the Evidence (`chainOf`); a server that does
+not type its points has no chain, and nothing is claimed about one.
+
+## Missed Full
+
+A day the job's settings owe a Full — Active or Synthetic, on chosen weekdays or
+once a month; Veeam has no "every other week" — that passed after the newest
+Full with no Full taken. Veeam takes the Full on that day whether or not the day
+is in the job's own schedule (OPS_3CX runs on Wednesdays and took its Full every
+Saturday), so a day without one is a Full that did not happen, not a schedule
+that never asked for it. A day counts twelve hours after it ends, so a Full that
+starts at 23:40 is late rather than missed.
+
+Owned by `src/estate/full-schedule.ts`; judged against the clock when 🗂 is
+written, which lists those jobs apart, the most days missed first.
+
 ## Standing
 
 What one job is owed and what it has: whether it is **excused** from producing
@@ -141,8 +175,10 @@ it is given, like every other live slot.
 ## Live slot
 
 A topic holding exactly one message, edited in place rather than appended to.
-State, not events. 🗂 Restore points is the exception that holds two, because
-the list does not fit in Telegram's limit.
+State, not events. 🗂 Restore points is the exception that holds several,
+numbered, because the list does not fit in Telegram's limit. A page posted anew
+takes the pages after it along: each used to be replaced on its own clock, and
+the continuation sat above the page it continued.
 
 Declared once in `src/live/slots.ts`, with whether it addresses a thread
 somebody created by hand. The slot names come from that declaration, including

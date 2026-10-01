@@ -1,27 +1,36 @@
+import { ChainShape, Retention } from '../estate/evidence';
+import { describeFulls, FullSchedule, fullKindOf, missedFullDays } from '../estate/full-schedule';
 import { escapeHtml } from '../telegram/format';
-import { dayOf, footerOf, Clock, momentOf, paged, plural } from './format';
+import { chainWords } from '../telegram/words';
+import { dateOf, dayOf, footerOf, Clock, momentOf, paged, plural } from './format';
 
 /**
  * Where each job's restore points stand against its own rhythm.
  *
  * 🛡 Protection answers "is this job past its deadline" and lists only the ones
  * that are. This one lists everything that is supposed to be running, with the
- * question an operator actually asks of a job: how many points are there, when
- * was the newest taken, and has it quietly skipped runs since.
+ * questions an operator actually asks of a job: how far back can each of its
+ * machines be restored, what chain is it adding to, when was the newest point
+ * taken, and has it quietly skipped runs since.
  *
  * "Skipped" can only be measured against the job's own cadence, and the cadence
  * has to be inferred. A weekly job two days stale is fine; a nightly one two
  * days stale has missed two backups. The same number of days means opposite
- * things, so the list is ordered by missed runs, never by age.
+ * things, so the ones behind are listed apart, ahead of everything else.
+ *
+ * A job's count is per machine. It used to be Veeam's own count, one point per
+ * machine per run, and OPS_Billing_Prod read "69 точек" for three nights of
+ * twenty-three machines — a number nobody can hold against a retention of
+ * seven days, and which made a job twice the size look twice as protected.
  */
 
 const DAY = 86_400_000;
 
 export interface JobDepth {
   name: string;
-  /** Distinct runs retained — the moments this job can be restored to. */
+  /** Distinct runs retained — the moments each machine can be restored to. */
   runs: number;
-  /** Restore point objects, which is runs × machines. */
+  /** Restore point objects, which is runs × machines: Veeam's own count. */
   points: number;
   /** Machines the job protects. */
   machines: number;
@@ -34,6 +43,12 @@ export interface JobDepth {
    * missed runs rather than a cadence being guessed.
    */
   intervalDays?: number | null;
+  /** Absent when Veeam did not say which points are full. */
+  chain?: ChainShape;
+  /** What the job is configured to keep; absent when its configuration did not say. */
+  retention?: Retention;
+  /** The periodic Fulls it is set to take; absent when its configuration did not say. */
+  fulls?: FullSchedule[];
 }
 
 export interface RestorePointsSnapshot {
@@ -89,12 +104,52 @@ const missedRuns = (job: JobDepth, now: number): number | null => {
 /**
  * Messages this topic may occupy.
  *
- * One message holds about fifty of these rows and the estate has ninety, so a
- * single message would mean either dropping half the list or going back to
- * rows too terse to read. The list continues into a second message instead,
- * kept current exactly like the first.
+ * A job takes two lines — what it is and when it last wrote, then how far back
+ * it reaches, what chain it is on and when its Full is due — and a third when
+ * that Full was missed, so one message holds about twenty-five, and the estate
+ * has ninety: four messages on 1 October, and one more of room. The list
+ * continues into further messages instead, each kept current exactly like the
+ * first and numbered so their order shows.
  */
-const MAX_PAGES = 2;
+const MAX_PAGES = 5;
+
+/**
+ * The standings a job can have, in the order they are listed.
+ *
+ * Behind first: that end of the list is the one somebody has to act on, and it
+ * is the end that survives the trim. Then the ones that back up on time but
+ * whose scheduled Full did not happen, the most such days first: their chain
+ * grows past what was planned, and every restore reads through all of it.
+ * "We cannot tell" next, because it is not the same as "fine". The ones on time
+ * last, the longest chain first — OPS_TelegramBot had sixteen increments on
+ * one Full.
+ */
+type Standing = 'behind' | 'fullMissed' | 'unknown' | 'onTime';
+const STANDINGS: readonly Standing[] = ['behind', 'fullMissed', 'unknown', 'onTime'];
+const HEADING: Record<Standing, string> = {
+  behind: '<b>Отстают от своего расписания</b>',
+  fullMissed: '<b>Пропущен Full по расписанию</b> · <i>больше пропусков — выше</i>',
+  unknown: '<b>Ритм ещё не ясен</b>',
+  onTime: '<b>По расписанию</b> · <i>больше инкрементов — выше</i>',
+};
+
+/** What the list knows of one job at this moment. */
+interface Judged {
+  /** Runs it is behind its own rhythm; null when the rhythm is unknown. */
+  missed: number | null;
+  /** The days its scheduled Full was owed and not taken, as `Date.UTC` midnights. */
+  owed: number[];
+  standing: Standing;
+}
+
+/** Dates shown in a row's missed-Full line before the rest are only counted. */
+const OWED_SHOWN = 5;
+
+/**
+ * Written into the title while the pages are fitted, then replaced by "1/3".
+ * As long as what replaces it, so a page that fitted still fits.
+ */
+const PAGE_MARK = ' · 0/0';
 
 export const renderRestorePoints = (
   snapshot: RestorePointsSnapshot,
@@ -114,8 +169,9 @@ export const renderRestorePoints = (
     ];
   }
 
-  const now = clock.now.getTime();
-  const missed = new Map(snapshot.jobs.map((job) => [job, missedRuns(job, now)]));
+  const judged = new Map(snapshot.jobs.map((job) => [job, judge(job, clock)]));
+  const judgedOf = (job: JobDepth): Judged => judged.get(job) as Judged;
+  const standing = (job: JobDepth): Standing => judgedOf(job).standing;
 
   // Said out loud: a list that silently shrank would be worse than one that is
   // too long, because the operator would not know what is outside it.
@@ -139,25 +195,35 @@ export const renderRestorePoints = (
     ];
   }
 
-  // Furthest behind its own schedule first. That end of the list is the one
-  // somebody has to act on, and it is the end that survives the trim.
-  const sorted = [...snapshot.jobs].sort(byUrgency(missed));
-  const behind = sorted.filter((job) => (missed.get(job) ?? 0) >= MISSED_ALERT).length;
+  const sorted = [...snapshot.jobs].sort(byStanding(judgedOf));
+  const behind = sorted.filter((job) => standing(job) === 'behind').length;
+  const fullMissed = sorted.filter((job) => judgedOf(job).owed.length > 0).length;
   const totalPoints = sorted.reduce((sum, job) => sum + job.points, 0);
   const thin = sorted.filter((job) => job.runs <= THIN_RUNS).length;
+  const fullsOnly = sorted.filter(everyRunFull).length;
 
   const tail = [
     '',
     `<b>Заданий:</b> ${sorted.length}` +
       (snapshot.without ? ` (+${snapshot.without} без точек)` : ''),
     `<b>Отстают от расписания:</b> ${behind || 'нет'}`,
+    `<b>Пропущен Full по расписанию:</b> ` +
+      (fullMissed ? `${fullMissed} ${plural(fullMissed, 'задание', 'задания', 'заданий')}` : 'нет'),
     thin
       ? `<b>Только одна точка:</b> ${thin} ${plural(thin, 'задание', 'задания', 'заданий')}`
       : null,
+    // The question the Active Full schedule raises, answered from what is on
+    // disk: a job whose every run is a Full reads its machines whole each
+    // time. OPS_Exchange ran on Fridays with its Active Full on Fridays, and
+    // had no increment at all.
+    fullsOnly
+      ? `<b>Каждый запуск — Full, без инкрементов:</b> ${fullsOnly} ${plural(fullsOnly, 'задание', 'задания', 'заданий')}`
+      : null,
     skippedLine,
-    // Points belonging to backups no live job owns are not counted here;
-    // saying "всего" would disagree with what Veeam reports.
-    `<b>Точек у этих заданий:</b> ${totalPoints}`,
+    // Veeam's own count, one point per machine per run, so the two can be
+    // held side by side. Points of backups no live job owns are not in it;
+    // saying "всего" of them would disagree with what Veeam reports.
+    `<b>Точек в Veeam у этих заданий:</b> ${totalPoints} (по точке на каждую ВМ в каждом запуске)`,
     // Named rather than quietly dropped: a point that exists in Veeam but not
     // here is exactly the kind of difference that makes a report distrusted.
     snapshot.failedPoints
@@ -169,24 +235,35 @@ export const renderRestorePoints = (
     snapshot.newest
       ? `<b>Последняя точка:</b> ${escapeHtml(snapshot.newest.name)}, ${dayOf(new Date(snapshot.newest.at).toISOString(), clock)}`
       : null,
-    '<i>Точка машины, упавшей в своём прогоне, не считается; точки остальных машин' +
-      ' того же прогона считаются. Пропуски — по собственному ритму задания: сколько' +
-      ' его обычных интервалов прошло с последней точки.</i>',
+    '<i>Прежняя цепочка удаляется целиком, когда срок хранения выйдет и у её последней' +
+      ' точки, поэтому точек бывает больше, чем дней хранения. Full пропущен, если после' +
+      ' последнего Full прошёл день, на который настройка задания назначает Active или' +
+      ' Synthetic Full, а полного бэкапа не было. Точка машины, упавшей' +
+      ' в своём прогоне, не считается; точки остальных машин того же прогона считаются.' +
+      ' Пропуски — по собственному ритму задания: сколько его обычных интервалов' +
+      ' прошло с последней точки.</i>',
     footer,
   ].filter((line): line is string => line !== null);
 
-  return paged(sorted.length, MAX_PAGES, (from, take, closing) => {
-    const lines =
-      from === 0
-        ? [
-            '🗂 <b>Точки восстановления</b>',
-            '<i>Сначала те, кто отстал от своего расписания.</i>',
-            '',
-          ]
-        : ['🗂 <b>Точки восстановления — продолжение</b>', ''];
+  const pages = paged(sorted.length, MAX_PAGES, (from, take, closing) => {
+    const lines = [`🗂 <b>Точки восстановления</b>${PAGE_MARK}`];
+    if (from === 0) {
+      lines.push(
+        '<i>«3 точки» — на столько моментов можно откатить каждую ВМ задания.' +
+          ' «Full 16.09 + 2 инкр.» — цепочка, которая пишется сейчас: полный бэкап' +
+          ' и инкременты после него.</i>',
+      );
+    }
 
+    let previous: Standing | undefined;
     for (const job of sorted.slice(from, from + take)) {
-      lines.push(depthLine(job, missed.get(job) ?? null, clock));
+      // Every page opens with its heading, so a page read on its own still
+      // says which part of the list it holds.
+      if (standing(job) !== previous) {
+        previous = standing(job);
+        lines.push('', HEADING[previous]);
+      }
+      lines.push(...rowOf(job, judgedOf(job), clock));
     }
 
     if (!closing) {
@@ -198,47 +275,141 @@ export const renderRestorePoints = (
 
     const rest = sorted.length - (from + take);
     if (rest > 0) {
-      lines.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} по графику`);
+      lines.push('', `…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')} по графику`);
     }
     lines.push(...tail);
     return lines.join('\n');
   });
+
+  return pages.map((page, index) =>
+    page.replace(PAGE_MARK, pages.length > 1 ? ` · ${index + 1}/${pages.length}` : ''),
+  );
 };
 
 /**
- * Most runs behind first; within the same standing, the stalest point first.
- *
- * A job whose cadence could not be learned sorts among the on-time ones, but
- * its age still floats it upwards there, because "we cannot tell" is not the
- * same as "fine".
+ * Where one job stands now: how many runs it is behind, which scheduled Fulls
+ * it went without since its newest one, and so which part of the list it is in.
+ * A Full is only owed where Veeam said which points are full and the job's
+ * configuration said when it takes them.
  */
-const byUrgency =
-  (missed: Map<JobDepth, number | null>) =>
-  (a: JobDepth, b: JobDepth): number =>
-    (missed.get(b) ?? 0) - (missed.get(a) ?? 0) ||
-    (a.newest ?? 0) - (b.newest ?? 0) ||
-    a.name.localeCompare(b.name);
+const judge = (job: JobDepth, clock: Clock): Judged => {
+  const now = clock.now.getTime();
+  const missed = missedRuns(job, now);
+  const since = job.chain ? job.chain.lastFull ?? job.oldest : undefined;
+  const owed =
+    job.fulls && job.fulls.length > 0 && since !== undefined
+      ? missedFullDays(job.fulls, since, now, clock.timezone)
+      : [];
+  const standing: Standing =
+    missed !== null && missed >= MISSED_ALERT
+      ? 'behind'
+      : owed.length > 0
+        ? 'fullMissed'
+        : missed === null
+          ? 'unknown'
+          : 'onTime';
+  return { missed, owed, standing };
+};
 
 /**
- * One line, spelled out: name, how many points, how far behind, and exactly
- * when the newest point was taken.
- *
- * The date is a date rather than "5 дней назад" because this is the line
- * somebody reads before opening Veeam, and a relative age has to be translated
- * back into a moment before it can be checked against anything. A day and a
- * minute find the point there; the year is written when it is not this one.
+ * Behind first, most runs behind first; then the ones whose scheduled Full did
+ * not happen, most such days first; then the ones nobody can judge, stalest
+ * first; then the rest by how many increments their chain has, the number the
+ * row shows. By name where all that is the same.
  */
-const depthLine = (job: JobDepth, missed: number | null, clock: Clock): string => {
+const byStanding =
+  (judgedOf: (job: JobDepth) => Judged) =>
+  (a: JobDepth, b: JobDepth): number => {
+    const [ja, jb] = [judgedOf(a), judgedOf(b)];
+    const order = STANDINGS.indexOf(ja.standing) - STANDINGS.indexOf(jb.standing);
+    if (order !== 0) return order;
+    switch (ja.standing) {
+      case 'behind':
+        return (jb.missed ?? 0) - (ja.missed ?? 0) || (a.newest ?? 0) - (b.newest ?? 0) || a.name.localeCompare(b.name);
+      case 'fullMissed':
+        return jb.owed.length - ja.owed.length || increments(b) - increments(a) || a.name.localeCompare(b.name);
+      case 'unknown':
+        return (a.newest ?? 0) - (b.newest ?? 0) || a.name.localeCompare(b.name);
+      case 'onTime':
+        return increments(b) - increments(a) || a.name.localeCompare(b.name);
+    }
+  };
+
+/**
+ * Increments written since the newest Full. A job whose server does not type
+ * its points has no number to show, and goes after every one that has.
+ */
+const increments = (job: JobDepth): number => job.chain?.sinceFull ?? -1;
+
+/** Whether every retained run of the job wrote a Full, so it has no increments at all. */
+const everyRunFull = (job: JobDepth): boolean =>
+  job.runs > 1 && job.chain !== undefined && job.chain.fulls === job.runs;
+
+/**
+ * Two lines: what the job is and when it last wrote, then how far back each of
+ * its machines reaches, the chain it is adding to, when it is set to take a
+ * Full and what it is told to keep. A third, when a scheduled Full did not
+ * happen: the days it did not, to be looked up in Veeam.
+ *
+ * The newest point is a day and a minute rather than "5 дней назад" because
+ * this is the line somebody reads before opening Veeam, and a relative age has
+ * to be translated back into a moment before it can be checked against
+ * anything. The rest are days: since when, and when the chain began.
+ */
+const rowOf = (job: JobDepth, { missed, owed, standing }: Judged, clock: Clock): string[] => {
   const icon =
-    missed === null ? '⚪' : missed >= 2 ? '🔴' : missed >= MISSED_ALERT ? '🟠' : '🟢';
+    standing === 'fullMissed'
+      ? '🟡'
+      : missed === null
+        ? '⚪'
+        : missed >= 2
+          ? '🔴'
+          : missed >= MISSED_ALERT
+            ? '🟠'
+            : '🟢';
 
-  const facts = [`${job.points} ${plural(job.points, 'точка', 'точки', 'точек')}`];
+  let head = `${icon} <b>${escapeHtml(job.name)}</b>`;
+  if (job.machines > 0) head += ` · ${job.machines} ВМ`;
+  if (job.newest !== undefined) head += ` — ${momentOf(job.newest, clock)}`;
   if (missed !== null && missed >= MISSED_ALERT) {
-    facts.push(
-      `${plural(missed, 'пропущен', 'пропущено', 'пропущено')} ${missed} ${plural(missed, 'запуск', 'запуска', 'запусков')}`,
-    );
+    head += `, ${plural(missed, 'пропущен', 'пропущено', 'пропущено')} ${missed} ${plural(missed, 'запуск', 'запуска', 'запусков')}`;
   }
-  if (job.newest !== undefined) facts.push(momentOf(job.newest, clock));
 
-  return `${icon} ${escapeHtml(job.name)} — ${facts.join(' · ')}`;
+  let reach = `${job.runs} ${plural(job.runs, 'точка', 'точки', 'точек')}`;
+  if (job.runs > 1 && job.oldest !== undefined) reach += ` с ${dateOf(job.oldest, clock)}`;
+  const facts = [
+    reach,
+    job.chain ? chainWords(job.runs, job.chain, clock) : undefined,
+    job.fulls ? describeFulls(job.fulls) : undefined,
+    retentionOf(job.retention),
+  ].filter((fact): fact is string => fact !== undefined);
+
+  if (owed.length === 0) return [head, `└ ${facts.join(' · ')}`];
+
+  const now = clock.now.getTime();
+  const days = owed.slice(-OWED_SHOWN).map((day) => dayLabel(day, now));
+  const more = owed.length > OWED_SHOWN ? ` и ещё ${owed.length - OWED_SHOWN} раньше` : '';
+  return [
+    head,
+    `├ ${facts.join(' · ')}`,
+    `└ ⚠️ Пропущен ${fullKindOf(job.fulls ?? [])}: ${days.join(', ')}${more}`,
+  ];
+};
+
+/**
+ * "12.09", or "12.09.2025" in another year, from a `Date.UTC` midnight: the
+ * calendar day itself, which a time zone would only move.
+ */
+const dayLabel = (day: number, now: number): string => {
+  const date = new Date(day);
+  const label = `${String(date.getUTCDate()).padStart(2, '0')}.${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  return date.getUTCFullYear() === new Date(now).getUTCFullYear() ? label : `${label}.${date.getUTCFullYear()}`;
+};
+
+const retentionOf = (retention: Retention | undefined): string | undefined => {
+  if (!retention) return undefined;
+  const { quantity, unit } = retention;
+  return unit === 'days'
+    ? `хранение ${quantity} дн.`
+    : `хранение ${quantity} ${plural(quantity, 'точка', 'точки', 'точек')}`;
 };
