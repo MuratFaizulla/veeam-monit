@@ -739,6 +739,11 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The longest key configuration allows, beside a GUID.
   const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01-backup-a' };
   assert.deepEqual(decode(encode(job)), job, 'сервер и GUID помещаются в 64 байта Telegram');
+  const points = { ...job, kind: 'points' };
+  assert.deepEqual(decode(encode(points)), points, 'и для точек задания');
+  assert.deepEqual(decode('a:pts:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
+    kind: 'points', id: '1e218e3f-9e08-4e28-ae89-06077422eddf',
+  });
   // A job's Button from before there was a list names no server.
   assert.deepEqual(decode('a:job:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
     kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf',
@@ -751,7 +756,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'servers', 'status', 'topics'],
+    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'servers', 'status', 'topics'],
   );
 });
 
@@ -802,7 +807,7 @@ test('pressing a job button opens that job, without anybody typing a name', asyn
   // And the card offers its own refresh, so the loop closes.
   assert.deepEqual(
     sent.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
-    [`a:job:${SERVER}:1`, 'a:sum'],
+    [`a:job:${SERVER}:1`, `a:pts:${SERVER}:1`, 'a:sum'],
   );
 });
 
@@ -833,6 +838,113 @@ test('a job that disappeared between the message and the press says so', async (
   await pressed(w, 'a:job:gone');
 
   assert.match(w.api.sent().at(-1).text, /больше не найдено/);
+});
+
+/* ------------------------------------------------------------------ *
+ * /points: one job's restore points, by the verdict 🗂 uses
+ * ------------------------------------------------------------------ */
+
+const POINTS_NOW = { now: new Date('2026-10-01T10:23:00+05:00'), timezone: 'Asia/Qyzylorda' };
+const local = (iso) => Date.parse(`${iso}+05:00`);
+
+/** TTC_TelegramBot on 1 October: Active Full on Saturdays, the last one on 5 September. */
+const telegramBot = (over = {}) => ({
+  runs: 17, points: 17, machines: 1, intervalDays: 1,
+  oldest: local('2026-09-05T21:43:00'), newest: local('2026-09-30T21:43:00'),
+  chain: { fulls: 1, lastFull: local('2026-09-05T21:43:00'), sinceFull: 16 },
+  retention: { quantity: 7, unit: 'days' },
+  fulls: [{ kind: 'active', weekdays: [6] }],
+  ...over,
+});
+
+const pointsCard = (card) => require('../dist/estate/points-card').renderPointsCard(card, POINTS_NOW);
+
+test('/points says where one job stands, how far back it reaches and the Fulls it went without', () => {
+  const text = pointsCard({ name: 'TTC_TelegramBot', points: telegramBot() });
+
+  assert.match(text, /^🗂 <b>TTC_TelegramBot<\/b> · точки восстановления$/mu);
+  assert.match(text, /^🟡 <b>Пропущен Active Full:<\/b> 12\.09, 19\.09, 26\.09$/mu);
+  assert.match(text, /^<b>Точек на ВМ:<\/b> 17 · <b>ВМ:<\/b> 1 · <b>в Veeam всего:<\/b> 17$/mu);
+  assert.match(text, /^<b>Самая ранняя:<\/b> 05\.09 в 21:43$/mu);
+  assert.match(text, /^<b>Самая новая:<\/b> вчера в 21:43$/mu);
+  assert.match(text, /^<b>Цепочка:<\/b> Full 05\.09 \+ 16 инкр\.$/mu);
+  assert.match(text, /^<b>Full по расписанию:<\/b> Active Full по сб$/mu);
+  assert.match(text, /^<b>Хранение:<\/b> 7 дней$/mu);
+  assert.match(text, /^<b>Ритм:<\/b> раз в сутки$/mu);
+});
+
+test('/points says a job is behind, on time, or too new to judge, as 🗂 would', () => {
+  const behind = pointsCard({ name: 'J', points: telegramBot({ newest: local('2026-09-27T21:43:00') }) });
+  assert.match(behind, /^🔴 <b>Отстаёт от своего расписания:<\/b> пропущено 2 запуска$/mu);
+  assert.match(behind, /^🟡 <b>Пропущен Active Full:<\/b>/mu, 'and the Full it went without, too');
+
+  const onTime = pointsCard({
+    name: 'J',
+    points: telegramBot({ chain: { fulls: 2, lastFull: local('2026-09-26T22:00:00'), sinceFull: 4 } }),
+  });
+  assert.match(onTime, /^🟢 <b>По расписанию<\/b>, Full проходят вовремя$/mu);
+  assert.match(onTime, /^<b>Цепочка:<\/b> Full 26\.09 \+ 4 инкр\. · цепочек в хранении: 2$/mu);
+
+  const fresh = pointsCard({ name: 'J', points: telegramBot({ intervalDays: null, fulls: undefined }) });
+  assert.match(fresh, /^⚪ <b>Ритм ещё не ясен<\/b>/mu);
+  assert.ok(!/Full по расписанию/u.test(fresh), 'nothing said about Fulls nobody configured');
+});
+
+test('/points does not judge a job nobody expects points from, and says why there are none', () => {
+  const off = pointsCard({ name: 'J', excused: 'disabled', points: telegramBot() });
+  assert.match(off, /^⚪ <b>Выключено в Veeam<\/b>/mu);
+  assert.ok(!/Пропущен|По расписанию|Отстаёт/u.test(off), off);
+  assert.match(off, /<b>Точек на ВМ:<\/b> 17/u, 'what it kept is still shown');
+
+  assert.match(pointsCard({ name: 'J' }), /🔴 <b>Точек восстановления нет<\/b>/u);
+  assert.match(pointsCard({ name: 'J', elsewhere: true }), /хранит отдельно/u);
+  assert.match(pointsCard({ name: 'J', unavailable: 'Точки ещё не прочитаны.' }), /Точки ещё не прочитаны\./u);
+});
+
+test('/points answers in General, offering a refresh and the job\'s card', async () => {
+  const w = exchange();
+  await w.monitor.check();
+  w.api.reset();
+
+  await said(w, '/points exchange');
+
+  const reply = w.api.sent().at(-1);
+  assert.equal(reply.message_thread_id, undefined, 'answered in General');
+  assert.match(reply.text, /🗂 <b>TTC_Exchange<\/b> · точки восстановления/u);
+  assert.match(reply.text, /<b>Точек на ВМ:<\/b> 1/u, 'the point a failed run left is not one');
+  assert.deepEqual(
+    reply.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
+    [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum'],
+  );
+});
+
+test('/points without a name offers the jobs that need somebody, and a press opens their points', async () => {
+  const w = exchange();
+  await w.monitor.check();
+  w.api.reset();
+
+  await said(w, '/points');
+
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /Укажите задание/u);
+  assert.match(reply.text, /которым нужно внимание/u);
+  const offered = reply.reply_markup.inline_keyboard[0][0];
+  assert.deepEqual([offered.text, offered.callback_data], ['TTC_Exchange', `a:pts:${SERVER}:1`]);
+
+  // Asking again within seconds is held back; a press a while later is not.
+  w.store.cooldowns.clear('command:read');
+  await pressed(w, offered.callback_data);
+  assert.match(w.api.sent().at(-1).text, /🗂 <b>TTC_Exchange<\/b> · точки восстановления/u);
+});
+
+test('/points with a name several jobs share offers each, and each opens its points', async () => {
+  const w = monitorWorld({}, [job('1', 'TTC_Veeam_DB_Konaev', 'Success'), job('2', 'TTC_Konaev_EM_DB', 'Success')]);
+
+  await said(w, '/points konaev');
+
+  const buttons = w.api.sent().at(-1).reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes(`a:pts:${SERVER}:1`) && buttons.includes(`a:pts:${SERVER}:2`), buttons.join(' '));
+  assert.ok(!buttons.some((data) => data.startsWith('a:job:')), 'not the cards it was not asked for');
 });
 
 test('a job switched off in Veeam is counted apart, never as a failure', () => {

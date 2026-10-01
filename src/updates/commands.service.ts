@@ -5,7 +5,7 @@ import { plural, stampOf } from '../telegram/time';
 import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml, truncate } from '../telegram/format';
-import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard } from './keyboard';
+import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
 import {
   isMenu,
   isSelective,
@@ -189,6 +189,9 @@ export class TelegramCommandsService implements Answers {
     if (action.kind === 'job') {
       return this.reading(() => this.monitor.describeJobById(action.id, action.server));
     }
+    if (action.kind === 'points') {
+      return this.reading(() => this.monitor.describePointsById(action.id, action.server));
+    }
     return commandPressed(action.kind)?.answer(this, asked);
   }
 
@@ -323,6 +326,10 @@ export class TelegramCommandsService implements Answers {
 
   job(name: string): Promise<Reply> {
     return this.reading(() => this.monitor.describeJob(name), SUMMARY_BUTTON);
+  }
+
+  points(name: string): Promise<Reply> {
+    return this.reading(() => this.monitor.describePoints(name), SUMMARY_BUTTON);
   }
 
   knownTopics(asked: Asked): Reply {
@@ -532,9 +539,13 @@ export class TelegramCommandsService implements Answers {
    */
   private offered(answer: Answer, tail: ButtonRow): Reply {
     const lines = [answer.text];
-    if (answer.jobId) return { lines, markup: cardKeyboard(answer.jobId, answer.server) };
+    const points = answer.about === 'points';
+    if (answer.jobId) {
+      const markup = points ? pointsKeyboard(answer.jobId, answer.server) : cardKeyboard(answer.jobId, answer.server);
+      return { lines, markup };
+    }
     if (answer.jobs && answer.jobs.length > 0) {
-      return { lines, markup: jobsKeyboard(answer.jobs, tail, answer.server) };
+      return { lines, markup: jobsKeyboard(answer.jobs, tail, answer.server, points ? 'points' : 'job') };
     }
     return { lines, markup: mainKeyboard() };
   }

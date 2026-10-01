@@ -1,5 +1,5 @@
 import { Job } from '../veeam/estate';
-import { VeeamBackup, VeeamJob, VeeamRestorePoint, VeeamSchedule, VeeamSession } from '../veeam/types';
+import { VeeamBackup, VeeamJob, VeeamJobStorage, VeeamRestorePoint, VeeamSchedule, VeeamSession } from '../veeam/types';
 import { FullSchedule, fullSchedulesOf } from './full-schedule';
 import { Attempt, failureStreakOf, retryWindowOf, Run, runsOf } from './runs';
 
@@ -226,7 +226,7 @@ export const readingOf = (read: EstateRead): Reading => {
   );
   const retentionByJob = new Map(
     configurations.flatMap((job): [string, Retention][] => {
-      const retention = retentionOf(job);
+      const retention = retentionFrom(job.storage);
       return job.id && retention ? [[job.id, retention]] : [];
     }),
   );
@@ -456,8 +456,8 @@ const chainOf = (runs: RunTally[]): ChainShape => {
 };
 
 /** "7 days" or "14 restore points", as the job is configured to keep. */
-const retentionOf = (job: VeeamJob): Retention | undefined => {
-  const policy = job.storage?.retentionPolicy;
+export const retentionFrom = (storage: VeeamJobStorage | undefined): Retention | undefined => {
+  const policy = storage?.retentionPolicy;
   if (!policy?.quantity) return undefined;
   const unit = (policy.type ?? '').toLowerCase() === 'days' ? 'days' : 'points';
   return { quantity: policy.quantity, unit };

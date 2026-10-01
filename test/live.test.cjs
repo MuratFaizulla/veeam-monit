@@ -964,7 +964,7 @@ test('the jobs on time are counted, not listed, and any of them can be asked abo
 
   assert.match(text, /<b>NEEDS_A_LOOK<\/b>/u);
   for (const name of ['CLT_AIFC', 'TTC_Exchange', 'TTC_Zabbix']) assert.ok(!text.includes(name), name);
-  assert.match(text, /^🟢 <b>Ещё 3 задания — по расписанию<\/b>, в список не включены\.\nЛюбое из них подробно: \/job часть имени$/mu);
+  assert.match(text, /^🟢 <b>Ещё 3 задания — по расписанию<\/b>, в список не включены\.\nТочки любого из них: \/points часть имени$/mu);
   assert.match(text, /Заданий:<\/b> 4/u, 'and still counted in the totals');
 });
 
@@ -974,7 +974,7 @@ test('a day with nothing to look at says so in one line', async () => {
   });
 
   assert.equal(pages.length, 1);
-  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания — по расписанию<\/b>, Full проходят вовремя\.\nЛюбое задание подробно: \/job часть имени\n/u);
+  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания — по расписанию<\/b>, Full проходят вовремя\.\nТочки любого задания: \/points часть имени\n/u);
   assert.ok(!/Только задания, которым нужно внимание/u.test(pages[0]), 'no legend for a list that is not there');
 });
 

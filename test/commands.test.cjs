@@ -43,7 +43,7 @@ test('every declared command is in the menu and has a paragraph in /help', async
 
   assert.deepEqual(
     BOT_COMMANDS.map((entry) => entry.command),
-    ['status', 'menu', 'servers', 'digest', 'job', 'check', 'topics', 'clear', 'help'],
+    ['status', 'menu', 'servers', 'digest', 'job', 'points', 'check', 'topics', 'clear', 'help'],
   );
   for (const { name } of COMMANDS) {
     assert.ok(BOT_COMMANDS.some((entry) => entry.command === name), `/${name} в меню`);

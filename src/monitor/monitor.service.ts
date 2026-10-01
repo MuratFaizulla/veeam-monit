@@ -233,6 +233,16 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     return this.answered(watch, await watch.estate.jobs.describeJobById(id));
   }
 
+  async describePoints(query: string): Promise<Answer> {
+    const watch = this.shown();
+    return this.answered(watch, await watch.estate.jobs.describePoints(query));
+  }
+
+  async describePointsById(id: string, server?: string): Promise<Answer> {
+    const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
+    return this.answered(watch, await watch.estate.jobs.describePointsById(id));
+  }
+
   /* ---------------------------------------------------------------- *
    * Servers
    * ---------------------------------------------------------------- */

@@ -708,7 +708,7 @@ test('the idle monitor the tests use offers exactly what the real one does', asy
   const idle = idleMonitor();
   const real = monitorWorld({}, [job('1', 'A', 'Success')]).monitor;
 
-  for (const member of ['check', 'summary', 'describeJob', 'describeJobById']) {
+  for (const member of ['check', 'summary', 'describeJob', 'describeJobById', 'describePoints', 'describePointsById']) {
     assert.equal(typeof real[member], 'function', `MonitorService.${member}`);
     assert.equal(typeof idle[member], 'function', `idle monitor ${member}`);
   }

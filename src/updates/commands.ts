@@ -52,15 +52,16 @@ export interface Answers {
   check(): Promise<Reply>;
   summary(): Promise<Reply>;
   job(name: string): Promise<Reply>;
+  points(name: string): Promise<Reply>;
   knownTopics(asked: Asked): Reply;
   clear(asked: Asked): Promise<Reply>;
 }
 
 /**
- * A Button that stands for a command. A job's own Button is not one: it
- * carries an id, and `/job` is asked with a half-remembered name.
+ * A Button that stands for a command. A job's own Buttons are not: they
+ * carry an id, and `/job` and `/points` are asked with a half-remembered name.
  */
-export type CommandButton = Exclude<Action['kind'], 'job'>;
+export type CommandButton = Exclude<Action['kind'], 'job' | 'points'>;
 
 export interface Command {
   /** What is typed after the slash, and what the menu shows. */
@@ -144,6 +145,17 @@ const DECLARED = [
       'Имя можно писать частями и в любом регистре: <code>/job konaev db</code>',
     ],
     answer: (answers, asked) => answers.job(asked.argument),
+  },
+  {
+    name: 'points',
+    argument: '<имя>',
+    menu: 'Точки восстановления задания: /points часть имени',
+    help: [
+      'точки восстановления одного задания: на сколько моментов можно откатить',
+      'каждую ВМ, цепочка, Active Full по расписанию и пропущенные, хранение.',
+      'Имя — как для <code>/job</code>: <code>/points exchange</code>. Без имени — те, кому нужно внимание.',
+    ],
+    answer: (answers, asked) => answers.points(asked.argument),
   },
   {
     name: 'check',

@@ -3,9 +3,10 @@ import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '.
 import { chainWords, jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
-import { RetainedHistory } from './evidence';
+import { RetainedHistory, retentionFrom } from './evidence';
 import { describeFulls, fullSchedulesOf } from './full-schedule';
 import { iconOf, isBadResult } from './job-state';
+import { retentionWords } from './point-verdict';
 import { runsOf } from './runs';
 import { describeRetry, describeSchedule } from './schedule-planner';
 
@@ -201,11 +202,8 @@ const named = (names: ReadonlyMap<string, string>, id: string | undefined): stri
   id === undefined ? undefined : names.get(id) ?? id;
 
 const retentionOf = (storage: VeeamJobStorage | undefined): string | undefined => {
-  const policy = storage?.retentionPolicy;
-  if (!policy?.quantity) return undefined;
-  return (policy.type ?? '').toLowerCase() === 'days'
-    ? `${policy.quantity} ${plural(policy.quantity, 'день', 'дня', 'дней')}`
-    : `${policy.quantity} ${plural(policy.quantity, 'точка', 'точки', 'точек')}`;
+  const retention = retentionFrom(storage);
+  return retention && retentionWords(retention);
 };
 
 const modeOf = (storage: VeeamJobStorage | undefined): string | undefined => {
