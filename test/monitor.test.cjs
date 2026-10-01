@@ -363,7 +363,7 @@ test('a job is only excused on positive evidence, never on a gap', async () => {
   const { standingsOf } = require('../dist/estate/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
-    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(), retentionByJob: new Map(),
+    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(), retentionByJob: new Map(), fullsByJob: new Map(),
     orphanChains: [], totalPoints: 0, failedPoints: 0,
   };
 
@@ -598,7 +598,7 @@ test('/job shows how the job is set up, not just how it ran', async () => {
   assert.match(reply, /Репозиторий:<\/b> AST01_FAS8200_7K_BKP06/, 'имя, а не id');
   assert.match(reply, /Прокси:<\/b> автоматически/);
   assert.match(reply, /Хранение:<\/b> 7 дней/);
-  assert.match(reply, /Режим:<\/b> Incremental, активный полный: сб/);
+  assert.match(reply, /Режим:<\/b> Incremental, Active Full по сб/);
   assert.match(reply, /Машины \(1\)/);
   assert.match(reply, /EMMDB1-T3Q4 — 3,9 TB · 192\.0\.2\.194/);
 });
@@ -674,7 +674,7 @@ test('a monthly Active Full is said, not dropped', () => {
   };
   assert.equal(
     settingsOf({ storage: { advancedSettings } }, names).mode,
-    'Incremental, активный полный: ежемесячно, 3-я ср',
+    'Incremental, Active Full в 3-ю ср месяца',
   );
 });
 

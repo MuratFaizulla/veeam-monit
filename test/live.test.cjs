@@ -595,6 +595,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
       streakByJob,
       depthByJob: new Map(),
       retentionByJob: new Map(),
+      fullsByJob: new Map(),
       orphanChains: [],
       totalPoints: 0,
       failedPoints: 0,
@@ -875,22 +876,93 @@ test('the same staleness means opposite things at different cadences', async () 
   const weekly = lines.findIndex((l) => l.includes('CLT_weekly'));
   assert.ok(nightly < weekly, 'the one behind its own schedule comes first');
   assert.equal(lines[nightly - 1], '<b>Отстают от своего расписания</b>');
-  assert.equal(lines[weekly - 1], '<b>По расписанию</b>', 'and the two are listed apart');
+  assert.match(lines[weekly - 1], /^<b>По расписанию<\/b>/, 'and the two are listed apart');
   assert.match(lines[nightly], /^🔴 <b>CLT_nightly<\/b> · 1 ВМ — 12\.09 в 12:00, пропущено 2 запуска$/u);
   assert.match(lines[weekly], /^🟢 <b>CLT_weekly<\/b> · 1 ВМ — 12\.09 в 12:00$/u);
   assert.ok(!/CLT_weekly.*пропущен/u.test(lines[weekly]), 'nothing is claimed about a job that is on time');
   assert.match(text, /Отстают от расписания:<\/b> 1/);
 });
 
-test('the jobs on time are listed by name, so one can be found', async () => {
+/** A job of 15 September that takes its Active Full on Saturdays, the last one on `lastFull`. */
+const saturdayJob = (name, lastFull, over = {}) => ({
+  name, runs: 8, points: 8, machines: 1, intervalDays: 1, oldest: lastFull, newest: NOW - 3_600_000,
+  chain: { fulls: 1, lastFull, sinceFull: 7 }, fulls: [{ kind: 'active', weekdays: [6] }], ...over,
+});
+
+test('a job whose scheduled Full did not happen is listed apart, with the days it was owed', async () => {
+  // Saturdays before 15 September: 29 August, 5 and 12 September.
   const text = depth({
-    jobs: ['TTC_Zabbix', 'CLT_AIFC', 'TTC_Exchange'].map((name, i) => ({
-      name, runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW - i * 3_600_000,
-    })),
+    jobs: [
+      saturdayJob('ON_TIME', Date.UTC(2026, 8, 12, 22)),
+      saturdayJob('ONE_MISSED', Date.UTC(2026, 8, 5, 22)),
+      saturdayJob('TWO_MISSED', Date.UTC(2026, 7, 29, 22)),
+    ],
   });
 
-  const order = ['CLT_AIFC', 'TTC_Exchange', 'TTC_Zabbix'].map((name) => text.indexOf(name));
-  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  const lines = text.split('\n');
+  const heading = lines.indexOf('<b>Пропущен Full по расписанию</b> · <i>больше пропусков — выше</i>');
+  assert.ok(heading >= 0, text);
+  assert.match(lines[heading + 1], /^🟡 <b>TWO_MISSED<\/b>/u, 'the most days missed first');
+  assert.equal(lines[heading + 2], '├ 8 точек с 29.08 · Full 29.08 + 7 инкр. · Active Full по сб');
+  assert.equal(lines[heading + 3], '└ ⚠️ Пропущен Active Full: 05.09, 12.09');
+  assert.match(lines[heading + 4], /^🟡 <b>ONE_MISSED<\/b>/u);
+  assert.equal(lines[heading + 6], '└ ⚠️ Пропущен Active Full: 12.09');
+
+  const onTime = lines.findIndex((line) => line.includes('<b>ON_TIME</b>'));
+  assert.ok(onTime > heading + 6 && lines[onTime].startsWith('🟢'), 'the one whose Full happened is on time');
+  assert.equal(lines[onTime + 1], '└ 8 точек с 12.09 · Full 12.09 + 7 инкр. · Active Full по сб');
+  assert.match(text, /Пропущен Full по расписанию:<\/b> 2 задания/u);
+});
+
+test('a long run of missed Fulls is counted, not listed', async () => {
+  const text = depth({ jobs: [saturdayJob('TTC_TelegramBot', Date.UTC(2026, 6, 25, 22))] });
+  assert.match(text, /^└ ⚠️ Пропущен Active Full: 15\.08, 22\.08, 29\.08, 05\.09, 12\.09 и ещё 2 раньше$/mu);
+});
+
+test('a Full is owed only where Veeam typed the points and the configuration said when', async () => {
+  const text = depth({
+    jobs: [
+      saturdayJob('UNTYPED', Date.UTC(2026, 7, 1), { chain: undefined }),
+      saturdayJob('UNSAID', Date.UTC(2026, 7, 1), { fulls: undefined }),
+      saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [] }),
+    ],
+  });
+  assert.ok(!/⚠️/u.test(text), text);
+  assert.match(text, /Пропущен Full по расписанию:<\/b> нет/u);
+  assert.match(text, /^└ .*без периодического Full$/mu, 'a job set to take none says so');
+});
+
+test('a job behind its schedule stays with the ones behind, its missed Full still said', async () => {
+  const text = depth({
+    jobs: [saturdayJob('BEHIND', Date.UTC(2026, 7, 29, 22), { newest: NOW - 4 * DAY })],
+  });
+  const lines = text.split('\n');
+  const row = lines.findIndex((line) => line.includes('<b>BEHIND</b>'));
+  assert.equal(lines[row - 1], '<b>Отстают от своего расписания</b>');
+  assert.match(lines[row], /^🔴 /u);
+  assert.equal(lines[row + 2], '└ ⚠️ Пропущен Active Full: 05.09, 12.09');
+});
+
+test('among the jobs on time, the one with the most increments on its Full comes first', async () => {
+  // A chain that keeps growing is a Full that is not happening.
+  const row = (name, chain) => ({
+    name, runs: 17, points: 17, machines: 1, intervalDays: 1, newest: NOW, chain,
+  });
+  const text = depth({
+    jobs: [
+      row('OLD_API'),
+      row('TTC_Exchange', { fulls: 17, lastFull: NOW, sinceFull: 0 }),
+      row('CLT_short', { fulls: 2, lastFull: NOW - 2 * DAY, sinceFull: 2 }),
+      row('TTC_TelegramBot', { fulls: 1, lastFull: NOW - 16 * DAY, sinceFull: 16 }),
+      row('AAA_short', { fulls: 2, lastFull: NOW - 2 * DAY, sinceFull: 2 }),
+    ],
+  });
+
+  const order = ['TTC_TelegramBot', 'AAA_short', 'CLT_short', 'TTC_Exchange', 'OLD_API'].map((name) =>
+    text.indexOf(`<b>${name}</b>`),
+  );
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'and by name where the count is the same');
+  assert.match(text, /^<b>По расписанию<\/b> · <i>больше инкрементов — выше<\/i>$/mu);
 });
 
 test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
@@ -902,7 +974,7 @@ test('a job whose cadence cannot be learned claims nothing about missed runs', a
   });
 
   assert.match(text, /^<b>Ритм ещё не ясен<\/b>\n⚪ <b>CLT_KMG_PETROCHEM<\/b> · 1 ВМ — 06\.08 в 12:00\n└ 1 точка$/mu);
-  assert.ok(!/пропущен/u.test(text), 'two points are not enough to know a rhythm');
+  assert.ok(!/пропущено? \d+ запуск/u.test(text), 'two points are not enough to know a rhythm');
   assert.match(text, /Только одна точка:<\/b> 1 задание/);
 });
 

@@ -1,5 +1,6 @@
 import { Job } from '../veeam/estate';
 import { RetainedHistory, Retention, ScannedEvidence } from './evidence';
+import { FullSchedule } from './full-schedule';
 import { isDisabled } from './job-state';
 
 /**
@@ -47,6 +48,8 @@ export interface JobStanding {
   depth?: RetainedHistory;
   /** What its configuration tells Veeam to keep; absent when it did not say. */
   retention?: Retention;
+  /** The periodic Fulls it is set to take; absent when its configuration did not say. */
+  fulls?: FullSchedule[];
 }
 
 export interface Standings {
@@ -95,6 +98,7 @@ export const standingsOf = (jobs: Job[], evidence: ScannedEvidence): Standings =
       failures: evidence.streakByJob.get(job.id) ?? 0,
       depth: evidence.depthByJob.get(job.id),
       retention: evidence.retentionByJob.get(job.id),
+      fulls: evidence.fullsByJob.get(job.id),
     });
   }
 
