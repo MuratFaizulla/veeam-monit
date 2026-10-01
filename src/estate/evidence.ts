@@ -1,5 +1,6 @@
 import { Job } from '../veeam/estate';
 import { VeeamBackup, VeeamJob, VeeamRestorePoint, VeeamSchedule, VeeamSession } from '../veeam/types';
+import { FullSchedule, fullSchedulesOf } from './full-schedule';
 import { Attempt, failureStreakOf, retryWindowOf, Run, runsOf } from './runs';
 
 /**
@@ -116,6 +117,8 @@ export interface ScannedEvidence {
   schedulesByJob: ReadonlyMap<string, VeeamSchedule>;
   /** Each job's retention, where its configuration gave one. */
   retentionByJob: ReadonlyMap<string, Retention>;
+  /** The periodic Fulls each job is set to take, where its configuration said. */
+  fullsByJob: ReadonlyMap<string, FullSchedule[]>;
   depthByJob: Map<string, RetainedHistory>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
@@ -225,6 +228,12 @@ export const readingOf = (read: EstateRead): Reading => {
     configurations.flatMap((job): [string, Retention][] => {
       const retention = retentionOf(job);
       return job.id && retention ? [[job.id, retention]] : [];
+    }),
+  );
+  const fullsByJob = new Map(
+    configurations.flatMap((job): [string, FullSchedule[]][] => {
+      const fulls = fullSchedulesOf(job.storage);
+      return job.id && fulls ? [[job.id, fulls]] : [];
     }),
   );
 
@@ -384,6 +393,7 @@ export const readingOf = (read: EstateRead): Reading => {
       provenByRuns,
       schedulesByJob,
       retentionByJob,
+      fullsByJob,
       depthByJob: new Map(
         [...depth].map(([jobId, seen]): [string, RetainedHistory] => [
           jobId,

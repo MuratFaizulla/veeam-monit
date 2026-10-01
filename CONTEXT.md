@@ -109,6 +109,19 @@ ran on Fridays with its Active Full on Fridays.
 Worked out from the point types in the Evidence (`chainOf`); a server that does
 not type its points has no chain, and nothing is claimed about one.
 
+## Missed Full
+
+A day the job's settings owe a Full — Active or Synthetic, on chosen weekdays or
+once a month; Veeam has no "every other week" — that passed after the newest
+Full with no Full taken. Veeam takes the Full on that day whether or not the day
+is in the job's own schedule (OPS_3CX runs on Wednesdays and took its Full every
+Saturday), so a day without one is a Full that did not happen, not a schedule
+that never asked for it. A day counts twelve hours after it ends, so a Full that
+starts at 23:40 is late rather than missed.
+
+Owned by `src/estate/full-schedule.ts`; judged against the clock when 🗂 is
+written, which lists those jobs apart, the most days missed first.
+
 ## Standing
 
 What one job is owed and what it has: whether it is **excused** from producing

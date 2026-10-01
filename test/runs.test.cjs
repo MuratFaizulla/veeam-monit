@@ -704,6 +704,94 @@ test('a replica is proven by the runs that worked; a job that runs by hand is ow
 });
 
 /* ------------------------------------------------------------------ *
+ * Full schedule: when a Full is owed, and which ones did not happen
+ * ------------------------------------------------------------------ */
+
+const { fullSchedulesOf, missedFullDays, describeFulls } = require('../dist/estate/full-schedule');
+
+const fullsOver = (activeFulls, synthenticFulls) =>
+  fullSchedulesOf({ advancedSettings: { backupModeType: 'Incremental', activeFulls, synthenticFulls } });
+const SATURDAYS = { isEnabled: true, weekly: { isEnabled: true, days: ['saturday'] } };
+const QYZYLORDA = 'Asia/Qyzylorda';
+const dayOf = (iso) => Date.parse(`${iso}T00:00:00Z`);
+
+test('a job\'s Fulls are read from its storage settings, weekly or monthly, active or synthetic', () => {
+  assert.deepEqual(fullsOver(SATURDAYS), [{ kind: 'active', weekdays: [6] }]);
+  assert.deepEqual(
+    fullsOver({ isEnabled: true, weekly: { isEnabled: false }, monthly: {
+      isEnabled: true, dayOfWeek: 'wednesday', dayNumberInMonth: 'Third', dayOfMonths: 1, months: ['January', 'October'],
+    } }),
+    [{ kind: 'active', monthly: { nth: 3, weekday: 3, months: [1, 10] } }],
+  );
+  assert.deepEqual(
+    fullsOver({ ...SATURDAYS, isEnabled: false }, { isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'OnDay', dayOfMonths: 1 } }),
+    [{ kind: 'synthetic', monthly: { date: 1, months: [] } }],
+  );
+  assert.deepEqual(fullsOver({ isEnabled: false }, { isEnabled: false }), [], 'a job set to take no periodic Full');
+  assert.equal(fullSchedulesOf(undefined), undefined, 'a configuration that did not say');
+});
+
+test('a Full owed on a Saturday and not taken is missed; one taken, or still within the night, is not', () => {
+  // OPS_TelegramBot: Active Full on Saturdays, the last one on 5 September.
+  const fulls = fullsOver(SATURDAYS);
+  const since = Date.parse('2026-09-05T21:43:00+05:00');
+  assert.deepEqual(
+    missedFullDays(fulls, since, Date.parse('2026-10-01T10:23:00+05:00'), QYZYLORDA),
+    [dayOf('2026-09-12'), dayOf('2026-09-19'), dayOf('2026-09-26')],
+  );
+
+  // The Full of the 26th was taken; nothing owed after it.
+  assert.deepEqual(missedFullDays(fulls, Date.parse('2026-09-26T23:44:00+05:00'), Date.parse('2026-10-01T10:00:00+05:00'), QYZYLORDA), []);
+
+  // A Saturday Full that starts at 23:40 has the rest of the night to show.
+  const sinceTheNineteenth = Date.parse('2026-09-19T23:44:00+05:00');
+  assert.deepEqual(missedFullDays(fulls, sinceTheNineteenth, Date.parse('2026-09-27T10:00:00+05:00'), QYZYLORDA), []);
+  assert.deepEqual(
+    missedFullDays(fulls, sinceTheNineteenth, Date.parse('2026-09-27T13:00:00+05:00'), QYZYLORDA),
+    [dayOf('2026-09-26')],
+  );
+});
+
+test('a monthly Full is owed on its week of the month, its last weekday, or its date, in its months', () => {
+  const since = Date.parse('2026-09-16T22:00:00+05:00');
+  const now = Date.parse('2026-11-05T12:00:00+05:00');
+  const monthly = (fields) => fullsOver({ isEnabled: true, monthly: { isEnabled: true, ...fields } });
+
+  // OPS_Billing_Prod: the third Wednesday — 21 October.
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'Third', dayOfWeek: 'wednesday' }), since, now, QYZYLORDA), [dayOf('2026-10-21')]);
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'Last', dayOfWeek: 'wednesday' }), since, now, QYZYLORDA), [dayOf('2026-09-30'), dayOf('2026-10-28')]);
+  assert.deepEqual(missedFullDays(monthly({ dayNumberInMonth: 'OnDay', dayOfMonths: 1 }), since, now, QYZYLORDA), [dayOf('2026-10-01'), dayOf('2026-11-01')]);
+  assert.deepEqual(
+    missedFullDays(monthly({ dayNumberInMonth: 'OnDay', dayOfMonths: 1, months: ['November'] }), since, now, QYZYLORDA),
+    [dayOf('2026-11-01')],
+  );
+});
+
+test('a Full schedule is said as the operator would say it', () => {
+  assert.equal(describeFulls(fullsOver(SATURDAYS)), 'Active Full по сб');
+  assert.equal(
+    describeFulls(fullsOver({ isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'Third', dayOfWeek: 'wednesday' } })),
+    'Active Full в 3-ю ср месяца',
+  );
+  assert.equal(
+    describeFulls(fullsOver({ isEnabled: true, weekly: { isEnabled: true, days: ['saturday', 'tuesday'] } }, { isEnabled: true, monthly: { isEnabled: true, dayNumberInMonth: 'OnDay', dayOfMonths: 1 } })),
+    'Active Full по вт, сб, Synthetic Full 1-го числа',
+  );
+  assert.equal(describeFulls([]), 'без периодического Full');
+});
+
+test('the Evidence keeps each job\'s Full schedule from its configuration', () => {
+  const evidence = readingOver({
+    configurations: [
+      { id: '1', storage: { advancedSettings: { activeFulls: SATURDAYS } } },
+      { id: '2', schedule: { runAutomatically: true } },
+    ],
+  }).evidence(new Map(), Date.now());
+  assert.deepEqual(evidence.fullsByJob.get('1'), [{ kind: 'active', weekdays: [6] }]);
+  assert.equal(evidence.fullsByJob.has('2'), false);
+});
+
+/* ------------------------------------------------------------------ *
  * Machine outcomes: each failed session asked once
  * ------------------------------------------------------------------ */
 

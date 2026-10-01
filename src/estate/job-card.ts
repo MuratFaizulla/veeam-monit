@@ -2,11 +2,12 @@ import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '../telegram/time';
 import { chainWords, jobTypeWord, resultWord } from '../telegram/words';
 import { Job } from '../veeam/estate';
-import { VeeamFullBackups, VeeamJob, VeeamJobStorage } from '../veeam/types';
+import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory } from './evidence';
+import { describeFulls, fullSchedulesOf } from './full-schedule';
 import { iconOf, isBadResult } from './job-state';
 import { runsOf } from './runs';
-import { daysOf, describeRetry, describeSchedule } from './schedule-planner';
+import { describeRetry, describeSchedule } from './schedule-planner';
 
 /**
  * One job, answered for.
@@ -211,40 +212,12 @@ const modeOf = (storage: VeeamJobStorage | undefined): string | undefined => {
   const advanced = storage?.advancedSettings;
   if (!advanced) return undefined;
   const parts = [advanced.backupModeType].filter((part): part is string => Boolean(part));
-  const fulls =
-    fullsOf('активный полный', advanced.activeFulls) ??
-    fullsOf('синтетический полный', advanced.synthenticFulls);
-  if (fulls) parts.push(fulls);
+  // Said the way 🗂 says it. Monthly fulls were not read here at all, and
+  // OPS_Billing_Prod's card said nothing about fulls while it took one every
+  // third Wednesday.
+  const fulls = fullSchedulesOf(storage);
+  if (fulls && fulls.length > 0) parts.push(describeFulls(fulls));
   return parts.length > 0 ? parts.join(', ') : undefined;
-};
-
-/** Veeam's "Third" of "Third wednesday", as it is said. */
-const NTH: Record<string, string> = {
-  first: '1-я',
-  second: '2-я',
-  third: '3-я',
-  fourth: '4-я',
-  last: 'последняя',
-};
-
-/**
- * "активный полный: сб", or "…: ежемесячно, 3-я ср".
- *
- * Monthly ones were not read, and OPS_Billing_Prod's card said nothing about
- * fulls at all while it took one every third Wednesday.
- */
-const fullsOf = (kind: string, fulls: VeeamFullBackups | undefined): string | undefined => {
-  if (!fulls?.isEnabled) return undefined;
-  if (fulls.weekly?.isEnabled) {
-    const days = daysOf(fulls.weekly.days);
-    return days ? `${kind}: ${days}` : `${kind} еженедельно`;
-  }
-  if (fulls.monthly?.isEnabled) {
-    const nth = NTH[(fulls.monthly.dayNumberInMonth ?? '').toLowerCase()];
-    const day = daysOf(fulls.monthly.dayOfWeek ? [fulls.monthly.dayOfWeek] : []);
-    return nth && day ? `${kind}: ежемесячно, ${nth} ${day}` : `${kind} ежемесячно`;
-  }
-  return undefined;
 };
 
 const proxiesOf = (

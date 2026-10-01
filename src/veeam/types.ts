@@ -212,8 +212,19 @@ export interface VeeamJobStorage {
 export interface VeeamFullBackups {
   isEnabled?: boolean;
   weekly?: { isEnabled?: boolean; days?: string[] };
-  /** "Third wednesday" of the month, which is how OPS_Billing_Prod takes its fulls. */
-  monthly?: { isEnabled?: boolean; dayOfWeek?: string; dayNumberInMonth?: string };
+  /**
+   * "Third wednesday" of the month, which is how OPS_Billing_Prod takes its
+   * fulls; or, with `dayNumberInMonth: OnDay`, the date in `dayOfMonths`.
+   */
+  monthly?: {
+    isEnabled?: boolean;
+    dayOfWeek?: string;
+    /** `First` … `Fourth`, `Last` or `OnDay`. */
+    dayNumberInMonth?: string;
+    dayOfMonths?: number;
+    /** `January` …; every month when absent. */
+    months?: string[];
+  };
 }
 
 export interface VeeamJob {
