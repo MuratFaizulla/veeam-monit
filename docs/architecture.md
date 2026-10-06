@@ -68,6 +68,20 @@ npm run lint   # TypeScript type check
 npm test       # build and run every test (node:test)
 ```
 
-The tests are written in JavaScript and test the built service, the same code that goes into the image. They run in GitHub Actions on every push to `main` and on every pull request; Dependabot proposes library updates once a week.
+The tests are written in JavaScript and test the built service, the same code that goes into the image.
+
+**CI** ([.github/workflows/test.yml](../.github/workflows/test.yml)) runs on every push to `main` and on every pull request: the type check and the tests, then the Docker image, built and started the way `docker-compose.yml` starts it (read-only, no capabilities) until Docker calls it healthy. Dependabot proposes library updates once a week, and the workflow checks them like any other change.
+
+**Releases** ([.github/workflows/release.yml](../.github/workflows/release.yml)) are made by pushing a tag:
+
+```bash
+npm version 1.1.0 --no-git-tag-version   # package.json and package-lock.json
+# CHANGELOG.md: rename [Unreleased] to [1.1.0] — <date>, open a new [Unreleased], fix the links at the bottom
+git commit -am "Release 1.1.0"
+git tag v1.1.0
+git push origin main v1.1.0
+```
+
+The tag runs CI again, then publishes the image to `ghcr.io/muratfaizulla/veeam-monit` for amd64 and arm64 (tags `1.1.0`, `1.1`, `1` and `latest`, with provenance and an SBOM) and a GitHub release whose notes are the version's section of the changelog. Nothing is published if the tag differs from `package.json` or the changelog has no section for it. A server with no internet access gets the release with `deploy/offline.sh` or `docker save`/`docker load`; see [getting-started.md](getting-started.md).
 
 The domain glossary (Run, Attempt, Evidence and the other terms of the code) is in [CONTEXT.md](../CONTEXT.md), and the architecture decisions are in [adr/](adr/).

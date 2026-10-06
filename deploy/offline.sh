@@ -57,6 +57,13 @@ trap 'rm -rf "$build" "$bundle"' EXIT
 
 git merge --quiet --ff-only incoming
 
+# What this script builds is veeam-telegram-monitor:local; a published image
+# named in MONITOR_IMAGE would be started instead, and the build ignored.
+if [ "$(docker compose config --images </dev/null)" != veeam-telegram-monitor:local ]; then
+  echo 'MONITOR_IMAGE is set in .env: the server runs a published image, not what this script builds.' >&2
+  exit 1
+fi
+
 # The base, made once from the image running now: everything but the app.
 if ! docker image inspect veeam-telegram-monitor:base >/dev/null 2>&1; then
   printf 'FROM veeam-telegram-monitor:local\nUSER root\nRUN rm -rf /app/dist /app/node_modules\nUSER node\n' |

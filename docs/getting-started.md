@@ -34,6 +34,14 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+**Or run a published image** instead of building one. Every release is on ghcr.io, for amd64 and arm64. Set it in `.env`: `:1` follows every 1.x release, `:1.1.0` stays where it is.
+
+```bash
+echo 'MONITOR_IMAGE=ghcr.io/muratfaizulla/veeam-monit:1' >> .env
+docker compose pull
+docker compose up -d --no-build
+```
+
 **3. Check it.** `GET http://localhost:3000/api/health` shows whether the Veeam servers can be reached. Within a minute the live topics appear in the group, and the menu in General.
 
 > [!CAUTION]
@@ -83,6 +91,8 @@ git pull
 docker compose up -d --build
 ```
 
+With a published image (`MONITOR_IMAGE`), `docker compose pull && docker compose up -d --no-build` instead.
+
 **Go back to an earlier version:** `git checkout v1.0.0 && docker compose up -d --build`; back to the latest with `git checkout main`. Every version is in [CHANGELOG.md](../CHANGELOG.md).
 
 **Change a setting:** edit `.env` and run `docker compose up -d --force-recreate`. A plain `restart` does not re-read `.env`.
@@ -107,6 +117,8 @@ docker tag veeam-telegram-monitor:before-<commit> veeam-telegram-monitor:local
 docker compose up -d --no-build
 ```
 
-Do not run `docker compose up -d --build` on such a server: the build goes to the internet for packages and fails.
+Do not run `docker compose up -d --build` on such a server: the build goes to the internet for packages and fails. The script ships what it builds, so it refuses to run while `MONITOR_IMAGE` is set.
+
+A published release reaches such a server too, without the script: `docker pull ghcr.io/muratfaizulla/veeam-monit:1.1.0` and `docker save -o veeam-monit.tar ghcr.io/muratfaizulla/veeam-monit:1.1.0` on a machine with internet access, copy the file over, `docker load -i veeam-monit.tar` there, set `MONITOR_IMAGE` to that image and run `docker compose up -d --no-build`.
 
 If alerts do not arrive: `/status` in General, the log `logs/backend.log`, then `POST /api/telegram/test`; see [http-api.md](http-api.md).

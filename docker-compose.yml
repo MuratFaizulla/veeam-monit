@@ -1,7 +1,10 @@
 services:
   monitor:
     build: .
-    image: veeam-telegram-monitor:local
+    # Built here from the checkout by default. MONITOR_IMAGE in .env runs a
+    # published release instead, ghcr.io/muratfaizulla/veeam-monit:1 say, with
+    # `docker compose pull` and `docker compose up -d --no-build`.
+    image: ${MONITOR_IMAGE:-veeam-telegram-monitor:local}
     container_name: veeam-telegram-monitor
     restart: unless-stopped
 

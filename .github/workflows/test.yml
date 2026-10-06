@@ -1,12 +1,15 @@
-# Runs the whole test suite on every push to main and every pull request, so a
-# change that breaks something is caught here — before `git pull` takes it to
-# the server. Node matches the image the service runs in (see Dockerfile).
-name: Tests
+# Runs on every push to main and every pull request, and before every release
+# (release.yml calls it): the whole test suite, then the Docker image, built
+# and started the way docker-compose.yml starts it. A change that breaks
+# either is caught here, before it reaches a server. Node matches the image
+# the service runs in (see Dockerfile).
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,6 +25,29 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
       # Builds, then runs every test file; openssl, which the certificate tests
       # use, is part of the runner image.
       - run: npm test
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      # The settings of .env.example: no bot token, so it talks to no
+      # Telegram, and Veeam servers that do not answer, which /api/health
+      # calls degraded and still answers 200, as the image's health check
+      # expects. --wait returns once Docker calls the container healthy.
+      - name: Build the image and start it as docker-compose.yml does
+        run: |
+          cp .env.example .env
+          mkdir -p data logs certs
+          # The container runs as node (uid 1000); the checkout is the runner's.
+          chmod 777 data logs
+          docker compose up -d --build --wait --wait-timeout 120
+      - run: curl -fsS http://127.0.0.1:3000/api/health
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down

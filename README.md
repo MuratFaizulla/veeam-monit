@@ -7,7 +7,7 @@
 <p align="center"><strong>Your backups, reported to the team chat before anybody has to ask.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/MuratFaizulla/veeam-monit/actions/workflows/test.yml" target="_blank"><img src="https://github.com/MuratFaizulla/veeam-monit/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
+  <a href="https://github.com/MuratFaizulla/veeam-monit/actions/workflows/test.yml" target="_blank"><img src="https://github.com/MuratFaizulla/veeam-monit/actions/workflows/test.yml/badge.svg" alt="CI" /></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-00B336.svg" alt="Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
   <img src="https://img.shields.io/badge/Veeam_B%26R-REST_API_1.1_%7C_1.2-00B336?logo=veeam&logoColor=white" alt="Veeam B&R REST API" />
@@ -150,6 +150,8 @@ TELEGRAM_ADMIN_KEY=...        # at least 32 characters: openssl rand -hex 32
 
 To learn the group's id, start the bot with `TELEGRAM_CHAT_IDS` empty and send `/chatid` in the group. Veeam ships with a self-signed certificate: pin it with `VEEAM_TLS_CERTS` rather than turning verification off. Within a minute of a successful start the live topics appear in the group and the menu in General, and `GET http://localhost:3000/api/health` says whether each Veeam server is reachable.
 
+Rather not build? Every release is published as an image, `ghcr.io/muratfaizulla/veeam-monit`, for amd64 and arm64; set `MONITOR_IMAGE` in `.env` and see [docs/getting-started.md](docs/getting-started.md).
+
 > [!CAUTION]
 > Run **one instance** per bot token. Two instances take Telegram updates from each other (`409 Conflict`) and send every alert twice.
 
@@ -189,7 +191,7 @@ npm test            # builds the service and runs the tests against the compiled
 npm run start:dev
 ```
 
-What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+CI runs the tests and starts the Docker image on every push and pull request; a tag `vX.Y.Z` publishes the image and a GitHub release. How to cut one is in [docs/architecture.md](docs/architecture.md#development). What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Get involved
 
