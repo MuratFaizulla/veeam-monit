@@ -40,8 +40,8 @@
     "multer": "2.4.0",
     "qs": "6.16.0"
   },
-  "license": "UNLICENSED",
-  "author": "Мурат Файзулла (https://github.com/MuratFaizulla)",
+  "license": "Apache-2.0",
+  "author": "Murat Faizulla (https://github.com/MuratFaizulla)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MuratFaizulla/veeam-monit.git"
