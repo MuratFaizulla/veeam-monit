@@ -20,4 +20,4 @@ The bot itself speaks Russian. Where these pages quote its messages or its butto
 ## Reference material
 
 - **`veeam-openapi.json`** is the REST API specification of **Veeam Backup & Replication**, the API the bot talks to. It is not the description of this service's own API: that one is built from the code and served by the service at `/api/docs`. Nothing in `docs/` goes into the image or is read by the code.
-- **`assets/`** holds the logos for the README (Simple Icons, CC0).
+- **`assets/`** holds the logos for the README (Simple Icons, CC0) and, in `screenshots/`, the README's screenshots: rendered by the bot's own code from an invented estate, in a light and a dark version.
