@@ -238,6 +238,53 @@ test('the monitor account is Veeam settings, not Telegram ones', () => {
   assert.equal(JSON.stringify(config.telegram).includes('p a ss'), false);
 });
 
+test('a server outside the domain signs in with its own account, the rest with the shared one', () => {
+  const { serverOf } = require('../dist/veeam/servers');
+  const env = {
+    VEEAM_SERVERS: 'https://veeam01.example.com:9419,https://veeam-dc2.example.com:9419',
+    VEEAM_MONITOR_USERNAME: 'svc@example.com',
+    VEEAM_MONITOR_PASSWORD: 'shared',
+    VEEAM_MONITOR_USERNAME_VEEAM_DC2: ' VEEAM-DC2\\veeam-monitor ',
+    VEEAM_MONITOR_PASSWORD_VEEAM_DC2: ' local, with = and spaces ',
+  };
+  const config = accepted(env);
+  assert.deepEqual(config.veeam.accounts, {
+    'veeam-dc2': { username: 'VEEAM-DC2\\veeam-monitor', password: ' local, with = and spaces ' },
+  });
+  // The password stays with the account: a server is spread into what the
+  // health and the server menu are built from.
+  assert.equal(JSON.stringify(config.veeam.servers).includes('local, with'), false);
+
+  const [domain, local] = config.veeam.servers.map((endpoint) => serverOf(config.veeam, endpoint));
+  assert.equal(domain.auth.username, 'svc@example.com');
+  assert.equal(local.auth.username, 'VEEAM-DC2\\veeam-monitor');
+
+  // Its own account is enough for a server even with no shared one at all.
+  const alone = accepted({
+    VEEAM_SERVERS: env.VEEAM_SERVERS,
+    VEEAM_MONITOR_USERNAME_VEEAM_DC2: 'veeam-monitor',
+    VEEAM_MONITOR_PASSWORD_VEEAM_DC2: 'p',
+  });
+  const [unsigned, signed] = alone.veeam.servers.map((endpoint) => serverOf(alone.veeam, endpoint));
+  assert.equal(unsigned.auth.configured, false);
+  assert.equal(signed.auth.configured, true);
+});
+
+test('a server account that is half set, or names no server, is refused', () => {
+  const servers = 'https://veeam01.example.com:9419,https://veeam-dc2.example.com:9419';
+  refused(
+    { VEEAM_SERVERS: servers, VEEAM_MONITOR_USERNAME_VEEAM_DC2: 'veeam-monitor' },
+    /VEEAM_MONITOR_USERNAME_VEEAM_DC2 and VEEAM_MONITOR_PASSWORD_VEEAM_DC2 must be set together/,
+  );
+  // A typo would leave the server on the shared account, refused at sign-in.
+  refused(
+    { VEEAM_SERVERS: servers, VEEAM_MONITOR_USERNAME_VEEAM_DC_2: 'u', VEEAM_MONITOR_PASSWORD_VEEAM_DC_2: 'p' },
+    /VEEAM_MONITOR_USERNAME_VEEAM_DC_2 names no Veeam server; the endings in use are VEEAM01, VEEAM_DC2/,
+  );
+  // Left empty, as in a copied example file, it is not set at all.
+  accepted({ VEEAM_SERVERS: servers, VEEAM_MONITOR_USERNAME_OLD: '', VEEAM_MONITOR_PASSWORD_OLD: ' ' });
+});
+
 test('with nothing set, every setting has the default it has always had', () => {
   assert.deepEqual(accepted({}), {
     port: 3000,
@@ -249,6 +296,7 @@ test('with nothing set, every setting has the default it has always had', () => 
       timeoutMs: 30000,
       username: '',
       password: '',
+      accounts: {},
     },
     telegram: {
       botToken: '',

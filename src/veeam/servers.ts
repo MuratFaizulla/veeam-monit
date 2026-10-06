@@ -11,7 +11,8 @@ import { VeeamMonitorAuthService } from './monitor-auth.service';
  *
  * Each server has its own token, its own lesson about its refresh grant and its
  * own names behind ids, so each gets its own of all four. Nothing is shared
- * between two servers but the account they are signed in to with.
+ * between two servers but the account they are signed in to with, and not even
+ * that for a server outside the domain, which is given its own.
  */
 export interface VeeamServer extends VeeamEndpoint {
   http: VeeamHttpService;
@@ -24,7 +25,7 @@ export interface VeeamServer extends VeeamEndpoint {
 export const serverOf = (veeam: AppConfig['veeam'], endpoint: VeeamEndpoint): VeeamServer => {
   const { apiVersion, insecureTls, timeoutMs } = veeam;
   const http = new VeeamHttpService({ apiVersion, insecureTls, timeoutMs, ...endpoint });
-  const auth = new VeeamMonitorAuthService(veeam, http, endpoint.name);
+  const auth = new VeeamMonitorAuthService(veeam.accounts[endpoint.key] ?? veeam, http, endpoint.name);
   const reader = new VeeamEstateReader(http, auth);
   return { ...endpoint, http, auth, reader, inventory: new VeeamInventoryService(reader) };
 };

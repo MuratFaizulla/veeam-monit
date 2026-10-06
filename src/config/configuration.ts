@@ -32,7 +32,7 @@ export interface AppConfig {
      * empty. The first is the one shown until somebody selects another.
      */
     servers: VeeamEndpoint[];
-    /** Shared by every server: they run one version, behind one account. */
+    /** Shared by every server: they run one version. */
     apiVersion: string;
     insecureTls: boolean;
     timeoutMs: number;
@@ -42,6 +42,12 @@ export interface AppConfig {
      */
     username: string;
     password: string;
+    /**
+     * A server's own account, by its key, for a server the shared one cannot
+     * sign in to: one outside the domain, where only a local account exists.
+     * Every server not in here is signed in to with the shared account.
+     */
+    accounts: Record<string, VeeamAccount>;
   };
   telegram: {
     botToken: string;
@@ -138,6 +144,12 @@ export interface VeeamEndpoint {
   tls?: PinnedCertificate;
 }
 
+/** What the monitor signs in to one server with. */
+export interface VeeamAccount {
+  username: string;
+  password: string;
+}
+
 /** A certificate a server is trusted by, and its SHA-256 fingerprint as Node prints it. */
 export interface PinnedCertificate {
   pem: string;
@@ -194,6 +206,14 @@ const endpointAt = (baseUrl: string): VeeamEndpoint => {
   const name = hostLabel(baseUrl);
   return { key: keyOf(name, 0), name, baseUrl, legacyTls: false };
 };
+
+/**
+ * What a server's own account variables end in: its key in capitals, with "_"
+ * for "-". veeam-dc2 is VEEAM_MONITOR_USERNAME_VEEAM_DC2.
+ */
+const accountSuffix = (key: string): string => key.toUpperCase().replace(/-/g, '_');
+
+const ACCOUNT_VARIABLE = /^VEEAM_MONITOR_(?:USERNAME|PASSWORD)_(.+)$/;
 
 /** Whether `named` — a name or a key, in any case — is this server. */
 const isNamed = (endpoint: VeeamEndpoint, named: string): boolean =>
@@ -305,6 +325,29 @@ export const readConfig = (env: Environment): AppConfig =>
       ...(pins.has(endpoint) ? { tls: pins.get(endpoint) } : {}),
     }));
 
+    // A server outside the domain cannot take the shared account, so it gets
+    // its own: one variable per value, never a list, because a password may
+    // hold any character a list would have to split on.
+    const accounts: Record<string, VeeamAccount> = {};
+    for (const server of servers) {
+      const suffix = accountSuffix(server.key);
+      const own = read.text(`VEEAM_MONITOR_USERNAME_${suffix}`, '');
+      const ownPassword = read.verbatim(`VEEAM_MONITOR_PASSWORD_${suffix}`);
+      read.require(
+        Boolean(own) === Boolean(ownPassword),
+        `VEEAM_MONITOR_USERNAME_${suffix} and VEEAM_MONITOR_PASSWORD_${suffix} must be set together`,
+      );
+      if (own && ownPassword) accounts[server.key] = { username: own, password: ownPassword };
+    }
+    // One that matches no server would leave that server on the shared account,
+    // refused at sign-in, with nothing to say the setting did not apply.
+    const suffixes = servers.map((server) => accountSuffix(server.key));
+    for (const variable of Object.keys(env)) {
+      const suffix = ACCOUNT_VARIABLE.exec(variable)?.[1];
+      if (suffix === undefined || suffixes.includes(suffix) || !String(env[variable] ?? '').trim()) continue;
+      refuse(`${variable} names no Veeam server; the endings in use are ${suffixes.join(', ')}`);
+    }
+
     const webhookUrl = read.url('TELEGRAM_WEBHOOK_URL', '', { httpsOnly: true });
     const webhookSecret = read.text('TELEGRAM_WEBHOOK_SECRET', '');
     read.require(
@@ -334,6 +377,7 @@ export const readConfig = (env: Environment): AppConfig =>
         timeoutMs: read.integer('VEEAM_TIMEOUT_MS', 30000, { min: 1 }),
         username,
         password,
+        accounts,
       },
       telegram: {
         botToken: read.text('TELEGRAM_BOT_TOKEN', ''),

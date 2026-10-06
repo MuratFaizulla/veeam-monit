@@ -11,9 +11,10 @@ const REJECT_COOLDOWN_MS = 60_000;
 /**
  * The monitor account's token on one Veeam server.
  *
- * One per server, built by `VeeamServers`. Every server is signed in to with
- * the same account, but a token is the server's own, and so is the lesson that
- * its refresh grant cannot be trusted.
+ * One per server, built by `VeeamServers`. Servers are signed in to with the
+ * same account, unless one outside the domain has its own, but a token is the
+ * server's own either way, and so is the lesson that its refresh grant cannot
+ * be trusted.
  */
 export class VeeamMonitorAuthService {
   private readonly logger: Logger;

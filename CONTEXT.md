@@ -472,7 +472,8 @@ changes its key, and the bot learns its jobs again, quietly.
 
 Everything a server is read with is its own: token, **Estate reader**,
 **Inventory**, **Evidence**, and the job results a **Transition** is decided
-against. Nothing is shared but the monitor account and the API version. A
+against. Nothing is shared but the monitor account and the API version, and
+not even the account for a server outside the domain, which has its own. A
 server that has never been observed is seeded quietly, whatever the others
 remember: a job that was already failing when the server was added is not news.
 
