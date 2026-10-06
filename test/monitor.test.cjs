@@ -363,7 +363,7 @@ test('a job is only excused on positive evidence, never on a gap', async () => {
   const { standingsOf } = require('../dist/estate/job-standing');
   const blank = {
     status: 'ready', scannedAt: 0, runsByJob: new Map(), cadenceByJob: new Map(),
-    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(), retentionByJob: new Map(), fullsByJob: new Map(),
+    unscheduled: new Set(['known-manual']), provenByRuns: new Set(), streakByJob: new Map(), depthByJob: new Map(), retentionByJob: new Map(), fullsByJob: new Map(), backupsByJob: new Map(),
     orphanChains: [], totalPoints: 0, failedPoints: 0,
   };
 
@@ -945,6 +945,129 @@ test('/points with a name several jobs share offers each, and each opens its poi
   const buttons = w.api.sent().at(-1).reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
   assert.ok(buttons.includes(`a:pts:${SERVER}:1`) && buttons.includes(`a:pts:${SERVER}:2`), buttons.join(' '));
   assert.ok(!buttons.some((data) => data.startsWith('a:job:')), 'not the cards it was not asked for');
+});
+
+test('/points draws the last weeks a day to a mark, in the operator\'s zone', () => {
+  // OPS_vCloud_edge on 1 October: a Full on Saturday 19 September, then
+  // nothing for nine nights, then increments. The run at 02:00 on the 30th is
+  // the 29th in UTC, and the calendar is the operator's.
+  const retained = [
+    { at: local('2026-09-19T23:58:00'), full: true, pointIds: [] },
+    { at: local('2026-09-29T23:35:00'), full: false, pointIds: [] },
+    { at: local('2026-09-30T02:00:00'), full: false, pointIds: [] },
+  ];
+  const text = pointsCard({ name: 'OPS_vCloud_edge', points: telegramBot({ retained }) });
+
+  const calendar = [
+    '      пн вт ср чт пт сб вс',
+    '14.09                 █  ·',
+    '21.09  ·  ·  ·  ·  ·  ·  ·',
+    '28.09  ·  ▒  ▒  ○',
+  ];
+  assert.ok(text.includes(`<pre>${calendar.join('\n')}</pre>`), text);
+  assert.match(text, /^<i>█ Full {2}▒ инкремент {2}· нет точки {2}○ сегодня ещё нет<\/i>$/mu);
+
+  // A server that does not type its points draws points, not Fulls.
+  const untyped = pointsCard({ name: 'J', points: telegramBot({ retained: retained.map(({ at }) => ({ at, pointIds: [] })) }) });
+  assert.match(untyped, /<i>▒ точка {2}· нет точки/u);
+  assert.ok(!/█/u.test(untyped));
+
+  assert.ok(!/<pre>/u.test(pointsCard({ name: 'J', points: telegramBot() })), 'nothing drawn without the runs');
+});
+
+test('a backup file is put in the run whose points it holds, and a Full still being written is said as such', () => {
+  const { sizesOf } = require('../dist/estate/points-sizes');
+  const GB = 2 ** 30;
+  const runs = [
+    { at: local('2026-09-19T23:32:00'), full: true, pointIds: ['vcd3', 'vcd5'] },
+    { at: local('2026-09-29T23:32:00'), full: false, pointIds: ['vcd3-29'] },
+    { at: local('2026-09-30T23:32:00'), full: false, pointIds: ['vcd3-30'] },
+    { at: local('2026-09-30T23:50:00'), full: true, pointIds: ['writing'] },
+  ];
+  const sizes = sizesOf([
+    // Per-machine files: two of them make the Full.
+    { name: 'vcd3.vbk', restorePointIds: ['vcd3'], dataSize: 428 * GB, backupSize: 257 * GB },
+    { name: 'vcd5.vbk', restorePointIds: ['vcd5'], dataSize: 428 * GB, backupSize: 257 * GB },
+    { name: 'vcd3.vib', restorePointIds: ['vcd3-29'], dataSize: 312.5 * GB, backupSize: 103.4 * GB },
+    { name: 'vcd3.vib', restorePointIds: ['vcd3-30'], dataSize: 110.9 * GB, backupSize: 47.8 * GB },
+    { name: 'next.vbk', restorePointIds: ['writing'], dataSize: 0, backupSize: 0 },
+    // Written since the scan: it takes up space, and is no run's yet.
+    { name: 'late.vib', restorePointIds: ['unknown'], dataSize: 30 * GB, backupSize: 10 * GB },
+  ], runs);
+
+  assert.deepEqual(sizes.full, { at: runs[0].at, data: 856 * GB, disk: 514 * GB });
+  assert.equal(sizes.fullWriting, runs[3].at);
+  assert.equal(sizes.increment.runs, 2);
+
+  const text = pointsCard({ name: 'OPS_vCloud_edge', points: telegramBot(), sizes });
+  assert.match(text, /^<b>Full 19\.09:<\/b> 856 ГБ данных → 514 ГБ на диске · новый Full с 30\.09 ещё пишется$/mu);
+  assert.match(text, /^<b>Инкремент:<\/b> обычно 212 ГБ данных \(≈25% от Full\) → 75\.6 ГБ на диске$/mu);
+  assert.match(text, /^<b>На диске всего:<\/b> 675 ГБ$/mu);
+
+  // CUST_ERP_ISMR: about 100 GB a night, and 1.3 TB the night after its Full.
+  const nights = [100, 110, 1300].map((gb, n) => ({ at: local(`2026-09-2${n}T00:05:00`), full: false, pointIds: [`n${n}`] }));
+  const typical = sizesOf(nights.map((night, n) => ({ restorePointIds: night.pointIds, dataSize: [100, 110, 1300][n] * GB, backupSize: GB })), nights);
+  assert.equal(typical.increment.data, 110 * GB, 'one heavy night does not make every night look like it');
+
+  assert.equal(sizesOf([], runs), undefined, 'no files, nothing to say');
+  const unmatched = sizesOf([{ restorePointIds: ['x'], dataSize: GB, backupSize: GB }], runs);
+  assert.deepEqual(unmatched, { onDisk: GB }, 'a Full with no file found is not one being written');
+});
+
+test('sizes are written as the Veeam console writes them, in binary units', () => {
+  const { sizeWords } = require('../dist/telegram/words');
+  const GB = 2 ** 30;
+  assert.deepEqual(
+    [1.5 * GB, 0.9 * GB, 40 * GB, 75.6 * GB, 856 * GB, 15900 * GB].map(sizeWords),
+    ['1.5 ГБ', '922 МБ', '40 ГБ', '75.6 ГБ', '856 ГБ', '15.5 ТБ'],
+  );
+});
+
+test('/points reads the job\'s backup files when asked, and answers without them when Veeam will not give them', async () => {
+  const GB = 2 ** 30;
+  const ago = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
+  let filesAsked = 0;
+  let refused = false;
+  const routes = {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'OPS_vCloud_edge' }] },
+    '/api/v1/restorePoints': {
+      data: [
+        { id: 'i', backupId: 'b1', sessionId: 's2', name: 'vcd3', type: 'Increment', creationTime: ago(1) },
+        { id: 'f', backupId: 'b1', sessionId: 's1', name: 'vcd3', type: 'Full', creationTime: ago(2) },
+      ],
+    },
+    '/api/v1/sessions': { data: [] },
+    '/api/v1/backups/b1/backupFiles': () => {
+      filesAsked += 1;
+      if (refused) throw new Error('HTTP 403 Forbidden');
+      return {
+        data: [
+          { name: 'vcd3.vbk', restorePointIds: ['f'], dataSize: 856 * GB, backupSize: 514 * GB },
+          { name: 'vcd3.vib', restorePointIds: ['i'], dataSize: 150 * GB, backupSize: 40 * GB },
+        ],
+      };
+    },
+  };
+  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'OPS_vCloud_edge', 'Success')], routes);
+  await w.monitor.check();
+  assert.equal(filesAsked, 0, 'the scan never reads files; only a question does');
+  w.api.reset();
+
+  await said(w, '/points edge');
+  const text = w.api.sent().at(-1).text;
+  assert.equal(filesAsked, 1);
+  assert.match(text, /<pre> {6}пн вт ср чт пт сб вс\n/u);
+  assert.match(text, /<b>Full \d\d\.\d\d:<\/b> 856 ГБ данных → 514 ГБ на диске/u);
+  assert.match(text, /<b>Инкремент:<\/b> обычно 150 ГБ данных \(≈18% от Full\) → 40 ГБ на диске/u);
+  assert.match(text, /<b>На диске всего:<\/b> 554 ГБ/u);
+
+  refused = true;
+  w.store.cooldowns.clear('command:read');
+  await said(w, '/points edge');
+  const without = w.api.sent().at(-1).text;
+  assert.match(without, /🗂 <b>OPS_vCloud_edge<\/b> · точки восстановления/u);
+  assert.ok(!/На диске всего/u.test(without), 'the card, without sizes');
 });
 
 test('a job switched off in Veeam is counted apart, never as a failure', () => {

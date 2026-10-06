@@ -1,5 +1,5 @@
 import { Clock, plural } from '../telegram/time';
-import { ChainShape, Retention, ScannedEvidence } from './evidence';
+import { ChainShape, RetainedRun, Retention, ScannedEvidence } from './evidence';
 import { FullSchedule, missedFullDays } from './full-schedule';
 
 /**
@@ -36,6 +36,8 @@ export interface JobPoints {
   retention?: Retention;
   /** The periodic Fulls it is set to take; absent when its configuration did not say. */
   fulls?: FullSchedule[];
+  /** Its retained runs, oldest first; absent where nobody listed them. */
+  retained?: RetainedRun[];
 }
 
 /**

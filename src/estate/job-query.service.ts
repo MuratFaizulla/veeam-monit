@@ -15,8 +15,10 @@ import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
 import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
+import { RetainedRun } from './evidence';
 import { jobPointsOf, verdictOf } from './point-verdict';
 import { PointsCard, renderPointsCard } from './points-card';
+import { PointSizes, sizesOf } from './points-sizes';
 
 /**
  * Sessions read for one job — by its card and by its alert, which counts the
@@ -188,18 +190,38 @@ export class JobQueryService {
     return this.pointsAnswer(job);
   }
 
-  private pointsAnswer(job: Job): Answer {
+  private async pointsAnswer(job: Job): Promise<Answer> {
     const evidence = this.evidence.evidence;
-    const card: PointsCard =
-      evidence.status === 'ready'
-        ? {
-            name: job.name,
-            excused: isDisabled(job) ? 'disabled' : evidence.unscheduled.has(job.id) ? 'unscheduled' : undefined,
-            points: jobPointsOf(evidence, job.id),
-            elsewhere: evidence.provenByRuns.has(job.id),
-          }
-        : { name: job.name, unavailable: evidence.reason };
+    let card: PointsCard;
+    if (evidence.status === 'ready') {
+      const points = jobPointsOf(evidence, job.id);
+      card = {
+        name: job.name,
+        excused: isDisabled(job) ? 'disabled' : evidence.unscheduled.has(job.id) ? 'unscheduled' : undefined,
+        points,
+        sizes: points ? await this.sizesOf(evidence.backupsByJob.get(job.id) ?? [], points.retained ?? []) : undefined,
+        elsewhere: evidence.provenByRuns.has(job.id),
+      };
+    } else {
+      card = { name: job.name, unavailable: evidence.reason };
+    }
     return { text: renderPointsCard(card, this.clock()), jobId: job.id, about: 'points' };
+  }
+
+  /**
+   * What a job's points take up, from its backups' files: a request per
+   * backup, asked only when somebody asks about the job, never by the scan.
+   * Never throws: a card without sizes is still the answer.
+   */
+  private async sizesOf(backups: readonly string[], runs: RetainedRun[]): Promise<PointSizes | undefined> {
+    if (backups.length === 0) return undefined;
+    try {
+      const files = await Promise.all(backups.map((backup) => this.reader.backupFiles(backup)));
+      return sizesOf(files.flat(), runs);
+    } catch (error) {
+      this.logger.warn(`Backup files could not be read: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /** The jobs owed points whose verdict is anything but "on time", the way 🗂 orders them. */

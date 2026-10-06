@@ -7,6 +7,7 @@ import { allPages } from './pages';
 import { machineLine } from './session-text';
 import {
   VeeamBackup,
+  VeeamBackupFile,
   VeeamCollection,
   VeeamJob,
   VeeamJobState,
@@ -172,6 +173,11 @@ export class VeeamEstateReader {
   /** Every backup chain, with the job that owns it. */
   backups(): Promise<VeeamBackup[]> {
     return this.pages<VeeamBackup>(BACKUPS, {}, SCAN_PAGE);
+  }
+
+  /** The files one backup keeps on its repository, and the restore points each holds. */
+  backupFiles(backupId: string): Promise<VeeamBackupFile[]> {
+    return this.pages<VeeamBackupFile>(`${BACKUPS}/${encodeURIComponent(backupId)}/backupFiles`, {}, SCAN_PAGE);
   }
 
   /** Every restore point, newest first. */

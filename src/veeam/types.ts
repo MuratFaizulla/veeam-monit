@@ -143,6 +143,21 @@ export interface VeeamRestorePoint {
 }
 
 /**
+ * Item of GET /api/v1/backups/{id}/backupFiles — one file on a repository and
+ * the restore points it holds: a .vbk for a Full, a .vib for an increment.
+ */
+export interface VeeamBackupFile {
+  id?: string;
+  name?: string;
+  restorePointIds?: string[];
+  /** Bytes of the machines' data the file covers, before compression. */
+  dataSize?: number;
+  /** Bytes the file takes up on the repository. */
+  backupSize?: number;
+  creationTime?: string;
+}
+
+/**
  * Item of GET /api/v1/jobs — the job *configuration*, as opposed to its runtime
  * state. Only the schedule is read: a job set to run manually has no business
  * being reported for not having produced a restore point lately.

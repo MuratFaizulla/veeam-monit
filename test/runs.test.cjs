@@ -653,8 +653,35 @@ test('a job whose every run is a Full has no increments; a server that does not 
 
   assert.deepEqual(evidence.depthByJob.get('1').chain, { fulls: 3, lastFull: now - 6 * DAY, sinceFull: 0 });
   assert.equal(evidence.depthByJob.get('2').chain, undefined, 'nothing is claimed about a chain nobody described');
+  assert.equal(evidence.depthByJob.get('2').retained[0].full, undefined, 'nor whether its run was a Full');
   assert.deepEqual(evidence.retentionByJob.get('2'), { quantity: 14, unit: 'points' });
   assert.equal(evidence.retentionByJob.has('1'), false, 'no configuration, no retention');
+});
+
+test('each retained run is kept with when it began, whether it was a Full, and its points; each job with its backups', () => {
+  // What /points draws its calendar from, and puts each backup file in the
+  // run that wrote it by.
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const evidence = readingOver({
+    jobs: [job('1', 'J', 'Success')],
+    backups: [
+      { id: 'b1', jobId: '1', name: 'J' },
+      { id: 'b2', jobId: '1', name: 'J, moved to another repository' },
+      { id: 'b3', jobId: 'gone', name: 'OPS_OFD_vms' },
+    ],
+    points: [
+      { id: 'f1', backupId: 'b1', sessionId: 'n0', name: 'vm1', type: 'Full', creationTime: iso(now - 2 * DAY) },
+      { id: 'f2', backupId: 'b1', sessionId: 'n0', name: 'vm2', type: 'Full', creationTime: iso(now - 2 * DAY + MINUTE) },
+      { id: 'i1', backupId: 'b2', sessionId: 'n1', name: 'vm1', type: 'Increment', creationTime: iso(now - DAY) },
+    ],
+  }).evidence(new Map(), now);
+
+  assert.deepEqual(evidence.depthByJob.get('1').retained, [
+    { at: now - 2 * DAY, full: true, pointIds: ['f1', 'f2'] },
+    { at: now - DAY, full: false, pointIds: ['i1'] },
+  ]);
+  assert.deepEqual(evidence.backupsByJob.get('1'), ['b1', 'b2']);
+  assert.equal(evidence.backupsByJob.has('gone'), false, 'an orphan chain is nobody\'s to ask about');
 });
 
 test('a chain whose job is gone is an orphan, and a point of a backup nobody knows is only counted', () => {

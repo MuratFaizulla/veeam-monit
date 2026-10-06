@@ -596,6 +596,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
       depthByJob: new Map(),
       retentionByJob: new Map(),
       fullsByJob: new Map(),
+      backupsByJob: new Map(),
       orphanChains: [],
       totalPoints: 0,
       failedPoints: 0,

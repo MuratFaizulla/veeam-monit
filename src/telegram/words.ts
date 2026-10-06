@@ -94,3 +94,20 @@ export const chainWords = (
   if (chain.sinceFull === 0) return runs === 1 ? full : `${full}, инкрементов после него нет`;
   return `${full} + ${chain.sinceFull} инкр.`;
 };
+
+const SIZE_UNITS = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ', 'ПБ'];
+
+/**
+ * Bytes as Veeam's console shows them, in binary units: "856 ГБ", "15.5 ТБ",
+ * "0.9 ГБ". A tenth is kept below a hundred, where it still says something.
+ */
+export const sizeWords = (bytes: number): string => {
+  let value = Math.max(0, bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const shown = value < 100 ? value.toFixed(1).replace(/\.0$/, '') : String(Math.round(value));
+  return `${shown} ${SIZE_UNITS[unit]}`;
+};

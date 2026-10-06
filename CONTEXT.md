@@ -109,6 +109,18 @@ ran on Fridays with its Active Full on Fridays.
 Worked out from the point types in the Evidence (`chainOf`); a server that does
 not type its points has no chain, and nothing is claimed about one.
 
+## Point size
+
+What a Run's points take up, from the job's **backup files**: a point carries
+no size, but each file names the points it holds (a `.vbk` for a Full, a `.vib`
+for an increment), and that is how a file is put in the Run that wrote it — by
+date it would land in the wrong one, a Run beginning at 23:32 whose first point
+appears the next afternoon. /points says the newest Full that has written its
+data, a typical increment (the median: the night after a Full can be ten times
+the others), and what the job takes up altogether. A Full whose file is there
+and empty is "still being written". Read when somebody asks, a request per
+backup; the scan never reads files.
+
 ## Missed Full
 
 A day the job's settings owe a Full — Active or Synthetic, on chosen weekdays or
