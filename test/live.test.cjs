@@ -787,12 +787,10 @@ const depthPages = (over) => {
   return renderRestorePoints(
     {
       jobs: [],
-      without: 0,
+      without: [],
+      elsewhere: 0,
       excludedDisabled: 0,
       excludedUnscheduled: 0,
-      orphanBackups: 0,
-      orphanPoints: 0,
-      crossLink: false,
       ...over,
     },
     { now: new Date(NOW), timezone: 'UTC' },
@@ -802,7 +800,7 @@ const depthPages = (over) => {
 /** The whole topic as one string, for assertions that do not care about pages. */
 const depth = (over) => depthPages(over).join('\n');
 
-test('a row says the name, when the newest point was taken, and how far back the job reaches', async () => {
+test('a row says what is wrong, and the moment to look up in Veeam', async () => {
   const text = depth({
     jobs: [
       {
@@ -819,57 +817,24 @@ test('a row says the name, when the newest point was taken, and how far back the
 
   // A date and a minute, because this is the line somebody reads before
   // opening Veeam; not "17 июня 2026 г. в 21:32:09" eighty-five times over.
-  assert.match(text, /^🔴 <b>OPS_Call_Center<\/b> · 1 ВМ — 17\.06 в 21:32, пропущено \d+ запусков\n└ 7 точек с 08\.09$/mu);
+  assert.match(text, /^🔴 <b>OPS_Call_Center<\/b> — пропущено \d+ запусков · последний бэкап 17\.06 в 21:32$/mu);
 });
 
-test('a job counts its points per machine, and Veeam\'s own sum is kept for the total', async () => {
-  // OPS_Billing_Prod read "69 точек": three nights of twenty-three machines,
-  // against a retention of seven days.
+test('nothing but what needs somebody: no definitions, no totals, no chain', async () => {
+  // On 6 October the topic gave each job three lines, then ten lines of totals
+  // and a paragraph of definitions, and opening it told nobody anything.
   const text = depth({
     jobs: [
-      // Its rhythm not yet known, so it is listed.
-      { name: 'OPS_Billing_Prod', runs: 3, points: 69, machines: 23, intervalDays: null,
-        oldest: Date.UTC(2026, 8, 2, 17), newest: NOW - 2 * DAY },
+      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: 1, oldest: NOW - 10 * DAY,
+        newest: NOW - 3 * DAY, chain: { fulls: 2, lastFull: NOW - 4 * DAY, sinceFull: 3 },
+        retention: { quantity: 7, unit: 'days' } },
     ],
   });
 
-  assert.match(text, /^⚪ <b>OPS_Billing_Prod<\/b> · 23 ВМ — 13\.09 в 12:00\n└ 3 точки с 02\.09$/mu);
-  assert.ok(!/69 точ/u.test(text.split('<b>Заданий')[0]), 'the sum is not the job\'s count');
-  assert.match(text, /Точек в Veeam у этих заданий:<\/b> 69 \(по точке на каждую ВМ в каждом запуске\)/u);
-});
-
-test('a row names the chain being written and what the job is told to keep', async () => {
-  const at = (day) => Date.UTC(2026, 8, day, 1);
-  // Rhythms not yet known, so all four are listed.
-  const text = depth({
-    jobs: [
-      // Two chains on disk, the newer one begun on the 12th.
-      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: null, oldest: at(5), newest: NOW,
-        chain: { fulls: 2, lastFull: at(12), sinceFull: 3 }, retention: { quantity: 7, unit: 'days' } },
-      // Runs on Fridays with its Active Full on Fridays.
-      { name: 'OPS_Exchange', runs: 3, points: 3, machines: 1, intervalDays: null, oldest: at(1), newest: NOW - DAY,
-        chain: { fulls: 3, lastFull: at(14), sinceFull: 0 }, retention: { quantity: 14, unit: 'points' } },
-      { name: 'JUST_FULL', runs: 4, points: 4, machines: 1, intervalDays: null, oldest: at(11), newest: NOW,
-        chain: { fulls: 2, lastFull: at(14), sinceFull: 0 } },
-      { name: 'OLD_API', runs: 5, points: 5, machines: 1, intervalDays: null, oldest: at(10), newest: NOW },
-    ],
-  });
-
-  assert.match(text, /^└ 11 точек с 05\.09 · Full 12\.09 \+ 3 инкр\. · хранение 7 дн\.$/mu);
-  assert.match(text, /^└ 3 точки с 01\.09 · каждый запуск — Full · хранение 14 точек$/mu);
-  assert.match(text, /^└ 4 точки с 11\.09 · Full 14\.09, инкрементов после него нет$/mu);
-  assert.match(text, /^└ 5 точек с 10\.09$/mu, 'a server that does not type its points: nothing claimed');
-  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> OPS_Exchange$/mu);
-});
-
-test('the jobs whose every run is a Full are named, being mostly on time and so not listed', async () => {
-  const text = depth({
-    jobs: Array.from({ length: 12 }, (_, i) => ({
-      name: `FULL_${String(i).padStart(2, '0')}`, runs: 3, points: 3, machines: 1, intervalDays: 7,
-      oldest: NOW - 14 * DAY, newest: NOW - DAY, chain: { fulls: 3, lastFull: NOW - DAY, sinceFull: 0 },
-    })),
-  });
-  assert.match(text, /Каждый запуск — Full, без инкрементов:<\/b> FULL_00, FULL_01, .*, FULL_09 и ещё 2$/mu);
+  assert.match(text, /^🔴 <b>ESBTST<\/b> — пропущено 2 запуска · последний бэкап 12\.09 в 12:00$/mu);
+  for (const gone of ['Точек в Veeam', 'Цепочка', 'инкр.', 'хранение', 'ВМ', 'Заданий:', 'Прежняя цепочка']) {
+    assert.ok(!text.includes(gone), `${gone}: ${text}`);
+  }
 });
 
 test('the same staleness means opposite things at different cadences', async () => {
@@ -886,11 +851,10 @@ test('the same staleness means opposite things at different cadences', async () 
 
   const lines = text.split('\n');
   const nightly = lines.findIndex((l) => l.includes('CUST_nightly'));
-  assert.equal(lines[nightly - 1], '<b>Отстают от своего расписания</b>');
-  assert.match(lines[nightly], /^🔴 <b>CUST_nightly<\/b> · 1 ВМ — 12\.09 в 12:00, пропущено 2 запуска$/u);
+  assert.equal(lines[nightly - 1], '<b>Пропускают бэкапы</b> (1)');
+  assert.equal(lines[nightly], '🔴 <b>CUST_nightly</b> — пропущено 2 запуска · последний бэкап 12.09 в 12:00');
   assert.ok(!text.includes('CUST_weekly'), 'the weekly one is not due yet, and is only counted');
-  assert.match(text, /^🟢 <b>Ещё 1 задание — по расписанию<\/b>, в список не включены\.$/mu);
-  assert.match(text, /Отстают от расписания:<\/b> 1/);
+  assert.match(text, /^🟢 Остальные 1 из 2 — в порядке$/mu);
 });
 
 /** A job of 15 September that takes its Active Full on Saturdays, the last one on `lastFull`. */
@@ -899,7 +863,7 @@ const saturdayJob = (name, lastFull, over = {}) => ({
   chain: { fulls: 1, lastFull, sinceFull: 7 }, fulls: [{ kind: 'active', weekdays: [6] }], ...over,
 });
 
-test('a job whose scheduled Full did not happen is listed apart, with the days it was owed', async () => {
+test('a job whose scheduled Full did not happen is listed apart, the most days missed first', async () => {
   // Saturdays before 15 September: 29 August, 5 and 12 September.
   const text = depth({
     jobs: [
@@ -910,22 +874,17 @@ test('a job whose scheduled Full did not happen is listed apart, with the days i
   });
 
   const lines = text.split('\n');
-  const heading = lines.indexOf('<b>Пропущен Full по расписанию</b> · <i>больше пропусков — выше</i>');
+  const heading = lines.indexOf('<b>Пропущен Full по расписанию</b> (2)');
   assert.ok(heading >= 0, text);
-  assert.match(lines[heading + 1], /^🟡 <b>TWO_MISSED<\/b>/u, 'the most days missed first');
-  assert.equal(lines[heading + 2], '├ 8 точек с 29.08 · Full 29.08 + 7 инкр. · Active Full по сб');
-  assert.equal(lines[heading + 3], '└ ⚠️ Пропущен Active Full: 05.09, 12.09');
-  assert.match(lines[heading + 4], /^🟡 <b>ONE_MISSED<\/b>/u);
-  assert.equal(lines[heading + 6], '└ ⚠️ Пропущен Active Full: 12.09');
-
+  assert.equal(lines[heading + 1], '🟡 <b>TWO_MISSED</b> — пропущены 05.09, 12.09 · последний Full 29.08');
+  assert.equal(lines[heading + 2], '🟡 <b>ONE_MISSED</b> — пропущен 12.09 · последний Full 05.09');
   assert.ok(!text.includes('ON_TIME'), 'the one whose Full happened is on time, and only counted');
-  assert.match(text, /^🟢 <b>Ещё 1 задание — по расписанию<\/b>/mu);
-  assert.match(text, /Пропущен Full по расписанию:<\/b> 2 задания/u);
+  assert.match(text, /^🟢 Остальные 1 из 3 — в порядке$/mu);
 });
 
 test('a long run of missed Fulls is counted, not listed', async () => {
   const text = depth({ jobs: [saturdayJob('OPS_TelegramBot', Date.UTC(2026, 6, 25, 22))] });
-  assert.match(text, /^└ ⚠️ Пропущен Active Full: 15\.08, 22\.08, 29\.08, 05\.09, 12\.09 и ещё 2 раньше$/mu);
+  assert.match(text, /^🟡 <b>OPS_TelegramBot<\/b> — пропущены 29\.08, 05\.09, 12\.09 и ещё 4 раньше · последний Full 25\.07$/mu);
 });
 
 test('a Full is owed only where Veeam typed the points and the configuration said when', async () => {
@@ -937,9 +896,8 @@ test('a Full is owed only where Veeam typed the points and the configuration sai
       saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [], intervalDays: null }),
     ],
   });
-  assert.ok(!/⚠️/u.test(text), text);
-  assert.match(text, /Пропущен Full по расписанию:<\/b> нет/u);
-  assert.match(text, /^└ .*без периодического Full$/mu, 'a job set to take none says so');
+  assert.ok(!/Full/u.test(text), text);
+  assert.match(text, /^<b>Мало точек, чтобы судить<\/b> \(3\)$/mu);
 });
 
 test('a job behind its schedule stays with the ones behind, its missed Full still said', async () => {
@@ -948,9 +906,9 @@ test('a job behind its schedule stays with the ones behind, its missed Full stil
   });
   const lines = text.split('\n');
   const row = lines.findIndex((line) => line.includes('<b>BEHIND</b>'));
-  assert.equal(lines[row - 1], '<b>Отстают от своего расписания</b>');
-  assert.match(lines[row], /^🔴 /u);
-  assert.equal(lines[row + 2], '└ ⚠️ Пропущен Active Full: 05.09, 12.09');
+  assert.equal(lines[row - 1], '<b>Пропускают бэкапы</b> (1)');
+  assert.equal(lines[row], '🔴 <b>BEHIND</b> — пропущено 3 запуска · последний бэкап 11.09 в 12:00 · не сделан Full 05.09, 12.09');
+  assert.ok(!text.includes('Пропущен Full по расписанию'), 'and only there');
 });
 
 test('the jobs on time are counted, not listed, and any of them can be asked about', async () => {
@@ -965,8 +923,7 @@ test('the jobs on time are counted, not listed, and any of them can be asked abo
 
   assert.match(text, /<b>NEEDS_A_LOOK<\/b>/u);
   for (const name of ['CUST_FINHUB', 'OPS_Exchange', 'OPS_Zabbix']) assert.ok(!text.includes(name), name);
-  assert.match(text, /^🟢 <b>Ещё 3 задания — по расписанию<\/b>, в список не включены\.\nТочки любого из них: \/points часть имени$/mu);
-  assert.match(text, /Заданий:<\/b> 4/u, 'and still counted in the totals');
+  assert.match(text, /^🟢 Остальные 3 из 4 — в порядке\nПодробнее о задании: \/points имя$/mu);
 });
 
 test('a day with nothing to look at says so in one line', async () => {
@@ -975,8 +932,7 @@ test('a day with nothing to look at says so in one line', async () => {
   });
 
   assert.equal(pages.length, 1);
-  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания — по расписанию<\/b>, Full проходят вовремя\.\nТочки любого задания: \/points часть имени\n/u);
-  assert.ok(!/Только задания, которым нужно внимание/u.test(pages[0]), 'no legend for a list that is not there');
+  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания в порядке<\/b>\nПодробнее о задании: \/points имя\n\n<i>Обновлено /u);
 });
 
 test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
@@ -987,21 +943,21 @@ test('a job whose cadence cannot be learned claims nothing about missed runs', a
     ],
   });
 
-  assert.match(text, /^<b>Ритм ещё не ясен<\/b>\n⚪ <b>CUST_CHEMPLANT<\/b> · 1 ВМ — 06\.08 в 12:00\n└ 1 точка$/mu);
-  assert.ok(!/пропущено? \d+ запуск/u.test(text), 'two points are not enough to know a rhythm');
-  assert.match(text, /Только одна точка:<\/b> 1 задание/);
+  assert.match(text, /^<b>Мало точек, чтобы судить<\/b> \(1\)\n⚪ <b>CUST_CHEMPLANT<\/b> — 1 точка · последний бэкап 06\.08 в 12:00$/mu);
+  assert.ok(!/пропущено? \d+ запуск/u.test(text), 'one point is not enough to know a rhythm');
 });
 
-test('jobs that are not supposed to run are left out, and said to be left out', async () => {
+test('a job with no point at all is named first, and the jobs left out are said to be', async () => {
   const text = depth({
-    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW }],
-    without: 7,
+    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW - 3 * DAY }],
+    without: ['NEVER_RAN', 'ALSO_NONE'],
     excludedUnscheduled: 31,
     excludedDisabled: 4,
+    elsewhere: 2,
   });
 
-  assert.match(text, /Заданий:<\/b> 1 \(\+7 без точек\)/);
-  assert.match(text, /Не учитываются:<\/b> 31 без расписания, 4 выключено/);
+  assert.match(text, /^🗂 <b>Точки восстановления<\/b>\n\n<b>Нет ни одной точки<\/b> \(2\)\n🔴 <b>ALSO_NONE<\/b>\n🔴 <b>NEVER_RAN<\/b>\n\n<b>Пропускают бэкапы<\/b> \(1\)\n🔴 <b>has-some<\/b>/u);
+  assert.match(text, /^<i>Не проверяются: 31 без расписания, 4 выключено, репликации и др\. — 2<\/i>$/mu);
 });
 
 /**
@@ -1022,22 +978,21 @@ const estate = (size) =>
   }));
 
 test('a list too long for one message continues into further ones, numbered', async () => {
-  const pages = depthPages({ jobs: estate(90) });
+  const pages = depthPages({ jobs: estate(150) });
 
-  assert.ok(pages.length > 1, 'ninety jobs behind do not fit in one message');
+  assert.ok(pages.length > 1, 'a hundred and fifty jobs behind do not fit in one message');
   for (const page of pages) {
     assert.ok(page.length <= 4096, `page is ${page.length} characters`);
   }
   pages.forEach((page, i) => {
-    assert.ok(page.startsWith(`🗂 <b>Точки восстановления</b> · ${i + 1}/${pages.length}\n`), page.slice(0, 60));
+    assert.ok(page.startsWith(`🗂 <b>Точки восстановления</b> · ${i + 1}/${pages.length}\n\n<b>Пропускают бэкапы</b> (150)\n`), page.slice(0, 80));
   });
-  // The totals belong to the list, not to a page: repeated under the first
-  // message they would be read as that page's own count.
-  assert.ok(!/Заданий:/.test(pages[0]));
-  assert.match(pages.at(-1), /Заданий:<\/b> 90/);
+  // The pointer belongs to the list, not to a page.
+  assert.ok(!/\/points/.test(pages[0]));
+  assert.match(pages.at(-1), /Подробнее о задании: \/points имя/);
   assert.equal(
     pages.join('\n').match(/OPS_JOB_/g).length,
-    90,
+    150,
     'every job appears exactly once across the pages',
   );
 });
@@ -1060,13 +1015,14 @@ test('the pages fill up, keeping the ones that are behind', async () => {
 
 
 test('a point left behind by a failed run is not counted as a backup', async () => {
-  const w = exchange();
+  const w = exchange({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' });
   await w.monitor.check();
 
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
   assert.ok(topic, 'the topic was published');
-  assert.ok(!/14 сентября/u.test(topic.text), 'a run that errored out is not a backup');
-  assert.match(topic.text, /Не в счёт:<\/b> 1 точка машин, упавших в своём прогоне/u);
+  // The run of 14 September errored out: its point is not the newest backup.
+  assert.ok(!/14\.09/u.test(topic.text), topic.text);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — 1 точка ·/u);
 });
 
 test('a point finished by a successful retry counts, whatever id it carries', async () => {
@@ -1078,8 +1034,9 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
-  assert.match(topic.text, /<b>OPS_Exchange<\/b> · 1 ВМ — 23\.08 в 01:31\n└ 1 точка/u);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — 1 точка · последний бэкап 23\.08 в 01:31/u);
 });
+
 
 const HOUR_MS = 3_600_000;
 const isoAgo = (ms) => new Date(Date.now() - ms).toISOString();
@@ -1113,9 +1070,11 @@ test('a failed run\'s points count for the machines that got through it, not for
   const texts = w.api.sent().map((message) => message.text);
   const depth = texts.find((text) => /Точки восстановления/.test(text));
   // One night, and the two machines that got through it are backed up.
-  assert.match(depth, /<b>REMS_DBS03<\/b> · 2 ВМ — .*\n└ 1 точка/u, 'the machines that got through are backed up');
-  assert.match(depth, /Точек в Veeam у этих заданий:<\/b> 2 /u);
-  assert.match(depth, /Не в счёт:<\/b> 1 точка машин, упавших в своём прогоне/u);
+  assert.match(depth, /<b>REMS_DBS03<\/b> — 1 точка ·/u, 'the machines that got through are backed up');
+  assert.ok(!/Нет ни одной точки/u.test(depth), depth);
+  const { machines, points } = w.evidence.evidence.depthByJob.get('1');
+  assert.deepEqual({ machines, points }, { machines: 2, points: 2 }, 'and the one that failed is not');
+  assert.equal(w.evidence.evidence.failedPoints, 1);
   const protection = texts.find((text) => /Все задания защищены|Требуют внимания/.test(text));
   assert.ok(!/точек восстановления нет/.test(protection), protection);
 });
@@ -1148,7 +1107,8 @@ test('a replica is judged by the runs that worked, its points being kept on the 
   assert.match(protection, /NTP\/DOM<\/b> — успешных запусков нет/u, 'what the failing one lacks is a run that worked');
   assert.ok(!/точек восстановления нет/.test(protection), 'never "no points", which every replica would read');
   const depth = texts.find((text) => /Точки восстановления|Точек восстановления нет/.test(text));
-  assert.match(depth, /2 задания с точками вне этого списка \(репликации и др\.\)/u);
+  assert.match(depth, /Не проверяются: репликации и др\. — 2/u);
+  assert.ok(!/Нет ни одной точки/u.test(depth), 'never "no points", which every replica would read');
 });
 
 /* ------------------------------------------------------------------ *
@@ -1215,22 +1175,6 @@ test('the orphan list counts the points it could not show, not just the chains',
   assert.ok(rest, 'the hidden remainder is quantified in points, not just chains');
   const shown = (text.match(/CHAIN_/g) ?? []).length;
   assert.equal(shown + Number(rest[1]), 300);
-});
-
-test('the 🧹 pointer is a decision the renderer is given, not a zero it infers', async () => {
-  const estate = {
-    jobs: [{ name: 'CUST_live', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW }],
-    orphanBackups: 245,
-    orphanPoints: 5037,
-  };
-
-  const linked = depth({ ...estate, crossLink: true });
-  assert.match(linked, /Сверх того, без заданий:<\/b> 5037 точек в 245 цепочках — см\. 🧹/);
-
-  // The chains are just as real; there is simply nowhere to send anyone.
-  const unlinked = depth({ ...estate, crossLink: false });
-  assert.ok(!/🧹/u.test(unlinked));
-  assert.ok(!/без заданий/u.test(unlinked));
 });
 
 test('an unread scan says so rather than showing an empty estate', async () => {

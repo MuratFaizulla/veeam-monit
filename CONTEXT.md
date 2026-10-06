@@ -192,8 +192,10 @@ it is given, like every other live slot.
 A topic holding exactly one message, edited in place rather than appended to.
 State, not events. 🗂 Restore points is the exception that may hold several,
 numbered, when the list does not fit in Telegram's limit. It lists only the
-jobs that need somebody and counts the rest, so that is a bad day rather than
-every day; listing all ninety took four messages. A page posted anew
+jobs that need somebody, a line each — what is wrong and the date to look up —
+and counts the rest, so that is a bad day rather than every day; listing all
+ninety took four messages. The chain, retention and totals it once also gave
+are on /points, per job. A page posted anew
 takes the pages after it along: each used to be replaced on its own clock, and
 the continuation sat above the page it continued.
 

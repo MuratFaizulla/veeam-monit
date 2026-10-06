@@ -354,9 +354,8 @@ test('both slots are told the same thing about which jobs are in scope', async (
   const protection = sent.find((m) => /Защищ|Требуют внимания|защищены/.test(m.text));
   const depth = sent.find((m) => /Точки восстановления|Точек восстановления/.test(m.text));
 
-  for (const message of [protection, depth]) {
-    assert.match(message.text, /Не учитываются:<\/b> 1 без расписания, 1 выключено/);
-  }
+  assert.match(protection.text, /Не учитываются:<\/b> 1 без расписания, 1 выключено/);
+  assert.match(depth.text, /Не проверяются: 1 без расписания, 1 выключено/);
 });
 
 test('a job is only excused on positive evidence, never on a gap', async () => {

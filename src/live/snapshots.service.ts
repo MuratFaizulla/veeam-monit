@@ -324,20 +324,16 @@ export class LiveSnapshotsService {
     if (!standings || evidence.status === 'pending') {
       return {
         jobs: [],
-        without: 0,
+        without: [],
         elsewhere: 0,
         excludedDisabled: 0,
         excludedUnscheduled: 0,
-        failedPoints: 0,
-        orphanBackups: 0,
-        orphanPoints: 0,
-        crossLink: this.config.liveOrphans,
         unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
       };
     }
 
     const listed: JobDepth[] = [];
-    let without = 0;
+    const without: string[] = [];
     let elsewhere = 0;
     // Which jobs are in scope, and how many were left out, is decided once and
     // shared with 🛡 Protection; the two messages state the same numbers because
@@ -345,7 +341,7 @@ export class LiveSnapshotsService {
     for (const job of standings.judged) {
       if (!job.depth) {
         if (job.byRuns) elsewhere += 1;
-        else without += 1;
+        else without.push(job.name);
         continue;
       }
       listed.push({
@@ -357,27 +353,12 @@ export class LiveSnapshotsService {
       });
     }
 
-    const newest = listed.reduce<{ name: string; at: number } | undefined>(
-      (best, job) =>
-        job.newest !== undefined && (!best || job.newest > best.at)
-          ? { name: job.name, at: job.newest }
-          : best,
-      undefined,
-    );
-
     return {
       jobs: listed,
       without,
       elsewhere,
       excludedDisabled: standings.excludedDisabled,
       excludedUnscheduled: standings.excludedUnscheduled,
-      failedPoints: evidence.failedPoints,
-      orphanBackups: evidence.orphanChains.length,
-      orphanPoints: orphanPoints(evidence.orphanChains),
-      // Only mentioned while there is a 🧹 topic to send the reader to. A
-      // pointer to a topic that does not exist is worse than no pointer.
-      crossLink: this.config.liveOrphans,
-      newest,
     };
   }
 
