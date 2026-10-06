@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { AppConfig } from '../config/configuration';
+import { VeeamApiError } from './api.error';
 import { VeeamHttpService } from './http.service';
 import { VeeamTokenResponse } from './types';
 
@@ -7,6 +8,32 @@ const REFRESH_SKEW_MS = 60_000;
 const DEFAULT_TOKEN_LIFETIME_MS = 15 * 60_000;
 /** Shortest gap between two logins forced by Veeam refusing a token. */
 const REJECT_COOLDOWN_MS = 60_000;
+
+/**
+ * Shortest gap between two password sign-ins after Veeam refused the password.
+ *
+ * Every cycle used to try again, once a minute. On 6 October an account not
+ * yet created on veeam03edge was refused three times in three minutes, and
+ * Veeam locked it for fifteen minutes, then again, then for thirty — by the
+ * time it was created, the bot's own attempts kept it locked. The shared
+ * account is a domain one, where the same minute-by-minute retries after a
+ * password change would lock it in Active Directory for every server at once.
+ */
+const REFUSED_WAIT_MS = 15 * 60_000;
+
+/** The statuses a token endpoint refuses credentials with. */
+const REFUSALS = new Set([400, 401, 403]);
+
+/**
+ * How long to wait after a refusal: Veeam's own lockout and a minute more,
+ * when it names one ("locked out for 00:30:00"), and never less than the floor.
+ */
+const waitAfter = (refusal: string): number => {
+  const lockout = /locked out for (\d+):(\d{2}):(\d{2})/i.exec(refusal);
+  if (!lockout) return REFUSED_WAIT_MS;
+  const [hours, minutes, seconds] = lockout.slice(1).map(Number);
+  return Math.max(REFUSED_WAIT_MS, ((hours * 60 + minutes) * 60 + seconds) * 1000 + 60_000);
+};
 
 /**
  * The monitor account's token on one Veeam server.
@@ -29,6 +56,9 @@ export class VeeamMonitorAuthService {
   /** Cleared for good once this server has refused a refreshed token. */
   private refreshUsable = true;
   private pending?: Promise<string>;
+  /** Veeam's last refusal of the password, and when it may be offered again. */
+  private refusal?: VeeamApiError;
+  private refusedUntil = 0;
 
   constructor(
     account: Pick<AppConfig['veeam'], 'username' | 'password'>,
@@ -53,6 +83,15 @@ export class VeeamMonitorAuthService {
     if (!this.configured) throw new Error('VEEAM_MONITOR_USERNAME/PASSWORD are not configured');
     if (this.accessToken && Date.now() < this.expiresAt - REFRESH_SKEW_MS) return this.accessToken;
     if (this.pending) return this.pending;
+    // Answered from memory while the wait lasts: asking would be one more
+    // failed attempt for Veeam to count.
+    if (this.refusal && Date.now() < this.refusedUntil) {
+      const minutes = Math.ceil((this.refusedUntil - Date.now()) / 60_000);
+      throw new VeeamApiError(
+        `${this.refusal.message.replace(/\.?\s*$/, '.')} Следующая попытка входа — через ${minutes} мин.`,
+        this.refusal.upstreamStatus,
+      );
+    }
     this.pending = this.authenticate().finally(() => (this.pending = undefined));
     return this.pending;
   }
@@ -93,17 +132,37 @@ export class VeeamMonitorAuthService {
     return true;
   }
 
+  /**
+   * The password grant, remembering a refusal so that the next attempt waits
+   * (see REFUSED_WAIT_MS). Anything else — Veeam down, the network gone — is
+   * not a refusal of the password, and the next cycle tries again as before.
+   */
+  private async signIn(): Promise<VeeamTokenResponse> {
+    try {
+      const token = await this.veeam.login(this.user, this.password);
+      this.refusal = undefined;
+      this.refusedUntil = 0;
+      return token;
+    } catch (error) {
+      if (error instanceof VeeamApiError && error.upstreamStatus !== null && REFUSALS.has(error.upstreamStatus)) {
+        const wait = waitAfter(error.message);
+        this.refusal = error;
+        this.refusedUntil = Date.now() + wait;
+        this.logger.warn(`Veeam refused the password; the next sign-in waits ${Math.round(wait / 60_000)} min`);
+      }
+      throw error;
+    }
+  }
+
   private async authenticate(): Promise<string> {
     const byRefresh = this.refreshUsable && Boolean(this.refreshToken);
     let token: VeeamTokenResponse;
     try {
-      token = byRefresh
-        ? await this.veeam.refresh(this.refreshToken)
-        : await this.veeam.login(this.user, this.password);
+      token = byRefresh ? await this.veeam.refresh(this.refreshToken) : await this.signIn();
     } catch (error) {
       if (!byRefresh) throw error;
       this.refreshToken = '';
-      token = await this.veeam.login(this.user, this.password);
+      token = await this.signIn();
     }
     if (token.mfa_token) throw new Error('Monitor account requires MFA; use a dedicated non-interactive account');
     this.accessToken = token.access_token;

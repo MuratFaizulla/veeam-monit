@@ -178,6 +178,69 @@ test('one burst of refusals buys one new token, not one per call', async () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * A refused password
+ * ------------------------------------------------------------------ */
+
+const MINUTE = 60_000;
+
+/** A Veeam that answers the password grant with `answers`, one per sign-in, the last one from then on. */
+const refusingVeeam = (...answers) => {
+  const { VeeamApiError } = require('../dist/veeam/api.error');
+  let logins = 0;
+  return {
+    get logins() {
+      return logins;
+    },
+    login: async () => {
+      const answer = answers[Math.min(logins, answers.length - 1)];
+      logins += 1;
+      if (answer === 'ok') return { access_token: `t${logins}`, expires_in: 3600 };
+      if (answer === 'down') throw new VeeamApiError('The Veeam server did not respond within 3000 ms', null);
+      throw new VeeamApiError(answer, 401);
+    },
+  };
+};
+
+test('a refused password is not offered again for fifteen minutes', async (t) => {
+  // veeam03edge on 6 October: an account not yet created, refused once a
+  // minute, locked for fifteen minutes, then again, then for thirty.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 6, 10) });
+  const veeam = refusingVeeam('Authentication failed', 'ok');
+  const auth = authService(veeam);
+
+  await assert.rejects(auth.getAccessToken(), /^VeeamApiError: Authentication failed$/);
+  t.mock.timers.tick(MINUTE);
+  await assert.rejects(auth.getAccessToken(), /Authentication failed\. Следующая попытка входа — через 14 мин\./);
+  assert.equal(veeam.logins, 1, 'the second cycle did not ask Veeam');
+
+  t.mock.timers.tick(14 * MINUTE);
+  assert.equal(await auth.getAccessToken(), 't2', 'and after the wait the account, now created, signs in');
+});
+
+test('a lockout Veeam names is waited out in full', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 6, 10) });
+  const veeam = refusingVeeam('Your account has been locked out for 00:30:00 due to repeated failed log-in attempts.', 'ok');
+  const auth = authService(veeam);
+
+  await assert.rejects(auth.getAccessToken(), /locked out/);
+  t.mock.timers.tick(30 * MINUTE);
+  await assert.rejects(auth.getAccessToken(), /Следующая попытка входа — через 1 мин\./, 'a minute past the lockout');
+  t.mock.timers.tick(MINUTE);
+  assert.equal(await auth.getAccessToken(), 't2');
+  assert.equal(veeam.logins, 2);
+});
+
+test('a Veeam that did not answer is asked again next cycle: only a refusal waits', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 6, 10) });
+  const veeam = refusingVeeam('down', 'ok');
+  const auth = authService(veeam);
+
+  await assert.rejects(auth.getAccessToken(), /did not respond/);
+  t.mock.timers.tick(MINUTE);
+  assert.equal(await auth.getAccessToken(), 't2');
+});
+
+/* ------------------------------------------------------------------ *
  * Signing in
  * ------------------------------------------------------------------ */
 
