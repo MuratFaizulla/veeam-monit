@@ -73,11 +73,11 @@ test('a command with a Button answers the same whether typed or pressed', async 
   const { encode } = require('../dist/updates/keyboard');
   const withButton = COMMANDS.filter((command) => command.button);
 
-  // The four Buttons under the bot's answers that stand for a command. The
-  // fifth kind, a job's own, carries an id and is not a command.
+  // The five Buttons under the bot's answers that stand for a command. A job's
+  // own carry an id and are not commands.
   assert.deepEqual(
     withButton.map(({ name, button }) => [name, button]),
-    [['status', 'status'], ['digest', 'summary'], ['check', 'check'], ['help', 'help']],
+    [['status', 'status'], ['digest', 'summary'], ['check', 'check'], ['clear', 'clear'], ['help', 'help']],
   );
   for (const { name, button } of withButton) {
     // Two worlds, so the rate limit armed by one cannot answer the other.

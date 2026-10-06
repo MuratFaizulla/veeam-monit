@@ -5,7 +5,7 @@ import { plural, stampOf } from '../telegram/time';
 import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml, truncate } from '../telegram/format';
-import { Action, cardKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
+import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
 import {
   isMenu,
   isSelective,
@@ -154,6 +154,19 @@ export class TelegramCommandsService implements Answers {
       return { lines: ['🤖 <b>Главное меню</b>'], markup: mainMenu({ selective: true }) };
     }
     if (key.kind === 'server') return this.selected(key.name);
+    // A key is pressed by accident far more easily than a command is typed,
+    // and this one deletes: it asks first, with the Button that does it.
+    if (key.name === 'clear') {
+      return {
+        lines: [
+          '🧹 <b>Очистить General?</b>',
+          '',
+          'Удалю всё, что видел здесь за двое суток: команды, ответы, сообщения людей и меню.',
+          'Оповещения и живые сообщения в темах не трону.',
+        ],
+        markup: clearKeyboard(),
+      };
+    }
     const command = commandNamed(key.name);
     return command ? command.answer(this, asked) : this.menu();
   }

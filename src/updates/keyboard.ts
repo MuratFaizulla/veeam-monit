@@ -23,6 +23,8 @@ export type Action =
   | { kind: 'check' }
   | { kind: 'help' }
   | { kind: 'status' }
+  /** Empty General: the yes under the question the 🧹 key asks. */
+  | { kind: 'clear' }
   /**
    * One job's card. `server` is the key of the server the job is on; a Button
    * from before there was a list carries none.
@@ -39,6 +41,7 @@ const PREFIX = {
   check: 'a:chk',
   help: 'a:hlp',
   status: 'a:sts',
+  clear: 'a:clr',
   job: 'a:job:',
   points: 'a:pts:',
 } as const;
@@ -65,6 +68,7 @@ export const decode = (data: string | undefined): Action | undefined => {
   if (data === PREFIX.check) return { kind: 'check' };
   if (data === PREFIX.help) return { kind: 'help' };
   if (data === PREFIX.status) return { kind: 'status' };
+  if (data === PREFIX.clear) return { kind: 'clear' };
   for (const kind of ['job', 'points'] as const) {
     if (!data.startsWith(PREFIX[kind])) continue;
     const rest = data.slice(PREFIX[kind].length);
@@ -98,6 +102,10 @@ export const mainKeyboard = (): TelegramKeyboard | undefined =>
     [['📊 Сводка', { kind: 'summary' }], ['🔄 Проверить', { kind: 'check' }]],
     [['🤖 Команды', { kind: 'help' }]],
   ]);
+
+/** Under the question the 🧹 key asks: the one Button that empties General. */
+export const clearKeyboard = (): TelegramKeyboard | undefined =>
+  keyboard([[['🧹 Да, очистить', { kind: 'clear' }]]]);
 
 /** Buttons that are the whole point of the message: a job each. */
 const MAX_JOB_BUTTONS = 8;

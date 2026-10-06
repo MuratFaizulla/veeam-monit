@@ -273,7 +273,13 @@ test('the keys of the main menu are answered as the commands they stand for', as
   const home = keyed(w, '⬅️ На главную');
   await home.done;
   const menu = w.api.sent().at(-1);
-  assert.deepEqual(labels(menu.reply_markup), [['🖥 Серверы'], ['📊 Сводка', '🔄 Проверить'], ['🩺 Статус', '🤖 Помощь']]);
+  assert.deepEqual(labels(menu.reply_markup), [
+    ['🖥 Серверы'],
+    ['📊 Сводка', '🔄 Проверить'],
+    ['📦 Задание', '🗂 Точки'],
+    ['🩺 Статус', '📑 Темы'],
+    ['🧹 Очистить', '🤖 Помощь'],
+  ]);
   assert.equal(menu.reply_markup.is_persistent, true);
   assert.equal(menu.reply_parameters.message_id, home.id);
 
@@ -281,6 +287,45 @@ test('the keys of the main menu are answered as the commands they stand for', as
   w.api.reset();
   await keyed(w, '🩺 Статус', 77).done;
   assert.deepEqual(w.api.sent(), []);
+});
+
+test('a job\'s keys offer the jobs that need somebody, as the commands do asked with no name', async () => {
+  // Two worlds each, so the rate limit armed by one cannot answer the other.
+  const answerTo = async (said) => {
+    const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Failed')] });
+    await keyed(w, said).done;
+    return w.api.sent().at(-1);
+  };
+
+  for (const [label, command] of [['📦 Задание', '/job'], ['🗂 Точки', '/points'], ['📑 Темы', '/topics']]) {
+    const [key, typed] = [await answerTo(label), await answerTo(command)];
+    assert.equal(key.text, typed.text, `${label} = ${command}`);
+    assert.deepEqual(key.reply_markup?.inline_keyboard, typed.reply_markup?.inline_keyboard);
+  }
+  const card = await answerTo('📦 Задание');
+  assert.match(card.text, /Укажите задание/);
+  assert.equal(card.reply_markup.inline_keyboard[0][0].text, 'SQL Daily', 'and offers the one that failed');
+});
+
+test('the 🧹 key asks first, and only its Button empties General', async () => {
+  const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Success')] });
+  await keyed(w, '/status').done;
+  w.api.reset();
+
+  await keyed(w, '🧹 Очистить').done;
+  const question = w.api.sent().at(-1);
+  assert.match(question.text, /Очистить General\?/);
+  assert.deepEqual(question.reply_markup.inline_keyboard, [[{ text: '🧹 Да, очистить', callback_data: 'a:clr' }]]);
+  assert.deepEqual([...w.api.of('deleteMessages'), ...w.api.of('deleteMessage')], [], 'nothing is deleted yet');
+
+  w.api.reset();
+  await pressed(w, 'a:clr');
+  const deleted = [
+    ...w.api.of('deleteMessages').flatMap((call) => call.message_ids),
+    ...w.api.of('deleteMessage').map((call) => call.message_id),
+  ];
+  assert.ok(deleted.length > 0, 'the Button clears');
+  assert.match(w.api.sent().at(-1).text, /Убрано/);
 });
 
 test('the menu is put under the input field once, not at every start', async () => {

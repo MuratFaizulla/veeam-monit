@@ -914,7 +914,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   const { encode, decode } = require('../dist/updates/keyboard');
   const { BOT_COMMANDS } = require('../dist/updates/commands');
 
-  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }]) {
+  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }, { kind: 'clear' }]) {
     assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
   }
   // The longest key configuration allows, beside a GUID.

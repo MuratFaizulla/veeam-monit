@@ -24,9 +24,25 @@ const KEYS = {
   servers: { label: '🖥 Серверы', does: 'выбрать сервер, который показывают живые темы' },
   digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
+  // Asked with no name, as these are, both offer the jobs that need somebody.
+  job: { label: '📦 Задание', does: 'карточка задания: запуски, ⚡ скорость, настройки' },
+  points: { label: '🗂 Точки', does: 'точки восстановления задания' },
   status: { label: '🩺 Статус', does: 'отвечает ли Veeam' },
+  topics: { label: '📑 Темы', does: 'темы форума, которые знает бот' },
+  clear: { label: '🧹 Очистить', does: 'убрать из General всё за двое суток, спросив сначала' },
   help: { label: '🤖 Помощь', does: 'все команды' },
 } as const satisfies Partial<Record<CommandName, { label: string; does: string }>>;
+
+/**
+ * The keys, a row each. `/menu` alone has none: the keyboard is the menu.
+ */
+const ROWS: readonly (readonly MenuCommand[])[] = [
+  ['servers'],
+  ['digest', 'check'],
+  ['job', 'points'],
+  ['status', 'topics'],
+  ['clear', 'help'],
+];
 
 /** The name of a command a key of the main menu stands for. */
 export type MenuCommand = keyof typeof KEYS;
@@ -51,11 +67,7 @@ const pairs = (labels: string[]): string[][] => {
  * the keyboard of everybody else in the group.
  */
 export const mainMenu = ({ selective = false } = {}): TelegramReplyKeyboard => ({
-  keyboard: keys(
-    [['servers'], ['digest', 'check'], ['status', 'help']].map((row) =>
-      row.map((name) => KEYS[name as MenuCommand].label),
-    ),
-  ),
+  keyboard: keys(ROWS.map((row) => row.map((name) => KEYS[name].label))),
   is_persistent: true,
   resize_keyboard: true,
   input_field_placeholder: 'Меню Veeam Monitor',
