@@ -1,25 +1,25 @@
-# Безопасность
+# Security
 
-## Как сообщить об уязвимости
+## Reporting a vulnerability
 
-Не описывайте уязвимость в задачах (issues) и коммитах. Напишите владельцу репозитория лично через [GitHub](https://github.com/MuratFaizulla): что нашли, как это воспроизвести и что это позволяет сделать. Ответ — в течение нескольких рабочих дней.
+Please do not describe a vulnerability in Issues or commits. Write to the repository owner privately through [GitHub](https://github.com/MuratFaizulla): what you found, how to reproduce it and what it lets an attacker do. You will get an answer within a few working days.
 
-Исправления выходят только для последней версии: на сервере всегда работает последний выпуск из ветки `main`.
+Fixes are made for the latest version only: the server always runs the latest release from the `main` branch.
 
-## Если утёк секрет
+## If a secret leaks
 
-Все секреты лежат в `.env` на сервере. После замены любого из них выполните `docker compose up -d --force-recreate` — обычный `restart` новый `.env` не перечитывает.
+All secrets live in `.env` on the server. After replacing any of them, run `docker compose up -d --force-recreate`; a plain `restart` does not re-read `.env`.
 
-| Что утекло | Что сделать |
+| What leaked | What to do |
 | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | В [@BotFather](https://t.me/BotFather): `/revoke` → выбрать бота → новый токен в `.env`. Старый перестаёт работать сразу. |
-| `VEEAM_MONITOR_PASSWORD` | Сменить пароль служебной учётной записи Veeam и записать новый в `.env`. |
-| `TELEGRAM_ADMIN_KEY` | `openssl rand -hex 32` → новое значение в `.env`. |
-| `TELEGRAM_WEBHOOK_SECRET` | То же. При работающем webhook бот зарегистрирует его заново при запуске. |
-| Сертификат Veeam сменился | Бот перестанет подключаться с ошибкой `CERT_NOT_PINNED` — это защита, а не сбой. Сверьте отпечаток нового сертификата с сервером Veeam и положите файл в `certs/`. |
+| `TELEGRAM_BOT_TOKEN` | In [@BotFather](https://t.me/BotFather): `/revoke`, pick the bot, put the new token in `.env`. The old one stops working at once. |
+| `VEEAM_MONITOR_PASSWORD` | Change the password of the Veeam service account and put the new one in `.env`. |
+| `TELEGRAM_ADMIN_KEY` | `openssl rand -hex 32`, then put the new value in `.env`. |
+| `TELEGRAM_WEBHOOK_SECRET` | The same. If the webhook is in use, the bot registers it again with the new secret when it starts. |
+| The Veeam certificate changed | The bot stops connecting with `CERT_NOT_PINNED`. This is the protection working, not a fault. Check the new certificate's fingerprint against the Veeam server and put the file in `certs/`. |
 
-Секрет, попавший в коммит, считается утёкшим, даже если коммит потом удалили: замените его.
+A secret that reached a commit counts as leaked even if the commit was later removed: replace it.
 
-## Что уже сделано
+## What is already in place
 
-Как устроена защита — доступ к боту, ключи, закрепление сертификатов, контейнер без привилегий — описано в разделе [«Security» README](README.md#security) и в [docs/](docs/README.md).
+How the bot is protected (access to the bot, keys, certificate pinning, an unprivileged container) is described in the [Security](README.md#security) section of the README and in [docs/](docs/README.md).
