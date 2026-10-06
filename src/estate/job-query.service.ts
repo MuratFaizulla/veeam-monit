@@ -8,9 +8,11 @@ import { MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service
 import { blameOf, sessionText } from '../veeam/session-text';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
-import { VeeamJob } from '../veeam/types';
+import { VeeamApiError } from '../veeam/api.error';
+import { VeeamJob, VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
 import { Answer } from './answer';
-import { retryWindowOf } from './runs';
+import { byLongest, MACHINE_LOGS, RunSpeed, speedOf } from './run-speed';
+import { retryWindowOf, runsOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
@@ -30,6 +32,13 @@ import { PointSizes, sizesOf } from './points-sizes';
  * retries more, and for the Run the limit cuts short, which the card leaves out.
  */
 const RECENT_SESSIONS = 30;
+
+/** Machine logs asked for at once when a card reads a run's speed. */
+const LOGS_AT_ONCE = 5;
+
+/** A log's lines, one line each: Veeam breaks its errors over several. */
+const titlesOf = (records: VeeamLogRecord[]): string[] =>
+  records.map((record) => (record.title ?? '').replace(/\s+/g, ' ').trim());
 
 /**
  * Reads one job on demand without changing the background monitor's health.
@@ -277,16 +286,25 @@ export class JobQueryService {
     ]);
 
     const { machines, excluded } = machinesOf(configured);
+    const retryWindowMs = retryWindowOf(configured?.schedule);
+    // The newest finished run's first attempt: a retry goes back only for the
+    // machines that failed, so it says nothing about the speed of the rest.
+    const attempt = runsOf(sessions.filter((session) => session.endedAt), retryWindowMs)[0]?.attempts.at(-1);
+    const [failedObjects, speed] = await Promise.all([
+      // Only while the job is actually broken: a recovered job's failures are
+      // already visible in its run list, and this costs another request.
+      isBadResult(job.result) ? this.failedObjects(sessions) : [],
+      this.speedOf(attempt, job),
+    ]);
     return {
       settings: settingsOf(configured, names),
       machines,
       excluded,
-      // Only while the job is actually broken: a recovered job's failures are
-      // already visible in its run list, and this costs another request.
-      failedObjects: isBadResult(job.result) ? await this.failedObjects(sessions) : [],
+      failedObjects,
+      speed,
       sessions,
       sessionsCut: sessions.length >= RECENT_SESSIONS,
-      retryWindowMs: retryWindowOf(configured?.schedule),
+      retryWindowMs,
       name: job.name,
       type: job.type,
       status: job.status,
@@ -377,6 +395,57 @@ export class JobQueryService {
       result,
       message: blames?.machine === name ? blames.reason : reason,
     }));
+  }
+
+  /**
+   * How fast one attempt went and what held it back, from what Veeam wrote
+   * while running it: the session's log and tasks, then the logs of its
+   * longest machines. Best effort: a card without it is still the answer.
+   */
+  private async speedOf(attempt: JobSession | undefined, job: Job): Promise<RunSpeed | undefined> {
+    if (!attempt?.id) return undefined;
+    const sessionId = attempt.id;
+    try {
+      const [log, tasks] = await Promise.all([this.reader.sessionLog(sessionId), this.tasksOf(sessionId)]);
+      const longest = tasks
+        .filter((task): task is VeeamTaskSession & { id: string } => Boolean(task.id))
+        .sort(byLongest)
+        .slice(0, MACHINE_LOGS);
+      const machineLogs = new Map<string, string[]>();
+      // A few at a time: thirty requests at once is a burst Veeam has no need of.
+      for (let from = 0; from < longest.length; from += LOGS_AT_ONCE) {
+        await Promise.all(
+          longest.slice(from, from + LOGS_AT_ONCE).map(async (task) => {
+            try {
+              machineLogs.set(task.id, titlesOf(await this.reader.taskLog(task.id)));
+            } catch (error) {
+              this.logger.debug(`No log for task ${task.id}: ${(error as Error).message}`);
+            }
+          }),
+        );
+      }
+      return speedOf({
+        startedAt: attempt.startedAt,
+        endedAt: attempt.endedAt,
+        log: titlesOf(log),
+        tasks,
+        machineLogs,
+        cloud: /clouddirector/i.test(job.type ?? ''),
+      });
+    } catch (error) {
+      this.logger.debug(`No speed for session ${sessionId}: ${(error as Error).message}`);
+      return undefined;
+    }
+  }
+
+  /** A session's tasks; none on a server whose REST API predates them (1.1), whose log still says the rest. */
+  private async tasksOf(sessionId: string): Promise<VeeamTaskSession[]> {
+    try {
+      return await this.reader.taskSessions(sessionId);
+    } catch (error) {
+      if (error instanceof VeeamApiError && error.upstreamStatus === 404) return [];
+      throw error;
+    }
   }
 
   /** Which objects of the newest bad session went wrong, and why. */

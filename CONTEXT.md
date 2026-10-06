@@ -455,6 +455,20 @@ Run in it may be cut short, and is left out rather than listed with fewer
 attempts than it had. Six sessions used to be read: one night of a job that
 retries, and half of the night before.
 
+The **Run speed** says how fast the newest finished Run went and what held it
+back, from its first Attempt: a retry goes back only for the machines that
+failed, and says nothing of the rest. The session's own log carries Veeam's
+verdict ("Load: Source 3% > Proxy 0% > Network 7% > Target 97%", "Primary
+bottleneck: Target"); each machine's log names the proxy and transport mode of
+every disk and the gateway that wrote the repository. OPS_Exchange's said its
+Full had been read over NBD by "VMware Backup Proxy" — the Veeam server itself
+— for days, which is what the card now says of it. The logs of the thirty
+longest machines are read, five at a time, only when somebody asks. In a
+vCloud job each vApp has a task of its own that reports its machines' bytes
+over again; it is known by its log or by a machine naming it its owner, and
+where one was not recognised the bytes are not added up at all rather than
+counted twice. Owned by `src/estate/run-speed.ts`.
+
 Every live slot is an aggregate; this is the only thing in the service that
 answers about a single job. The name is matched approximately — whole name,
 then containment, then every word of the query appearing somewhere — because

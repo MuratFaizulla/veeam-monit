@@ -1,6 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { dayOf, duration, Clock, everyLabel, momentOf, plural, stampOf } from '../telegram/time';
-import { chainWords, jobTypeWord, resultWord } from '../telegram/words';
+import { chainWords, jobTypeWord, rateWords, resultWord, sizeWords } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory, retentionFrom } from './evidence';
@@ -8,6 +8,7 @@ import { describeFulls, fullSchedulesOf } from './full-schedule';
 import { iconOf, isBadResult } from './job-state';
 import { retentionWords } from './point-verdict';
 import { runsOf } from './runs';
+import { RunSpeed, Stage } from './run-speed';
 import { describeRetry, describeSchedule } from './schedule-planner';
 
 /**
@@ -125,6 +126,8 @@ export interface JobCard {
   pointsUnavailable?: string;
   /** A replica or the like, whose points Veeam keeps outside the list the scan reads. */
   pointsElsewhere?: boolean;
+  /** How fast the newest finished run went and what held it back; absent when Veeam did not say. */
+  speed?: RunSpeed;
 }
 
 /* ------------------------------------------------------------------ *
@@ -397,6 +400,8 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
     lines.push(...more(card.failedObjects.length, FAILURES_SHOWN));
   }
 
+  if (card.speed) lines.push('', ...speedLines(card.speed, clock));
+
   if (card.settings) {
     const settings = [
       label('Расписание', card.settings.schedule),
@@ -466,4 +471,133 @@ export const renderJobCard = (card: JobCard, clock: Clock): string => {
   }
 
   return lines.join('\n');
+};
+
+/* ------------------------------------------------------------------ *
+ * How fast the last run went
+ * ------------------------------------------------------------------ */
+
+/** Veeam's names for its stages, which are what its console and logs say. */
+const STAGE_NAMES: Record<Stage, string> = { source: 'Source', proxy: 'Proxy', network: 'Network', target: 'Target' };
+
+/** What each stage being the slowest means, and so where to look. */
+const STAGE_WORDS: Record<Stage, string> = {
+  source: 'медленно читаются диски ВМ: хранилище ВМ, хост или режим NBD',
+  proxy: 'прокси не хватает процессора',
+  network: 'узкая сеть между прокси и репозиторием',
+  target: 'репозиторий или его шлюз не успевают писать',
+};
+
+/** How the proxies reached the disks. A mode this does not know is shown as Veeam wrote it. */
+const MODE_WORDS: Record<string, string> = {
+  nbd: 'NBD (по сети через ESXi)',
+  hotadd: 'HotAdd',
+  san: 'Direct SAN',
+  nfs: 'Direct NFS',
+};
+
+/**
+ * The proxy role of the Veeam server itself, by the name Veeam gives it. Said
+ * outright: OPS_Exchange's 15.5 TB went through it for five days, and the name
+ * does not say it is the backup server.
+ */
+const BUILT_IN_PROXY = 'VMware Backup Proxy';
+
+const SLOWEST_SHOWN = 3;
+const PROXIES_SHOWN = 4;
+
+/**
+ * A few lines: what kind of run, how much in how long, the stage that held it
+ * back and what that means, how busy each stage was, and the path the data
+ * took. The machines that took longest close it — one of them is often why
+ * the whole job ran into the morning.
+ */
+const speedLines = (speed: RunSpeed, clock: Clock): string[] => {
+  const lines = [`<b>⚡ Скорость запуска ${momentOf(speed.startedAt, clock)}</b>`];
+
+  const kind =
+    speed.fulls > 0 && speed.increments > 0
+      ? `Full у ${speed.fulls} ВМ, инкремент у ${speed.increments}`
+      : speed.fulls > 0
+        ? 'Full'
+        : speed.increments > 0
+          ? 'Инкремент'
+          : undefined;
+  const { read, took } = speed;
+  const volume =
+    read !== undefined && took
+      ? `прочитано ${sizeWords(read)} за ${duration(took)} — ${rateWords(read / (took / 1000))}`
+      : took
+        ? `за ${duration(took)}`
+        : undefined;
+  const sent = speed.transferred === undefined ? undefined : `передано ${sizeWords(speed.transferred)}`;
+  const summary = [kind, volume, sent].filter((part): part is string => part !== undefined).join(' · ');
+  if (summary) lines.push(summary.charAt(0).toUpperCase() + summary.slice(1));
+
+  const { load, bottleneck } = speed;
+  if (bottleneck) {
+    const busy = load ? ` ${load[bottleneck]}%` : '';
+    lines.push(`Узкое место: <b>${STAGE_NAMES[bottleneck]}${busy}</b> — ${STAGE_WORDS[bottleneck]}`);
+  }
+  if (load) {
+    const stages = (Object.keys(STAGE_NAMES) as Stage[]).map((stage) => `${STAGE_NAMES[stage]} ${load[stage]}%`);
+    lines.push(`Загрузка: ${stages.join(' · ')}`);
+  }
+
+  const reading = readingWords(speed);
+  if (reading) lines.push(reading);
+  if (speed.gateways.length > 0) lines.push(`Запись: через шлюз ${escapeHtml(speed.gateways.join(', '))}`);
+
+  if (speed.machines > 1 && speed.slowest.length > 0) {
+    const slowest = speed.slowest
+      .slice(0, SLOWEST_SHOWN)
+      .map((machine) => `${escapeHtml(machine.name)} — ${duration(machine.ms)}`);
+    lines.push(`Дольше всех: ${slowest.join(' · ')}`);
+  }
+  return lines;
+};
+
+/** "Чтение: NBD (по сети через ESXi), прокси 192.0.2.24–27", or nothing when no disk was named. */
+const readingWords = (speed: RunSpeed): string | undefined => {
+  const modes = [...speed.modes.entries()].sort((a, b) => b[1] - a[1]);
+  const word = (mode: string): string => MODE_WORDS[mode] ?? mode.toUpperCase();
+  const parts = [
+    modes.length === 1
+      ? word(modes[0][0])
+      : modes.map(([mode, disks]) => `${word(mode)} — ${disks} ${plural(disks, 'диск', 'диска', 'дисков')}`).join(', '),
+    speed.proxies.length > 0 ? `прокси ${proxiesWords(speed.proxies)}` : '',
+  ].filter(Boolean);
+  if (parts.length === 0) return undefined;
+  // Said, because "NBD" read off the thirty longest machines is not every machine.
+  const partial = speed.logged < speed.machines ? ` <i>(по ${speed.logged} самым долгим ВМ из ${speed.machines})</i>` : '';
+  return `Чтение: ${parts.join(', ')}${partial}`;
+};
+
+/** "192.0.2.20–22, 24, VMware Backup Proxy (сам сервер Veeam)": addresses of one network folded together. */
+const proxiesWords = (names: string[]): string => {
+  const networks = new Map<string, number[]>();
+  const others: string[] = [];
+  for (const name of names) {
+    const address = /^(\d+\.\d+\.\d+)\.(\d+)$/.exec(name);
+    if (address) networks.set(address[1], [...(networks.get(address[1]) ?? []), Number(address[2])]);
+    else others.push(name === BUILT_IN_PROXY ? `${name} (сам сервер Veeam)` : name);
+  }
+  const folded = [...networks.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([network, hosts]) => `${network}.${spansOf(hosts.sort((a, b) => a - b))}`);
+  const all = [...folded, ...others.sort()];
+  const shown = all.slice(0, PROXIES_SHOWN).map(escapeHtml).join(', ');
+  return all.length > PROXIES_SHOWN ? `${shown} и ещё ${all.length - PROXIES_SHOWN}` : shown;
+};
+
+/** "20–22, 24" from 20, 21, 22, 24. */
+const spansOf = (sorted: number[]): string => {
+  const spans: string[] = [];
+  let from = sorted[0];
+  for (let i = 1; i <= sorted.length; i += 1) {
+    if (sorted[i] === sorted[i - 1] + 1) continue;
+    spans.push(from === sorted[i - 1] ? `${from}` : `${from}–${sorted[i - 1]}`);
+    from = sorted[i];
+  }
+  return spans.join(', ');
 };

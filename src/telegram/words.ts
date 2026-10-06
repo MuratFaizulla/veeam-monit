@@ -111,3 +111,10 @@ export const sizeWords = (bytes: number): string => {
   const shown = value < 100 ? value.toFixed(1).replace(/\.0$/, '') : String(Math.round(value));
   return `${shown} ${SIZE_UNITS[unit]}`;
 };
+
+/** Bytes a second, as Veeam's console shows a processing rate: "66 МБ/с", "1.2 ГБ/с". */
+export const rateWords = (bytesPerSecond: number): string => {
+  const mb = Math.max(0, bytesPerSecond) / 1024 ** 2;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1).replace(/\.0$/, '')} ГБ/с`;
+  return `${mb < 10 ? mb.toFixed(1).replace(/\.0$/, '') : Math.round(mb)} МБ/с`;
+};

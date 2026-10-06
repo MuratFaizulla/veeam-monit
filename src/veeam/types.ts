@@ -9,7 +9,9 @@
  *   GET /api/v1/jobs, /api/v1/jobs/{id}                     — VeeamJob
  *   GET /api/v1/sessions                                    — VeeamSession
  *   GET /api/v1/sessions/{id}/taskSessions                  — VeeamTaskSession
+ *   GET /api/v1/sessions/{id}/logs, /api/v1/taskSessions/{id}/logs — VeeamLogRecord
  *   GET /api/v1/backups, /api/v1/restorePoints              — VeeamBackup, VeeamRestorePoint
+ *   GET /api/v1/backups/{id}/backupFiles                    — VeeamBackupFile
  *   GET /api/v1/backupInfrastructure/repositories/states    — VeeamRepositoryState
  *   GET /api/v1/backupInfrastructure/repositories, /proxies — VeeamNamedResource
  * plus POST /api/oauth2/token for VeeamTokenResponse. Every one of them is a
@@ -75,9 +77,13 @@ export interface VeeamSession {
 }
 
 /**
- * One record of GET /api/v1/sessions/{id}/logs. On a server whose REST API
- * predates task sessions (1.1), "Processing <machine>" records are the only
- * place a machine's outcome is written down.
+ * One record of GET /api/v1/sessions/{id}/logs or /api/v1/taskSessions/{id}/logs.
+ *
+ * On a server whose REST API predates task sessions (1.1), "Processing
+ * <machine>" records are the only place a machine's outcome is written down.
+ * A session's log also ends with Veeam's verdict on its speed — "Load: Source
+ * 3% > Proxy 0% > Network 7% > Target 97%", "Primary bottleneck: Target" —
+ * and a task's names the proxy and transport mode of every disk.
  */
 export interface VeeamLogRecord {
   /** `Succeeded`, `Warning`, `Failed` or `None`. */
@@ -101,6 +107,11 @@ export interface VeeamTaskSession {
   type?: string;
   state?: string;
   status?: string;
+  /** `Full`, `Increment`, or `None` when the machine was never read. */
+  algorithm?: string;
+  /** Local time without an offset, unlike a session's. */
+  creationTime?: string;
+  endTime?: string;
   /** Per-object outcome: this is where "which machine failed, and why" lives. */
   result?: {
     result?: string;

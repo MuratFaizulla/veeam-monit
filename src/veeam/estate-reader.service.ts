@@ -22,6 +22,7 @@ import {
 const JOB_STATES = '/api/v1/jobs/states';
 const JOBS = '/api/v1/jobs';
 const SESSIONS = '/api/v1/sessions';
+const TASK_SESSIONS = '/api/v1/taskSessions';
 const BACKUPS = '/api/v1/backups';
 const RESTORE_POINTS = '/api/v1/restorePoints';
 const REPOSITORY_STATES = '/api/v1/backupInfrastructure/repositories/states';
@@ -144,15 +145,23 @@ export class VeeamEstateReader {
     } catch (error) {
       if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;
     }
-    const path = `${SESSIONS}/${encodeURIComponent(sessionId)}/logs`;
-    const log = await this.get<{ records?: VeeamLogRecord[]; data?: VeeamLogRecord[] }>(path, { limit: 1000 });
     const results = new Map<string, MachineResult>();
-    for (const record of log.records ?? log.data ?? []) {
+    for (const record of await this.sessionLog(sessionId)) {
       const { machine, reason } = machineLine(record.title ?? '');
       const result = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
       if (machine && result) results.set(machine, { name: machine, result, reason });
     }
     return [...results.values()];
+  }
+
+  /** What Veeam wrote down while running one session, in order. */
+  sessionLog(sessionId: string): Promise<VeeamLogRecord[]> {
+    return this.log(`${SESSIONS}/${encodeURIComponent(sessionId)}/logs`);
+  }
+
+  /** What Veeam wrote down while processing one machine of a session, in order. */
+  taskLog(taskSessionId: string): Promise<VeeamLogRecord[]> {
+    return this.log(`${TASK_SESSIONS}/${encodeURIComponent(taskSessionId)}/logs`);
   }
 
   /** One job's whole configuration — storage and machines included, which the collection leaves out. */
@@ -207,6 +216,15 @@ export class VeeamEstateReader {
 
   private get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
     return this.authorized<T>({ method: 'GET', path, params });
+  }
+
+  /**
+   * A log, which Veeam answers as `records` rather than `data`; 1.1 builds
+   * may use either. A thousand records is more than any one session writes.
+   */
+  private async log(path: string): Promise<VeeamLogRecord[]> {
+    const log = await this.get<{ records?: VeeamLogRecord[]; data?: VeeamLogRecord[] }>(path, { limit: 1000 });
+    return log.records ?? log.data ?? [];
   }
 
   private pages<T>(path: string, params: Record<string, unknown> = {}, limit?: number): Promise<T[]> {

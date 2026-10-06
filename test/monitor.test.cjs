@@ -710,6 +710,188 @@ test('the reason is said once: at length by object, or briefly by run', async ()
 });
 
 /* ------------------------------------------------------------------ *
+ * What held the last run back
+ * ------------------------------------------------------------------ */
+
+const GB = 1024 ** 3;
+
+/** A machine of a run: its task and the lines its own log would carry. */
+const machineTask = (id, name, over = {}) => ({
+  id, name, type: 'Backup', algorithm: 'Full', result: { result: 'Success' },
+  progress: { bottleneck: 'Target', duration: '01:00:00', readSize: 100 * GB, transferredSize: 40 * GB },
+  ...over,
+});
+
+const diskLog = (proxy, mode, owner) => [
+  ...(owner ? [`VM owner: ${owner}`] : []),
+  'Using gateway veeam01.example.com for repository BKP07',
+  `Using backup proxy ${proxy} for disk Hard disk 1 [${mode}]`,
+  'Busy: Source 3% > Proxy 0% > Network 7% > Target 97%',
+];
+
+/** CUST_HOUSING_1 on 3 October: a vCloud job, its vApp's task beside its machines'. */
+const cloudRun = (over = {}) => ({
+  startedAt: '2026-10-03T21:00:23+05:00',
+  endedAt: '2026-10-04T01:47:33+05:00',
+  log: ['Job started at 03.10.2026 21:00:23', 'Load: Source 3% > Proxy 0% > Network 7% > Target 97%', 'Primary bottleneck: Target'],
+  tasks: [
+    machineTask('vapp', 'housing_city_vApp', { progress: { duration: '04:44:52', readSize: 300 * GB, transferredSize: 120 * GB } }),
+    machineTask('m1', 'BDSRV1', { progress: { duration: '04:40:31', readSize: 100 * GB, transferredSize: 40 * GB } }),
+    machineTask('m2', 'WEB2', { progress: { duration: '02:46:30', readSize: 100 * GB, transferredSize: 40 * GB } }),
+    machineTask('m3', 'AD01', { algorithm: 'Increment', progress: { duration: '00:30:07', readSize: 100 * GB, transferredSize: 40 * GB } }),
+  ],
+  machineLogs: new Map([
+    ['vapp', ['vApp processing started at 03.10.2026 21:01:31', 'Waiting for all VM backup tasks to complete to finish vApp backup']],
+    ['m1', diskLog('192.0.2.20', 'nbd', 'housing_city_vApp')],
+    ['m2', diskLog('192.0.2.21', 'hotadd', 'housing_city_vApp')],
+    ['m3', diskLog('VMware Backup Proxy', 'nbd', 'housing_city_vApp')],
+  ]),
+  cloud: true,
+  ...over,
+});
+
+test('a run is read from its logs: the stage that held it back, the path its data took', () => {
+  const { speedOf } = require('../dist/estate/run-speed');
+  const speed = speedOf(cloudRun());
+
+  assert.deepEqual(speed.load, { source: 3, proxy: 0, network: 7, target: 97 });
+  assert.equal(speed.bottleneck, 'target');
+  assert.equal(speed.took, (4 * 3600 + 47 * 60 + 10) * 1000);
+  // The vApp's task reports its machines' bytes over again.
+  assert.equal(speed.machines, 3);
+  assert.equal(speed.read, 300 * GB);
+  assert.equal(speed.transferred, 120 * GB);
+  assert.deepEqual([speed.fulls, speed.increments], [2, 1]);
+  assert.deepEqual(Object.fromEntries(speed.modes), { nbd: 2, hotadd: 1 });
+  assert.deepEqual(speed.proxies, ['192.0.2.20', '192.0.2.21', 'VMware Backup Proxy']);
+  assert.deepEqual(speed.gateways, ['veeam01.example.com']);
+  assert.deepEqual(speed.slowest.map((machine) => machine.name), ['BDSRV1', 'WEB2', 'AD01'], 'the vApp is no machine');
+});
+
+test('a vApp nobody recognised costs the sum, never a doubled one', () => {
+  const { speedOf } = require('../dist/estate/run-speed');
+  // Its own log unread, and no machine's log naming it its owner.
+  const speed = speedOf(cloudRun({ machineLogs: new Map([['m1', diskLog('192.0.2.20', 'nbd')]]) }));
+  assert.equal(speed.read, undefined);
+  assert.equal(speed.transferred, undefined);
+  assert.equal(speed.bottleneck, 'target', 'the rest is still said');
+  assert.equal(speed.logged, 1);
+});
+
+test('without Veeam naming a stage, the busiest one is the bottleneck; with nothing read, nothing is said', () => {
+  const { speedOf } = require('../dist/estate/run-speed');
+  const unnamed = speedOf(cloudRun({ log: ['Load: Source 85% > Proxy 7% > Network 28% > Target 30%'] }));
+  assert.equal(unnamed.bottleneck, 'source');
+
+  // OPS_edge_vCenters on 6 October: vCenter unreachable, every machine read 0 bytes.
+  const nothing = speedOf({
+    startedAt: '2026-10-06T06:04:26+05:00', endedAt: '2026-10-06T06:16:11+05:00',
+    log: ['Job finished with error at 06.10.2026 6:16:11'],
+    tasks: [machineTask('t', 'vc01', { algorithm: 'None', progress: { bottleneck: 'NotDefined', readSize: 0, transferredSize: 0 } })],
+    machineLogs: new Map(), cloud: false,
+  });
+  assert.equal(nothing, undefined);
+});
+
+test('the card says what held the run back and what that means, in a few lines', () => {
+  const { speedOf } = require('../dist/estate/run-speed');
+  const { renderJobCard } = require('../dist/estate/job-card');
+  const card = renderJobCard(
+    {
+      name: 'CUST_HOUSING_1', type: 'CloudDirectorBackup', disabled: false, lastResult: 'success',
+      sessions: [], sessionsCut: false, retryWindowMs: 0, failedObjects: [], machines: [], excluded: 0,
+      speed: speedOf(cloudRun()),
+    },
+    { now: new Date('2026-10-06T10:00:00+05:00'), timezone: 'Asia/Qyzylorda' },
+  );
+  const block = card.split('\n\n').find((part) => part.startsWith('<b>⚡'));
+  assert.equal(block, [
+    '<b>⚡ Скорость запуска 03.10 в 21:00</b>',
+    'Full у 2 ВМ, инкремент у 1 · прочитано 300 ГБ за 4 ч 47 мин — 18 МБ/с · передано 120 ГБ',
+    'Узкое место: <b>Target 97%</b> — репозиторий или его шлюз не успевают писать',
+    'Загрузка: Source 3% · Proxy 0% · Network 7% · Target 97%',
+    'Чтение: NBD (по сети через ESXi) — 2 диска, HotAdd — 1 диск, прокси 192.0.2.20–21, VMware Backup Proxy (сам сервер Veeam)',
+    'Запись: через шлюз veeam01.example.com',
+    'Дольше всех: BDSRV1 — 4 ч 40 мин · WEB2 — 2 ч 46 мин · AD01 — 30 мин',
+  ].join('\n'));
+});
+
+test('proxies of one network are folded into ranges', () => {
+  const { speedOf } = require('../dist/estate/run-speed');
+  const { renderJobCard } = require('../dist/estate/job-card');
+  const proxies = ['192.0.2.27', '192.0.2.20', '192.0.2.22', '192.0.2.21', '192.0.2.24', '198.51.100.162'];
+  const speed = speedOf(cloudRun({
+    cloud: false,
+    tasks: proxies.map((proxy, i) => machineTask(`t${i}`, `vm${i}`)),
+    machineLogs: new Map(proxies.map((proxy, i) => [`t${i}`, diskLog(proxy, 'nbd')])),
+  }));
+  const card = renderJobCard(
+    { name: 'J', disabled: false, lastResult: 'success', sessions: [], sessionsCut: false, retryWindowMs: 0,
+      failedObjects: [], machines: [], excluded: 0, speed },
+    { now: new Date('2026-10-06T10:00:00+05:00'), timezone: 'UTC' },
+  );
+  assert.match(card, /^Чтение: NBD \(по сети через ESXi\), прокси 192\.0\.2\.20–22, 24, 27, 198\.51\.100\.162$/mu);
+});
+
+/** A job whose one finished run has its logs and tasks where /job will look for them. */
+const timedJob = (taskRoutes) =>
+  monitorWorld({}, [job('1', 'OPS_Billing_Prod', 'Success')], {
+    '/api/v1/sessions': { data: [{
+      id: 'night', jobId: '1', creationTime: '2026-10-01T22:00:00+05:00', endTime: '2026-10-01T22:37:00+05:00',
+      result: { result: 'Success' },
+    }] },
+    '/api/v1/sessions/night/logs': { records: [
+      { title: 'Load: Source 14% > Proxy 8% > Network 12% > Target 89%' },
+      { title: 'Primary bottleneck: Target' },
+    ] },
+    ...taskRoutes,
+  });
+
+test('/job reads the last run\'s logs and says what held it back', async () => {
+  const w = timedJob({
+    '/api/v1/sessions/night/taskSessions': { data: [
+      machineTask('t1', 'app-prod-svc-01', { algorithm: 'Increment', progress: { duration: '00:35:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
+      machineTask('t2', 'app-prod-web-02', { algorithm: 'Increment', progress: { duration: '00:29:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
+    ] },
+    '/api/v1/taskSessions/t1/logs': { records: diskLog('192.0.2.21', 'hotadd').map((title) => ({ title })) },
+    '/api/v1/taskSessions/t2/logs': { records: diskLog('192.0.2.22', 'hotadd').map((title) => ({ title })) },
+  });
+
+  await said(w, '/job billing');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /^<b>⚡ Скорость запуска .*<\/b>\nИнкремент · прочитано 140 ГБ за 37 мин — 65 МБ\/с · передано 40 ГБ$/mu);
+  assert.match(reply, /^Узкое место: <b>Target 89%<\/b> — репозиторий или его шлюз не успевают писать$/mu);
+  assert.match(reply, /^Чтение: HotAdd, прокси 192\.0\.2\.21–22$/mu);
+  assert.match(reply, /^Дольше всех: app-prod-svc-01 — 35 мин · app-prod-web-02 — 29 мин$/mu);
+});
+
+test('a server without task sessions still says the stage, from the session\'s own log', async () => {
+  const { VeeamApiError } = require('../dist/veeam/api.error');
+  // veeam02, REST API 1.1.
+  const w = timedJob({ '/api/v1/sessions/night/taskSessions': () => { throw new VeeamApiError('Not found', 404); } });
+
+  await said(w, '/job billing');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /^Узкое место: <b>Target 89%<\/b>/mu);
+  assert.doesNotMatch(reply, /Чтение:/);
+});
+
+test('a log Veeam would not give leaves the card as it was', async () => {
+  const w = timedJob({
+    '/api/v1/sessions/night/logs': () => { throw new Error('socket hang up'); },
+    '/api/v1/sessions/night/taskSessions': { data: [] },
+  });
+
+  await said(w, '/job billing');
+
+  const reply = w.api.sent().at(-1).text;
+  assert.match(reply, /OPS_Billing_Prod/);
+  assert.doesNotMatch(reply, /⚡/u);
+});
+
+/* ------------------------------------------------------------------ *
  * The menu and the buttons
  * ------------------------------------------------------------------ */
 
