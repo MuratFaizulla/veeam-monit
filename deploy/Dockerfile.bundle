@@ -1,0 +1,9 @@
+# The image deploy/offline.sh builds on a server that reaches neither npm nor
+# Docker Hub: the last stage of ../Dockerfile, with dist and the production
+# node_modules made on another machine and only copied here. The base is that
+# stage without the app — Node.js, the zone database, the user, the health
+# check — made once on the server by the script.
+FROM veeam-telegram-monitor:base
+COPY --chown=node:node package.json ./
+COPY --chown=node:node node_modules ./node_modules
+COPY --chown=node:node dist ./dist

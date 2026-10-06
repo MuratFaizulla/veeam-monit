@@ -94,4 +94,19 @@ docker compose up -d --build
 
 Если у сервера нет доступа к Docker Hub, базовый образ `node:22-alpine` загружают вручную (`docker load`). Не заменяйте его потом через `docker pull`.
 
+**Сервер без интернета** (нет ни GitHub, ни npm, ни Docker Hub). Новая версия собирается на компьютере с интернетом и переносится готовой. Из корня проекта, в Git Bash или Linux, после коммита:
+
+```bash
+deploy/offline.sh user@host            # папка проекта на сервере по умолчанию — ~/veeam-monit
+```
+
+Скрипт собирает `dist` и устанавливает библиотеки здесь, отправляет коммит и архив на сервер по SSH. Там образ собирается простым копированием поверх базы, которую сервер уже держит (Node.js и часовые пояса), проверяются настройки и перезапускается контейнер. Обновления библиотек проходят так же. Прошлый образ остаётся как `veeam-telegram-monitor:before-<коммит>`; вернуться к нему:
+
+```bash
+docker tag veeam-telegram-monitor:before-<коммит> veeam-telegram-monitor:local
+docker compose up -d --no-build
+```
+
+На таком сервере не запускайте `docker compose up -d --build`: сборка пойдёт за пакетами в интернет и упадёт.
+
 Если оповещения не приходят: `/status` в General, журнал `logs/backend.log`, затем `POST /api/telegram/test` — см. [http-api.md](http-api.md).
