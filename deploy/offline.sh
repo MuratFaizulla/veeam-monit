@@ -45,6 +45,8 @@ echo "Shipping $rev to $target:$remote"
 git push --quiet "$target:$remote" "HEAD:refs/heads/incoming"
 scp -q "$work/app.tgz" "$target:/tmp/veeam-monit-$rev.tgz"
 
+# The rest is read by the server's bash from stdin, so nothing below may read
+# stdin itself: `docker compose run` did, and swallowed the script after it.
 ssh "$target" bash -s -- "$remote" "$rev" <<'REMOTE'
 set -euo pipefail
 cd "$1"
@@ -66,12 +68,12 @@ docker tag veeam-telegram-monitor:local "veeam-telegram-monitor:before-$rev"
 docker build -q -t veeam-telegram-monitor:local "$build" >/dev/null
 
 # Settings the new code refuses would stop it at start; the old one keeps running instead.
-if ! docker compose run --rm --no-deps -T monitor node -e "require('./dist/config/configuration').readConfig(process.env)"; then
+if ! docker compose run --rm --no-deps -T monitor node -e "require('./dist/config/configuration').readConfig(process.env)" </dev/null; then
   docker tag "veeam-telegram-monitor:before-$rev" veeam-telegram-monitor:local
   echo "The settings in .env do not suit $rev; the running version was left as it is." >&2
   exit 1
 fi
-docker compose up -d --no-build
+docker compose up -d --no-build </dev/null
 
 for _ in $(seq 1 24); do
   health=$(docker inspect -f '{{.State.Health.Status}}' veeam-telegram-monitor)
