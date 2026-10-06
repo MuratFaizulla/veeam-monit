@@ -1,82 +1,82 @@
-# История изменений
+# Changelog
 
-Все заметные изменения проекта. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [семантические](https://semver.org/lang/ru/): исправление поднимает последнюю цифру, новая возможность — среднюю, несовместимое изменение настроек или поведения — первую.
+Every notable change to the project. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are [semantic](https://semver.org/): a fix raises the last number, a new feature the middle one, an incompatible change of settings or behaviour the first.
 
-## [Не выпущено]
+The bot speaks Russian, so the quotes of its messages and buttons below stay in Russian, with their meaning in English.
 
-### Добавлено
+## [Unreleased]
 
-- `/points часть имени` — точки восстановления одного задания, как их видит 🗂: по расписанию ли оно, на сколько моментов можно откатить каждую ВМ, текущая цепочка, Active Full по расписанию и пропущенные даты, хранение. Без имени предлагает задания, которым нужно внимание. Под ответом — «🔄 Обновить» и «📋 Карточка», под карточкой `/job` — «🗂 Точки».
-- В `/points` — календарь последних пяти недель по дням: █ Full, ▒ инкремент, · нет точки. Дыры и дни Active Full видны сразу.
-- В `/points` — сколько весят точки: «Full 03.10: 856 ГБ данных → 523 ГБ на диске», обычный инкремент и его доля от Full, и сколько задание занимает на диске всего. Если новый Full ещё пишется, так и сказано. Размеры читаются из файлов бэкапа в момент вопроса; часовой скан не нагружается.
-- Своя учётная запись для сервера Veeam вне домена: `VEEAM_MONITOR_USERNAME_<ИМЯ>` и `VEEAM_MONITOR_PASSWORD_<ИМЯ>`. Остальные серверы ходят под общей, как прежде.
-- В карточке `/job` — ⚡ скорость последнего запуска: сколько прочитано и за сколько, узкое место по Veeam («Target 97% — репозиторий или его шлюз не успевают писать») и загрузка всех четырёх этапов, режим чтения дисков (NBD или HotAdd, с числом дисков, если вперемешку), прокси, шлюз репозитория и самые долгие ВМ. Прокси на самом сервере Veeam так и назван: «VMware Backup Proxy (сам сервер Veeam)». Читается по запросу из логов запуска; на сервере с REST API 1.1 — только узкое место и загрузка.
+### Added
 
-- `deploy/offline.sh user@host` — выложить новую версию на сервер без интернета: сборка и библиотеки — на компьютере с интернетом, на сервер по SSH уходят коммит и готовый архив, образ там собирается копированием поверх базы. Прошлый образ остаётся для отката.
+- `/points part of a name`: one job's restore points as 🗂 sees them: whether it keeps to its schedule, how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention. Without a name it offers the jobs that need attention. Under the answer are «🔄 Обновить» (refresh) and «📋 Карточка» (card); under the `/job` card, «🗂 Точки» (points).
+- In `/points`, a day-by-day calendar of the last five weeks: █ Full, ▒ increment, · no point. Gaps and Active Full days show at a glance.
+- In `/points`, how much the points weigh: «Full 03.10: 856 ГБ данных → 523 ГБ на диске» (856 GB of data, 523 GB on disk), a typical increment and its share of a Full, and how much the job takes up on disk in all. If a new Full is still being written, it says so. Sizes are read from the backup files when asked; the hourly scan does no extra work.
+- An account of its own for a Veeam server outside the domain: `VEEAM_MONITOR_USERNAME_<NAME>` and `VEEAM_MONITOR_PASSWORD_<NAME>`. The other servers use the shared one, as before.
+- On the `/job` card, ⚡ the speed of the last run: how much was read and in how long, the bottleneck as Veeam reports it («Target 97% — репозиторий или его шлюз не успевают писать»: the repository or its gateway cannot write fast enough) and the load of all four stages, the disk transport mode (NBD or HotAdd, with the number of disks when mixed), the proxies, the repository gateway and the machines that took longest. A proxy on the Veeam server itself is called that: «VMware Backup Proxy (сам сервер Veeam)». Read on request from the run's logs; on a server with REST API 1.1, only the bottleneck and the load.
+- `deploy/offline.sh user@host` ships a new version to a server without internet access: the build and the libraries are made on a machine with internet access, the commit and a ready archive go to the server over SSH, and the image is built there by copying on top of a base. The previous image is kept for rolling back.
 
-### Изменено
+### Changed
 
-- Проект открыт по лицензии [Apache 2.0](LICENSE) вместо закрытой; README написан на английском. Из истории репозитория убраны адреса, имена серверов, заданий и клиентов конкретной установки.
-- В меню под полем ввода — все команды: добавлены «📦 Задание» и «🗂 Точки» (без имени предлагают задания, которым нужно внимание), «📑 Темы» и «🧹 Очистить». «Очистить» сначала спрашивает подтверждение кнопкой: клавишу задеть легче, чем набрать `/clear`. Новое меню бот сам поставит в General после обновления.
-- 🗂 сокращён до списка заданий, которым нужно внимание, по строке на каждое: что не так и дата, которую искать в Veeam («пропущено 3 запуска · последний бэкап 02.10 в 03:32», «пропущен 03.10 · последний Full 26.09»). Разделы «Нет ни одной точки», «Пропускают бэкапы», «Пропущен Full по расписанию» (больше пропусков — выше) и «Мало точек, чтобы судить»; задания по расписанию — одна строка с их числом. Пояснения, итоги и подробности задания — цепочка, хранение, точки на ВМ, расписание Full — убраны: всё это есть в `/points` по каждому заданию. Обычно одно сообщение; если список длиннее, сообщения пронумерованы.
-- Задания, у которых по расписанию должны быть точки, а нет ни одной, 🗂 называет по именам, а не числом в итогах.
-- В карточке задания — строка «Цепочка» и ежемесячный Full, который раньше не показывался вовсе; режим Full назван так же, как в `/points`.
+- The project is open under the [Apache 2.0](LICENSE) licence instead of a proprietary one; the README, the documentation, SECURITY.md and this changelog are in English. The repository's history no longer holds the addresses, or the names of servers, jobs and customers, of a real installation.
+- The menu under the input field holds every command: added «📦 Задание» (job) and «🗂 Точки» (points), which without a name offer the jobs that need attention, «📑 Темы» (topics) and «🧹 Очистить» (clear). «Очистить» asks for confirmation with a button first: a key is easier to hit by accident than `/clear` is to type. The bot posts the new menu to General by itself after the update.
+- 🗂 is cut down to a list of the jobs that need attention, one line each: what is wrong and the date to look for in Veeam («пропущено 3 запуска · последний бэкап 02.10 в 03:32»: 3 runs missed, last backup on 02.10 at 03:32; «пропущен 03.10 · последний Full 26.09»: 03.10 missed, last Full on 26.09). Sections for jobs with no point at all, jobs missing backups, jobs missing a scheduled Full (more misses rank higher) and jobs with too few points to judge; the jobs that keep to their schedule are one line with their number. Explanations, totals and job details (chain, retention, points per machine, Full schedule) are gone: all of that is in `/points` for each job. Usually one message; if the list is longer, the messages are numbered.
+- Jobs that should have points by their schedule but have none are named in 🗂, not counted in the totals.
+- On the job card, a «Цепочка» (chain) line and the monthly Full, which used not to show at all; the Full mode is named the same way as in `/points`.
 
-### Исправлено
+### Fixed
 
-- Бот сам блокировал служебную учётную запись: после отказа в пароле он пробовал войти каждую минуту, и Veeam блокировал учётку на 15 минут, потом на 30. Теперь после отказа следующий вход — не раньше чем через 15 минут, а если Veeam назвал срок блокировки, то после него. В оповещении сказано, когда будет следующая попытка. Перезапуск бота пробует сразу.
-
-- Продолжение 🗂 оказывалось в теме выше начала: сообщения темы заменялись каждые 36 часов независимо друг от друга. Теперь, если одно публикуется заново, следующие за ним — тоже.
+- The bot locked the service account out itself: after the password was refused it tried to sign in every minute, and Veeam locked the account for 15 minutes, then for 30. Now, after a refusal, the next sign-in waits at least 15 minutes, or until the lockout Veeam named is over. The alert says when the next attempt will be. Restarting the bot tries at once.
+- The continuation of 🗂 ended up above its beginning in the topic: the topic's messages were replaced every 36 hours independently of each other. Now, when one is posted again, the ones after it are too.
 
 ## [1.0.0] — 2026-09-30
 
-Первый выпуск. На сервере бот работает с 28 сентября 2026 года; всё, что сделано до этого дня, вошло сюда.
+The first release. The bot has been running on the server since 28 September 2026; everything done before that day went into it.
 
-### Оповещения
+### Alerts
 
-- Сбой, предупреждение и восстановление задания. В строке «Попытка 1 из 4» сказано, что будет дальше: «Veeam повторит ≈ сегодня в 03:54», «повтор уже идёт» или «повторов больше не будет».
-- Бот следит за упавшим запуском до конца: удался повтор — «задание восстановлено», кончились попытки — одно «ОШИБКА, повторов больше не будет». Промежуточные неудачи молчат, перезапуск бота между попытками ничего не теряет.
-- Заданиям, которые запускают вручную или выключили в Veeam, повтор не обещается.
-- Под оповещением — ВМ, которые не прошли или прошли с предупреждением, с причиной от Veeam: из задач сессии на REST API 1.2 и из лога сессии на 1.1. Служебные строки Veeam — параметры подключения с логином, трассировка агента — вырезаются.
-- Потеря и возвращение связи с Veeam, отказ служебной учётной записи, нехватка места в репозиториях; повторы сдерживаются периодами ожидания.
-- Время запусков пишется по-человечески: «сегодня в 03:02», «завтра в 03:00».
-- Маршрутизация: одна тема 🚨 Alerts и своя 🟢 Recovered для восстановлений, темы по важности, по категории или по заданию, правила из JSON-файла.
+- A job's failure, warning and recovery. The «Попытка 1 из 4» (attempt 1 of 4) line says what happens next: «Veeam повторит ≈ сегодня в 03:54» (Veeam retries ≈ today at 03:54), «повтор уже идёт» (a retry is already running) or «повторов больше не будет» (no more retries).
+- The bot follows a failed run to its end: a retry that succeeds sends «задание восстановлено» (job recovered), and when the attempts run out, one «ОШИБКА, повторов больше не будет» (error, no more retries). Failures in between stay silent, and restarting the bot between attempts loses nothing.
+- Jobs started by hand or disabled in Veeam are not promised a retry.
+- Under an alert, the machines that failed or finished with a warning, with Veeam's reason: from the session's tasks on REST API 1.2 and from the session's log on 1.1. Veeam's internal lines (connection parameters with the user name, agent traces) are cut out.
+- Losing and regaining the connection to Veeam, the service account being refused, repositories running out of space; repeats are held back by cooldowns.
+- Run times are written the way people say them: «сегодня в 03:02» (today at 03:02), «завтра в 03:00» (tomorrow at 03:00).
+- Routing: one 🚨 Alerts topic and a 🟢 Recovered one for recoveries, topics by severity, by category or by job, rules from a JSON file.
 
-### Живые темы
+### Live topics
 
-- 🩺 Monitor health, ▶️ Running now, 📅 Upcoming runs, 📈 Performance, 💾 Repositories, 🛡 Protection, 🗂 Restore points и выключенная по умолчанию 🧹 Orphaned backups.
-- Сообщение правится на месте и заменяется новым через 36 часов, пока Telegram ещё даёт удалить старое. Удалённое сообщение и удалённая тема возвращаются сами, разовый сбой Telegram не плодит дубли, закрепления нет.
-- 🛡 и 🗂 судят по точкам восстановления: точка засчитывается машине, которая прошла, даже если запуск в целом упал; повторы Veeam считаются одним запуском; репликации проверяются по удачным запускам; просрочка меряется обычным ритмом задания.
-- Скан точек восстановления — раз в час; история сессий между полными чтениями догружается только новыми сессиями.
+- 🩺 Monitor health, ▶️ Running now, 📅 Upcoming runs, 📈 Performance, 💾 Repositories, 🛡 Protection, 🗂 Restore points, and 🧹 Orphaned backups, off by default.
+- A message is edited in place and replaced with a new one after 36 hours, while Telegram still allows deleting the old one. A deleted message and a deleted topic come back by themselves, a one-off Telegram failure does not breed duplicates, nothing is pinned.
+- 🛡 and 🗂 judge by restore points: a point counts for the machine that made it even if the run as a whole failed; Veeam's retries count as one run; replicas are checked by their successful runs; being overdue is measured against the job's usual rhythm.
+- The restore point scan runs hourly; between full readings the session history is topped up with new sessions only.
 
-### Команды и меню
+### Commands and the menu
 
 - `/status`, `/menu`, `/servers`, `/check`, `/digest`, `/job`, `/topics`, `/clear`, `/help`.
-- Меню под полем ввода: «🖥 Серверы · 📊 Сводка · 🔄 Проверить · 🩺 Статус · 🤖 Помощь»; кнопки под ответами ведут к заданиям.
-- Карточка задания: результат, запуски с числом попыток, расписание, настройки, точки восстановления, какие ВМ не прошли.
-- `/clear` очищает General за последние 48 часов и ставит свежее меню.
+- The menu under the input field: «🖥 Серверы · 📊 Сводка · 🔄 Проверить · 🩺 Статус · 🤖 Помощь» (servers, digest, check, status, help); buttons under the answers lead to jobs.
+- The job card: result, runs with their number of attempts, schedule, settings, restore points, which machines failed.
+- `/clear` clears General of the last 48 hours and posts a fresh menu.
 
-### Несколько серверов Veeam
+### Several Veeam servers
 
-- Несколько серверов в `VEEAM_SERVERS`: оповещения со всех, живые темы и команды — по выбранному в меню.
-- В 🩺 перечислены все серверы с IP: выбранный зелёный, остальные серые, упавший красный с причиной.
-- Версия REST API подбирается для каждого сервера сама; для старых серверов — `VEEAM_LEGACY_TLS`.
+- Several servers in `VEEAM_SERVERS`: alerts from all of them, the live topics and commands for the one selected in the menu.
+- 🩺 lists every server with its IP: the selected one green, the others grey, one that is down red with the reason.
+- The REST API version is picked for each server by itself; `VEEAM_LEGACY_TLS` for old servers.
 
-### Безопасность
+### Security
 
-- Бот отвечает только своим группам и их участникам, из чужих групп выходит сам.
-- Сертификаты Veeam закрепляются по отпечатку SHA-256; пароль уходит только на проверенный сервер.
-- Ключ администратора и секрет webhook — не короче 32 символов; пустой ключ закрывает маршруты.
-- Контейнер без привилегий: не root, без Linux capabilities, файловая система только для чтения, лимиты памяти и процессов.
-- Исправленные версии библиотек, в которых NestJS 10 держал известные уязвимости.
-- Реальные адреса серверов и машин убраны из репозитория.
+- The bot answers only its own groups and their members, and leaves any other group by itself.
+- Veeam certificates are pinned by their SHA-256 fingerprint; the password goes only to a verified server.
+- The admin key and the webhook secret are at least 32 characters; an empty key closes the routes.
+- An unprivileged container: not root, no Linux capabilities, a read-only file system, memory and process limits.
+- Fixed versions of the libraries in which NestJS 10 held known vulnerabilities.
+- Real addresses of servers and machines removed from the repository.
 
-### Эксплуатация
+### Operations
 
-- Образ Docker на Node.js 22 с проверкой здоровья, Docker Compose, запасной запуск через PM2.
-- Состояние в `data/telegram-state.json` с копией `.bak` после каждой записи; повреждённый файл восстанавливается из копии, нечитаемые записи отбрасываются по одной.
-- Неверные настройки останавливают запуск, и все ошибки называются сразу.
-- Лицензия: закрытая, все права защищены.
+- A Docker image on Node.js 22 with a health check, Docker Compose, and PM2 as a fallback.
+- State in `data/telegram-state.json` with a `.bak` copy after every write; a damaged file is restored from the copy, unreadable records are dropped one by one.
+- Wrong settings stop the start, and all the errors are named at once.
+- Licence: proprietary, all rights reserved.
 
-[Не выпущено]: https://github.com/MuratFaizulla/veeam-monit/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/MuratFaizulla/veeam-monit/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/MuratFaizulla/veeam-monit/releases/tag/v1.0.0

@@ -15,7 +15,7 @@
       "//": "Send every critical event of a second chat to its own topic.",
       "match": { "severity": "critical" },
       "chatId": "-1001234567890",
-      "topic": "🚨 Дежурная смена"
+      "topic": "🚨 On call"
     }
   ]
 }

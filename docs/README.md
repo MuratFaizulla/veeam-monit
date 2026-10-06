@@ -1,21 +1,23 @@
-# Документация
+# Documentation
 
 [← README](../README.md)
 
-| | Документ | Что в нём |
+| | Document | What it covers |
 | --- | --- | --- |
-| 🚀 | [Установка и эксплуатация](getting-started.md) | Что нужно, первый запуск, работа на сервере, обновление и откат |
-| 💬 | [Telegram: темы, повторы, живые сообщения](telegram.md) | Куда приходят оповещения, как бот считает повторы Veeam, несколько серверов |
-| ⌨️ | [Команды и меню](commands.md) | Команды бота, меню под полем ввода, кто может говорить с ботом |
-| ⚙️ | [Настройки](configuration.md) | Все переменные `.env` со значениями по умолчанию |
-| 🔌 | [HTTP API](http-api.md) | Маршруты, ключ администратора, Swagger |
-| 🧭 | [Как это устроено](architecture.md) | Схема, модули и папки, разработка и тесты |
-| 📘 | [CONTEXT.md](../CONTEXT.md) | Словарь предметной области |
-| 🏛 | [adr/](adr/) | Архитектурные решения и почему они приняты |
-| 📜 | [CHANGELOG.md](../CHANGELOG.md) | Что изменилось в каждой версии |
-| 🔒 | [SECURITY.md](../SECURITY.md) | Как сообщить об уязвимости и что делать, если утёк секрет |
+| 🚀 | [Getting started and running it](getting-started.md) | Requirements, first run, running on a server, updating and rolling back |
+| 💬 | [Telegram: topics, retries, live messages](telegram.md) | Where alerts land, how the bot counts Veeam's retries, several servers |
+| ⌨️ | [Commands and the menu](commands.md) | The bot's commands, the menu under the input field, who can talk to the bot |
+| ⚙️ | [Configuration](configuration.md) | Every `.env` variable and its default |
+| 🔌 | [HTTP API](http-api.md) | Routes, the admin key, Swagger |
+| 🧭 | [How it works](architecture.md) | Diagram, modules and folders, development and tests |
+| 📘 | [CONTEXT.md](../CONTEXT.md) | The domain glossary |
+| 🏛 | [adr/](adr/) | Architecture decisions and why they were made |
+| 📜 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each version |
+| 🔒 | [SECURITY.md](../SECURITY.md) | How to report a vulnerability and what to do if a secret leaks |
 
-## Справочные материалы
+The bot itself speaks Russian. Where these pages quote its messages or its buttons, the quote stays in Russian, with the meaning in English next to it.
 
-- **`veeam-openapi.json`** — спецификация REST API **Veeam Backup & Replication**, то есть чужого API, к которому ходит бот. Не путать с описанием API этого сервиса: оно собирается из кода и отдаётся самим сервисом по `/api/docs`. Ничего из `docs/` не попадает в образ и не читается кодом.
-- **`assets/`** — логотипы для README (Simple Icons, CC0).
+## Reference material
+
+- **`veeam-openapi.json`** is the REST API specification of **Veeam Backup & Replication**, the API the bot talks to. It is not the description of this service's own API: that one is built from the code and served by the service at `/api/docs`. Nothing in `docs/` goes into the image or is read by the code.
+- **`assets/`** holds the logos for the README (Simple Icons, CC0).

@@ -24,7 +24,7 @@ Veeam Telegram Monitor is a <a href="https://nestjs.com/" target="_blank">NestJS
 In a forum group the bot also keeps **live topics**: messages it edits in place, showing what is running now, what is scheduled next, and which jobs lack fresh restore points. It needs no public address, because it pulls its updates from Telegram, and it runs as a single Docker container.
 
 > [!NOTE]
-> The bot speaks Russian: its messages, its command help and most of the documentation in [docs/](docs/README.md) are in Russian. The code, its comments and this README are in English.
+> The bot speaks Russian: its messages, buttons and command help are in Russian. The code, its comments and all the documentation are in English.
 
 ## Features
 
@@ -108,16 +108,13 @@ A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam
 
 ## Documentation
 
-In Russian:
-
 - Requirements, first run, running on a server: [docs/getting-started.md](docs/getting-started.md)
 - Every setting and its default: [docs/configuration.md](docs/configuration.md)
 - Commands and the menu: [docs/commands.md](docs/commands.md)
 - Topics, Veeam's retries and live messages: [docs/telegram.md](docs/telegram.md)
 - HTTP API and Swagger: [docs/http-api.md](docs/http-api.md)
 - How the code is organised: [docs/architecture.md](docs/architecture.md)
-
-In English: the domain language the code is written in, [CONTEXT.md](CONTEXT.md).
+- The domain language the code is written in: [CONTEXT.md](CONTEXT.md)
 
 ## Development
 

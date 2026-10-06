@@ -1,31 +1,31 @@
-# Как это устроено
+# How it works
 
-[← README](../README.md) · [Документация](README.md)
+[← README](../README.md) · [Documentation](README.md)
 
 ```mermaid
 flowchart LR
     subgraph VBR["Veeam Backup & Replication"]
         direction TB
-        V1["Сервер 1<br/>REST API :9419"]
-        V2["Сервер 2<br/>REST API :9419"]
+        V1["Server 1<br/>REST API :9419"]
+        V2["Server 2<br/>REST API :9419"]
     end
 
     subgraph BOT["Veeam Telegram Monitor · Docker"]
         direction TB
-        C["Цикл опроса<br/>каждые 60 с"]
-        E["Скан точек восстановления<br/>раз в час, выбранный сервер"]
+        C["Polling cycle<br/>every 60 s"]
+        E["Restore point scan<br/>hourly, selected server"]
         S[("data/telegram-state.json")]
     end
 
-    subgraph TG["Telegram · группа-форум"]
+    subgraph TG["Telegram · forum group"]
         direction TB
         A["🚨 Alerts · 🟢 Recovered"]
-        L["Живые темы<br/>🩺 ▶️ 📅 📈 💾 🛡 🗂"]
-        G["General<br/>меню и команды"]
+        L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡 🗂"]
+        G["General<br/>menu and commands"]
     end
 
-    V1 -- "HTTPS, только чтение" --> C
-    V2 -- "HTTPS, только чтение" --> C
+    V1 -- "HTTPS, read only" --> C
+    V2 -- "HTTPS, read only" --> C
     V1 -.-> E
     C --> A
     C --> L
@@ -34,40 +34,40 @@ flowchart LR
     G -- "/job · /digest · /check" --> C
 ```
 
-Опрос идёт при старте и дальше по таймеру. Всё, что бот должен помнить между перезапусками, лежит в `data/telegram-state.json`:
+Polling runs at start and then on a timer. Everything the bot must remember across restarts is in `data/telegram-state.json`:
 
-- последние результаты заданий и запуски, которые Veeam ещё повторяет;
-- известные чаты и темы;
-- номера живых сообщений;
-- периоды ожидания.
+- the last results of jobs, and the runs Veeam is still retrying;
+- known chats and topics;
+- the IDs of the live messages;
+- cooldowns.
 
-После каждой записи рядом сохраняется копия `telegram-state.json.bak`, и если основной файл повреждён, состояние восстанавливается из неё.
+After every write a copy, `telegram-state.json.bak`, is saved next to it, and if the main file is damaged the state is restored from the copy.
 
-## Модули и папки
+## Modules and folders
 
-Один Nest-модуль на предмет и одна папка на модуль. Папки лежат слоями, и любой импорт — и между Nest-модулями, и между файлами — идёт только вниз:
+One Nest module per subject, and one folder per module. The folders sit in layers, and every import, between Nest modules and between files alike, goes only down:
 
 ```
-updates   TelegramUpdatesModule   команды, кнопки, webhook, HTTP-эндпоинты
-monitor   MonitorModule           цикл опроса и оповещения; наружу отдаёт только MONITOR
-live      LiveModule              живые темы: что в них написано и одно сообщение на тему
-estate    EstateModule            точки восстановления, карточка задания, сводка, запуски
-veeam     VeeamModule             HTTP-клиент, токен, чтение Veeam, имена репозиториев и прокси
-telegram  TelegramModule          доставка: чаты, темы, маршрутизация, файл состояния, язык бота
-config                            настройки: одно объявление на переменную
+updates   TelegramUpdatesModule   commands, buttons, webhook, HTTP endpoints
+monitor   MonitorModule           polling cycle and alerts; exports only MONITOR
+live      LiveModule              live topics: what they say, and one message per topic
+estate    EstateModule            restore points, the job card, the digest, runs
+veeam     VeeamModule             HTTP client, token, reading Veeam, repository and proxy names
+telegram  TelegramModule          delivery: chats, topics, routing, the state file, the bot's language
+config                            settings: one declaration per variable
 ```
 
-Две папки без своего модуля тоже стоят в слоях: `logging` (файловый журнал) — внизу, рядом с `config`; `http` (`/api/health` и описание API) — наверху, рядом с `updates`. `veeam` и `telegram` — соседи одного слоя и друг друга не импортируют.
+Two folders without a module of their own sit in the layers too: `logging` (the file log) at the bottom next to `config`, and `http` (`/api/health` and the API description) at the top next to `updates`. `veeam` and `telegram` are neighbours in one layer and do not import each other.
 
-`test/architecture.test.cjs` падает, если импорт укажет вверх или вбок, или если приложение перестанет собираться.
+`test/architecture.test.cjs` fails if an import points up or sideways, or if the application stops building.
 
-## Разработка
+## Development
 
 ```bash
-npm run lint   # проверка типов TypeScript
-npm test       # сборка и все тесты (node:test)
+npm run lint   # TypeScript type check
+npm test       # build and run every test (node:test)
 ```
 
-Тесты написаны на JavaScript и проверяют собранный сервис — тот же код, что уходит в образ. Они запускаются в GitHub Actions на каждый push в `main` и на каждый pull request; Dependabot раз в неделю предлагает обновления библиотек.
+The tests are written in JavaScript and test the built service, the same code that goes into the image. They run in GitHub Actions on every push to `main` and on every pull request; Dependabot proposes library updates once a week.
 
-Словарь предметной области — Run, Attempt, Evidence и другие термины кода — в [CONTEXT.md](../CONTEXT.md), архитектурные решения — в [adr/](adr/).
+The domain glossary (Run, Attempt, Evidence and the other terms of the code) is in [CONTEXT.md](../CONTEXT.md), and the architecture decisions are in [adr/](adr/).

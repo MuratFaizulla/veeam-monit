@@ -1,56 +1,58 @@
-# Команды и меню
+# Commands and the menu
 
-[← README](../README.md) · [Документация](README.md)
+[← README](../README.md) · [Documentation](README.md)
 
-## Команды
+## Commands
 
-| Команда | Что делает |
+| Command | What it does |
 | --- | --- |
-| `/status` | Доступность Veeam, авторизация, число заданий, время последней проверки. `/chatid` — то же вместе с ID чата. |
-| `/menu` | Показывает меню под полем ввода, если оно пропало. `/start` — то же самое. |
-| `/servers` | Серверы Veeam и их состояние; кнопкой выбирается сервер для живых тем, `/digest`, `/job` и `/points`. |
-| `/check` | Опросить Veeam сейчас, если цикл уже не идёт. Повторный вызов — не чаще раза в 30 секунд. |
-| `/digest` | Сводка по всем заданиям и список проблемных. Выключенные в Veeam задания считаются отдельной строкой. |
-| `/job часть имени` | Карточка задания: последний результат, запуски, расписание, настройки, точки восстановления, какие ВМ не прошли, и ⚡ скорость последнего запуска — сколько прочитано и за сколько, узкое место (Source, Proxy, Network, Target) и что оно значит, режим чтения дисков (NBD, HotAdd), прокси, шлюз репозитория и самые долгие ВМ. |
-| `/points часть имени` | Точки восстановления задания: по расписанию ли оно, календарь последних недель (█ Full, ▒ инкремент, · нет точки), на сколько моментов можно откатить каждую ВМ, текущая цепочка, Active Full по расписанию и пропущенные даты, хранение, размер Full и обычного инкремента и сколько всё занимает на диске. Без имени — кнопки заданий, которым нужно внимание. |
-| `/topics` | Темы форума, известные боту. |
-| `/clear` | Очищает General: удаляет всё сказанное там за 48 часов и ставит свежее меню. Темы не трогает. |
-| `/help` | Справка. |
+| `/status` | Whether Veeam can be reached, sign-in, the number of jobs, the time of the last check. `/chatid` is the same plus the chat's ID. |
+| `/menu` | Shows the menu under the input field if it has gone. `/start` does the same. |
+| `/servers` | Veeam servers and their state; a button picks the server for the live topics, `/digest`, `/job` and `/points`. |
+| `/check` | Poll Veeam now, unless a cycle is already running. At most once every 30 seconds. |
+| `/digest` | A summary of all jobs and a list of the ones with problems. Jobs disabled in Veeam are counted on a line of their own. |
+| `/job part of a name` | A job's card: last result, runs, schedule, settings, restore points, which machines failed, and ⚡ the speed of the last run: how much was read and in how long, the bottleneck (Source, Proxy, Network, Target) and what it means, the disk transport mode (NBD, HotAdd), the proxies, the repository gateway and the machines that took longest. |
+| `/points part of a name` | A job's restore points: whether it keeps to its schedule, a calendar of the last weeks (█ Full, ▒ increment, · no point), how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention, the size of a Full and of a typical increment, and how much it all takes up on disk. Without a name: buttons for the jobs that need attention. |
+| `/topics` | The forum topics the bot knows. |
+| `/clear` | Clears General: deletes everything said there in the last 48 hours and posts a fresh menu. Leaves the topics alone. |
+| `/help` | Help. |
 
-В группе-форуме команды работают только в **General**; в остальных темах бот их игнорирует. `/digest` и `/job` читают Veeam в момент запроса; `/points` — список заданий и файлы бэкапа задания (по запросу на бэкап), а точки берёт из последнего скана (раз в час). Для ⚡ `/job` читает лог последнего запуска и логи до 30 самых долгих его ВМ, по пять за раз; если логов было больше, карточка скажет, по скольким ВМ судит.
+In a forum group the commands work only in **General**; the bot ignores them in other topics. `/digest` and `/job` read Veeam when asked. `/points` reads the list of jobs and the job's backup files when asked (one request per backup), and takes the points from the last scan (hourly). For ⚡, `/job` reads the log of the last run and the logs of up to 30 of its slowest machines, five at a time; when there were more, the card says how many machines it judges by.
 
-## Меню под полем ввода
+## The menu under the input field
 
-| Кнопка | Что делает |
+The keys are labelled in Russian; the English meaning is in brackets.
+
+| Key | What it does |
 | --- | --- |
-| 🖥 Серверы | Список серверов; клавиатура сменяется кнопками серверов и «⬅️ На главную». Нажатие выбирает сервер. |
-| 📊 Сводка | То же, что `/digest` |
-| 🔄 Проверить | То же, что `/check` |
-| 📦 Задание | То же, что `/job` без имени: кнопки заданий, которые сейчас не в порядке |
-| 🗂 Точки | То же, что `/points` без имени: кнопки заданий, которым нужно внимание |
-| 🩺 Статус | То же, что `/status` |
-| 📑 Темы | То же, что `/topics` |
-| 🧹 Очистить | Сначала спрашивает «Очистить General?», чистит кнопка «🧹 Да, очистить» под вопросом. Набранная `/clear` чистит сразу |
-| 🤖 Помощь | То же, что `/help` |
+| 🖥 Серверы (Servers) | The list of servers; the keyboard turns into the server buttons and «⬅️ На главную» (back to the main menu). Pressing one selects that server. |
+| 📊 Сводка (Digest) | The same as `/digest` |
+| 🔄 Проверить (Check) | The same as `/check` |
+| 📦 Задание (Job) | The same as `/job` without a name: buttons for the jobs that are not fine right now |
+| 🗂 Точки (Points) | The same as `/points` without a name: buttons for the jobs that need attention |
+| 🩺 Статус (Status) | The same as `/status` |
+| 📑 Темы (Topics) | The same as `/topics` |
+| 🧹 Очистить (Clear) | First asks «Очистить General?» (clear General?); the «🧹 Да, очистить» (yes, clear) button under the question does the clearing. A typed `/clear` clears at once |
+| 🤖 Помощь (Help) | The same as `/help` |
 
-Меню живёт в сообщении «Меню Veeam Monitor» в General. Бот проверяет его каждые `TELEGRAM_LIVE_REFRESH_MIN` минут и публикует заново, если его удалили. Меню серверов меняет клавиатуру только тому, кто нажал. Нажатую кнопку бот видит потому, что он администратор группы; иначе в BotFather нужно выключить privacy mode.
+The menu lives in the «Меню Veeam Monitor» message in General. The bot checks it every `TELEGRAM_LIVE_REFRESH_MIN` minutes and posts it again if it was deleted. The server menu changes the keyboard only for the person who pressed. The bot sees a pressed key because it is an administrator of the group; otherwise privacy mode has to be turned off in BotFather.
 
-## Что делает `/clear`
+## What `/clear` does
 
-- Удаляет всё, что бот видел в General: команды, нажатия кнопок, сообщения людей, свои ответы, меню и события. Последним публикует свежее меню с итогом.
-- Удалить можно только сообщения моложе 48 часов, и только те, что бот видел сам. Более старое удаляйте вручную.
-- Чужие сообщения удаляются, только если у бота есть право администратора «Удаление сообщений». Иначе в итоге будет сказано, сколько сообщений не поддались.
-- Темы с оповещениями и живыми сообщениями `/clear` не трогает: это записи о событиях.
+- Deletes everything the bot saw in General: commands, key presses, people's messages, its own answers, the menu and events. Last, it posts a fresh menu with a summary.
+- Only messages younger than 48 hours can be deleted, and only those the bot saw itself. Delete older ones by hand.
+- Other people's messages are deleted only if the bot has the administrator right to delete messages. Otherwise the summary says how many messages could not be deleted.
+- `/clear` leaves the topics with alerts and live messages alone: they are a record of events.
 
-## Кто может говорить с ботом
+## Who can talk to the bot
 
-Бота можно найти по имени, написать ему или добавить в чужую группу. Поэтому:
+Anybody can find the bot by its name, write to it or add it to their own group. So:
 
-| Кто | Что получает |
+| Who | What they get |
 | --- | --- |
-| Группа из `TELEGRAM_CHAT_IDS` | Всё: оповещения, живые темы, команды, меню |
-| Личный чат участника такой группы | Меню и команды. Оповещения туда не приходят. Членство проверяется у Telegram и помнится 10 минут. |
-| Любая другая группа | Ничего: бот сам из неё выходит |
-| Любой другой личный чат | Ничего, даже отказа |
+| A group in `TELEGRAM_CHAT_IDS` | Everything: alerts, live topics, commands, the menu |
+| A private chat with a member of such a group | The menu and commands. Alerts do not go there. Membership is checked with Telegram and remembered for 10 minutes. |
+| Any other group | Nothing: the bot leaves it by itself |
+| Any other private chat | Nothing, not even a refusal |
 
-Пока `TELEGRAM_CHAT_IDS` пуст, бот в любом чате отвечает только на `/chatid`, `/start` и `/status` — и только ID этого чата, без данных Veeam.
+While `TELEGRAM_CHAT_IDS` is empty, the bot answers in any chat only to `/chatid`, `/start` and `/status`, and only with that chat's ID, with no Veeam data.

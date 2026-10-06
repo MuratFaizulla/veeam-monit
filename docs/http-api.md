@@ -1,20 +1,20 @@
 # HTTP API
 
-[← README](../README.md) · [Документация](README.md)
+[← README](../README.md) · [Documentation](README.md)
 
-Порт сервиса открыт только на самом сервере (`127.0.0.1:3000`). Всё, кроме `/api/health` и webhook, требует ключа администратора в заголовке `X-Telegram-Admin-Key`.
+The service's port is open on the server itself only (`127.0.0.1:3000`). Everything except `/api/health` and the webhook needs the admin key in the `X-Telegram-Admin-Key` header.
 
-| Маршрут | Доступ | Назначение |
+| Route | Access | Purpose |
 | --- | --- | --- |
-| `GET /api/health` | открыт | Видны ли серверы Veeam — без их имён, адресов и ошибок. Всегда 200. |
-| `GET /api/telegram/status` | ключ администратора | Состояние интеграции, очереди и монитора. |
-| `GET /api/telegram/chats` | ключ администратора | Известные чаты и темы. |
-| `GET /api/telegram/routes` | ключ администратора | Действующие правила маршрутизации. |
-| `POST /api/telegram/routes/reload` | ключ администратора | Перечитать файл правил. |
-| `POST /api/telegram/check` | ключ администратора | Запустить цикл проверки. |
-| `POST /api/telegram/test` | ключ администратора | Тестовое событие через маршрутизатор — проверка всего пути доставки. |
-| `POST /api/telegram/notify` | ключ администратора | Отправить произвольное объявление. |
-| `POST /api/telegram/webhook` | секрет webhook | Входящие обновления Telegram. |
+| `GET /api/health` | open | Whether the Veeam servers can be reached, without their names, addresses or errors. Always 200. |
+| `GET /api/telegram/status` | admin key | State of the integration, the queues and the monitor. |
+| `GET /api/telegram/chats` | admin key | Known chats and topics. |
+| `GET /api/telegram/routes` | admin key | The routing rules in effect. |
+| `POST /api/telegram/routes/reload` | admin key | Reload the rules file. |
+| `POST /api/telegram/check` | admin key | Start a check cycle. |
+| `POST /api/telegram/test` | admin key | A test event through the router, to check the whole delivery path. |
+| `POST /api/telegram/notify` | admin key | Send an announcement of your own. |
+| `POST /api/telegram/webhook` | webhook secret | Incoming Telegram updates. |
 
 ```bash
 curl -H "X-Telegram-Admin-Key: $TELEGRAM_ADMIN_KEY" http://127.0.0.1:3000/api/telegram/status
@@ -22,15 +22,15 @@ curl -H "X-Telegram-Admin-Key: $TELEGRAM_ADMIN_KEY" http://127.0.0.1:3000/api/te
 
 ## Swagger
 
-Страница с описанием API выключена по умолчанию.
+The page describing the API is off by default.
 
-1. Включите `API_DOCS=true` в `.env` и выполните `docker compose up -d --force-recreate`.
-2. Откройте туннель SSH со своего компьютера — порт доступен только на сервере:
+1. Set `API_DOCS=true` in `.env` and run `docker compose up -d --force-recreate`.
+2. Open an SSH tunnel from your own computer, since the port is reachable on the server only:
 
    ```bash
-   ssh -L 3000:127.0.0.1:3000 <пользователь>@<сервер>
+   ssh -L 3000:127.0.0.1:3000 <user>@<server>
    ```
 
-3. Откройте в браузере **http://localhost:3000/api/docs** (JSON — `/api/docs-json`) и нажмите **Authorize**, чтобы вставить ключ администратора.
+3. Open **http://localhost:3000/api/docs** in a browser (the JSON is at `/api/docs-json`) and press **Authorize** to paste the admin key.
 
-Когда закончите, верните `API_DOCS=false`.
+When you are done, set `API_DOCS=false` again.

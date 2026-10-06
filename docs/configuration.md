@@ -1,62 +1,62 @@
-# Настройки
+# Configuration
 
-[← README](../README.md) · [Документация](README.md)
+[← README](../README.md) · [Documentation](README.md)
 
-Все настройки задаются в `.env`; полный список с комментариями — в [.env.example](../.env.example). Неверное значение останавливает запуск с именем переменной, и все ошибки называются сразу. После правки `.env` на сервере выполните `docker compose up -d --force-recreate`.
+Every setting is made in `.env`; the full list with comments is in [.env.example](../.env.example). A wrong value stops the start and names the variable, and all the errors are named at once. After editing `.env` on the server, run `docker compose up -d --force-recreate`.
 
 ## Veeam
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `VEEAM_SERVERS` | — | Серверы через запятую: `имя=адрес` или просто адрес (тогда имя — первая часть имени хоста). |
-| `VEEAM_BASE_URL` | — | Прежний способ указать один сервер; задаётся либо он, либо `VEEAM_SERVERS`. |
-| `VEEAM_MONITOR_USERNAME`, `VEEAM_MONITOR_PASSWORD` | — | Служебная учётная запись, общая для всех серверов. |
-| `VEEAM_MONITOR_USERNAME_<ИМЯ>`, `VEEAM_MONITOR_PASSWORD_<ИМЯ>` | — | Своя учётная запись для сервера вне домена, где общую не знают. `<ИМЯ>` — имя сервера заглавными буквами, `-` заменяется на `_`: для `veeam-dc2` — `VEEAM_MONITOR_USERNAME_VEEAM_DC2`. Задаются обе; переменная с именем, которого нет в `VEEAM_SERVERS`, останавливает запуск. |
-| `VEEAM_TLS_CERTS` | — | Закрепление сертификатов: `имя=путь_к_PEM` через запятую. Серверу бот доверяет ровно этому сертификату, сверяя отпечаток SHA-256 до отправки пароля. В Docker папка `./certs` видна как `/app/certs`. Если Veeam сменит сертификат, будет ошибка `CERT_NOT_PINNED` — положите новый файл. |
-| `VEEAM_INSECURE_TLS` | `false` | Не проверять сертификат у незакреплённых серверов. Небезопасно. |
-| `VEEAM_LEGACY_TLS` | — | Имена серверов, которым нужны старые алгоритмы TLS (SHA-1); иначе старый сервер обрывает соединение с `ECONNRESET`. |
-| `VEEAM_API_VERSION` | `1.2-rev1` | Версия REST API. Сервер постарше откажет и назовёт свои версии — бот перейдёт на новейшую из них. |
-| `VEEAM_TIMEOUT_MS` | `30000` | Сколько ждать ответа Veeam. |
+| `VEEAM_SERVERS` | — | Servers, comma-separated: `name=url`, or just the URL (the name is then the first part of the host name). |
+| `VEEAM_BASE_URL` | — | The older way to give a single server; set either this or `VEEAM_SERVERS`. |
+| `VEEAM_MONITOR_USERNAME`, `VEEAM_MONITOR_PASSWORD` | — | The service account, shared by every server. |
+| `VEEAM_MONITOR_USERNAME_<NAME>`, `VEEAM_MONITOR_PASSWORD_<NAME>` | — | An account of its own for a server outside the domain, where the shared one is unknown. `<NAME>` is the server's name in capitals with `_` for `-`: for `veeam-dc2` it is `VEEAM_MONITOR_USERNAME_VEEAM_DC2`. Set both; a variable naming a server that is not in `VEEAM_SERVERS` stops the start. |
+| `VEEAM_TLS_CERTS` | — | Certificate pinning: `name=path_to_PEM`, comma-separated. The bot trusts a server by exactly this certificate, checking its SHA-256 fingerprint before the password is sent. In Docker, the `./certs` folder is seen as `/app/certs`. If Veeam changes its certificate, the error is `CERT_NOT_PINNED`: put the new file in place. |
+| `VEEAM_INSECURE_TLS` | `false` | Skip certificate checks for servers that are not pinned. Unsafe. |
+| `VEEAM_LEGACY_TLS` | — | Names of servers that need old TLS algorithms (SHA-1); otherwise an old server drops the connection with `ECONNRESET`. |
+| `VEEAM_API_VERSION` | `1.2-rev1` | REST API version. An older server refuses it and names its own versions, and the bot switches to the newest of them. |
+| `VEEAM_TIMEOUT_MS` | `30000` | How long to wait for Veeam to answer. |
 
 ## Telegram
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | — | Токен бота от BotFather. |
-| `TELEGRAM_CHAT_IDS` | — | Группы, куда идут оповещения и живые темы. Другие чаты получателями не становятся. |
-| `TELEGRAM_ADMIN_KEY` | — | Ключ операторских HTTP-маршрутов, не короче 32 символов. Пустой закрывает их для всех. |
-| `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_WEBHOOK_SECRET` | — | Публичный адрес и секрет webhook (не короче 32 символов). Пустой адрес — long polling. |
-| `TELEGRAM_ROUTING_MODE` | `single` | `single`, `severity`, `kind` или `job` — см. [telegram.md](telegram.md). |
-| `TELEGRAM_ROUTES_FILE` | — | Файл адресных правил. |
-| `TELEGRAM_CREATE_TOPICS` | `true` | Создавать недостающие темы. |
-| `TELEGRAM_TIMEZONE` | часовой пояс сервера | Пояс IANA для времени в сообщениях. В Docker по умолчанию `Asia/Qyzylorda`. |
+| `TELEGRAM_BOT_TOKEN` | — | The bot's token from BotFather. |
+| `TELEGRAM_CHAT_IDS` | — | Groups that receive alerts and live topics. No other chat ever becomes a recipient. |
+| `TELEGRAM_ADMIN_KEY` | — | Key for the operator HTTP routes, at least 32 characters. Empty closes them to everybody. |
+| `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_WEBHOOK_SECRET` | — | Public URL and secret of the webhook (at least 32 characters). An empty URL means long polling. |
+| `TELEGRAM_ROUTING_MODE` | `single` | `single`, `severity`, `kind` or `job`; see [telegram.md](telegram.md). |
+| `TELEGRAM_ROUTES_FILE` | — | File with explicit routing rules. |
+| `TELEGRAM_CREATE_TOPICS` | `true` | Create the topics that are missing. |
+| `TELEGRAM_TIMEZONE` | the server's time zone | IANA zone for the times in messages. In Docker it defaults to `Asia/Qyzylorda`. |
 
-## Интервалы и пороги
+## Intervals and thresholds
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_MONITOR_INTERVAL_MS` | `60000` | Цикл опроса Veeam; `0` выключает периодический опрос. |
-| `TELEGRAM_PROTECTION_INTERVAL_MIN` | `60` | Полный скан точек восстановления. Выбранный заново сервер сканируется сразу, если его данным больше 10 минут. |
-| `TELEGRAM_PROTECTION_STALE_DAYS` | `3` | Задание попадает в 🛡, когда его последней точке больше этого числа дней… |
-| `TELEGRAM_PROTECTION_OVERDUE_FACTOR` | `2.5` | …и больше, чем столько его обычных интервалов. Так еженедельное задание не считается просроченным через три дня. |
-| `TELEGRAM_PROTECTION_FAILURE_STREAK` | `3` | Столько неудачных запусков подряд ставит задание в 🛡, даже если свежая точка есть. |
-| `TELEGRAM_REPOSITORY_FREE_PERCENT` | `10` | Порог свободного места: ниже — предупреждение, ниже половины порога — критично, `0` — не следить. |
-| `TELEGRAM_JOB_COOLDOWN_MIN` | `15` | Не повторять одно и то же оповещение о задании чаще этого. |
-| `TELEGRAM_AUTH_COOLDOWN_MIN` | `60` | То же для проблем с учётной записью. |
-| `TELEGRAM_REPOSITORY_COOLDOWN_MIN` | `720` | То же для репозиториев. |
-| `TELEGRAM_DIGEST_HOUR` | `-1` | Час ежедневной сводки; `-1` — не присылать. `/digest` работает всегда. |
-| `TELEGRAM_LIVE_REFRESH_MIN` | `5` | Живое сообщение переписывается не реже этого, даже без изменений: застывшее «Обновлено» значит, что монитор встал. Так же часто проверяется меню. |
+| `TELEGRAM_MONITOR_INTERVAL_MS` | `60000` | Veeam polling cycle; `0` turns periodic polling off. |
+| `TELEGRAM_PROTECTION_INTERVAL_MIN` | `60` | Full scan of restore points. A server selected again is scanned at once if its data is older than 10 minutes. |
+| `TELEGRAM_PROTECTION_STALE_DAYS` | `3` | A job goes into 🛡 when its newest point is older than this many days… |
+| `TELEGRAM_PROTECTION_OVERDUE_FACTOR` | `2.5` | …and older than this many of its usual intervals. That keeps a weekly job from counting as overdue after three days. |
+| `TELEGRAM_PROTECTION_FAILURE_STREAK` | `3` | This many failed runs in a row put a job in 🛡 even when it has a fresh point. |
+| `TELEGRAM_REPOSITORY_FREE_PERCENT` | `10` | Free space threshold: below it is a warning, below half of it is critical, `0` turns the check off. |
+| `TELEGRAM_JOB_COOLDOWN_MIN` | `15` | Do not repeat the same alert about a job more often than this. |
+| `TELEGRAM_AUTH_COOLDOWN_MIN` | `60` | The same for problems with the account. |
+| `TELEGRAM_REPOSITORY_COOLDOWN_MIN` | `720` | The same for repositories. |
+| `TELEGRAM_DIGEST_HOUR` | `-1` | Hour of the daily digest; `-1` means none. `/digest` always works. |
+| `TELEGRAM_LIVE_REFRESH_MIN` | `5` | A live message is rewritten at least this often, even with nothing new: a frozen «Обновлено» ("updated") time means the monitor has stopped. The menu is checked as often. |
 
-## Живые темы, названия тем, файлы
+## Live topics, topic names, files
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_LIVE` | `true` | Живые темы. |
-| `TELEGRAM_LIVE_ORPHANS` | `false` | Тема 🧹 Orphaned backups. |
-| `TELEGRAM_TOPIC_*` | см. `.env.example` | Названия всех тем: и живых, и для оповещений. |
-| `TELEGRAM_SEND_INTERVAL_MS`, `TELEGRAM_QUEUE_LIMIT` | `1500`, `200` | Пауза между сообщениями в один чат и размер очереди. |
-| `TELEGRAM_STATE_FILE` | `data/telegram-state.json` | Файл состояния. |
-| `LOG_FILE` | `logs/backend.log` | Журнал. |
-| `PORT` | `3000` | HTTP-порт внутри контейнера. |
-| `HOST_BIND`, `HOST_PORT` | `127.0.0.1`, `3000` | Где Compose публикует порт на хосте. |
-| `API_DOCS` | `false` | Страница Swagger на `/api/docs` — см. [http-api.md](http-api.md). |
+| `TELEGRAM_LIVE` | `true` | Live topics. |
+| `TELEGRAM_LIVE_ORPHANS` | `false` | The 🧹 Orphaned backups topic. |
+| `TELEGRAM_TOPIC_*` | see `.env.example` | Names of all the topics, both live and for alerts. |
+| `TELEGRAM_SEND_INTERVAL_MS`, `TELEGRAM_QUEUE_LIMIT` | `1500`, `200` | Pause between messages to one chat, and the size of the queue. |
+| `TELEGRAM_STATE_FILE` | `data/telegram-state.json` | State file. |
+| `LOG_FILE` | `logs/backend.log` | Log. |
+| `PORT` | `3000` | HTTP port inside the container. |
+| `HOST_BIND`, `HOST_PORT` | `127.0.0.1`, `3000` | Where Compose publishes the port on the host. |
+| `API_DOCS` | `false` | The Swagger page at `/api/docs`; see [http-api.md](http-api.md). |

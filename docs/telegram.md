@@ -1,62 +1,62 @@
-# Telegram: темы, повторы, живые сообщения
+# Telegram: topics, retries, live messages
 
-[← README](../README.md) · [Документация](README.md)
+[← README](../README.md) · [Documentation](README.md)
 
-## Подключение
+## Connecting
 
-По умолчанию бот работает через **long polling** — публичный адрес не нужен. Если задан `TELEGRAM_WEBHOOK_URL`, бот регистрирует webhook `<TELEGRAM_WEBHOOK_URL>/api/telegram/webhook`: нужен публичный HTTPS-адрес и `TELEGRAM_WEBHOOK_SECRET`, который Telegram присылает в заголовке `X-Telegram-Bot-Api-Secret-Token`.
+By default the bot uses **long polling**, so it needs no public address. When `TELEGRAM_WEBHOOK_URL` is set, the bot registers the webhook `<TELEGRAM_WEBHOOK_URL>/api/telegram/webhook`. That needs a public HTTPS address and `TELEGRAM_WEBHOOK_SECRET`, which Telegram sends in the `X-Telegram-Bot-Api-Secret-Token` header.
 
-## Куда приходят оповещения
+## Where alerts land
 
-При режиме по умолчанию `TELEGRAM_ROUTING_MODE=single`:
+With the default `TELEGRAM_ROUTING_MODE=single`:
 
-| Событие | Тема |
+| Event | Topic |
 | --- | --- |
-| Ошибка или предупреждение | 🚨 Alerts |
-| Восстановление | 🟢 Recovered |
-| Информационное событие | General |
+| An error or a warning | 🚨 Alerts |
+| A recovery | 🟢 Recovered |
+| An informational event | General |
 
-Другие режимы: `severity` — тема по важности, `kind` — по категории, `job` — своя тема на каждое задание. Живые темы живут отдельно при любом режиме. При `TELEGRAM_CREATE_TOPICS=false` бот пользуется только известными темами, остальное пишет в General.
+The other modes: `severity` gives a topic per severity, `kind` a topic per category, `job` a topic per job. The live topics stay separate in every mode. With `TELEGRAM_CREATE_TOPICS=false` the bot uses only the topics it knows and writes everything else to General.
 
-Для адресных правил скопируйте [telegram-routes.example.json](../telegram-routes.example.json), укажите путь в `TELEGRAM_ROUTES_FILE` и перечитайте его через `POST /api/telegram/routes/reload`. Правила проверяются сверху вниз, срабатывает первое совпадение.
+For explicit rules, copy [telegram-routes.example.json](../telegram-routes.example.json), put its path in `TELEGRAM_ROUTES_FILE` and reload it with `POST /api/telegram/routes/reload`. Rules are checked top to bottom, and the first match wins.
 
-## Повторы Veeam
+## Veeam's retries
 
-Veeam повторяет упавшее задание новой сессией, так что одна плохая ночь выглядит как три-четыре отказа. Бот считает их **одним запуском**: две сессии — один запуск, если новая началась в пределах окна повтора после окончания предыдущей (пауза `awaitMinutes` задания плюс запас на длительность самой попытки).
+Veeam retries a failed job in a new session, so one bad night looks like three or four failures. The bot counts them as **one run**: two sessions are one run when the newer one started within the retry window after the earlier one ended (the job's `awaitMinutes` pause plus an allowance for the length of the attempt itself).
 
-В строке **«Попытка»** сказано, что будет дальше:
+The **«Попытка»** (attempt) line says what happens next:
 
-| Текст | Когда |
-| --- | --- |
-| `1 из 4 · Veeam повторит ≈ сегодня в 03:54` | попытки остались, пауза ещё не прошла |
-| `2 из 4 · повтор уже идёт` | следующая попытка уже запущена |
-| `4 из 4 · повторов больше не будет` | попытки кончились или пауза прошла без новой |
+| Text | Meaning | When |
+| --- | --- | --- |
+| `1 из 4 · Veeam повторит ≈ сегодня в 03:54` | 1 of 4 · Veeam retries ≈ today at 03:54 | attempts are left and the pause has not passed yet |
+| `2 из 4 · повтор уже идёт` | 2 of 4 · a retry is already running | the next attempt has started |
+| `4 из 4 · повторов больше не будет` | 4 of 4 · no more retries | the attempts are used up, or the pause passed with no new one |
 
-Veeam повторяет только те запуски, которые начал сам, поэтому заданиям, которые запускают вручную или выключили в Veeam, бот повтор не обещает и не ждёт.
+Veeam retries only the runs it started itself, so for jobs that are started by hand or disabled in Veeam the bot neither promises a retry nor waits for one.
 
-**Как бот следит за повтором**
+**How the bot follows a retry**
 
-- Об отказе бот сообщает после первой попытки, дальше следит за запуском. Промежуточные неудачные повторы молчат. Удался повтор — «задание восстановлено», кончились попытки — одно «ОШИБКА, повторов больше не будет».
-- Пока следующая попытка не началась, слежение не делает запросов к Veeam.
-- Пока идёт повтор, Veeam сообщает результат `none`. Бот **не** записывает его поверх известного: `none` значит «сейчас не знаю». Иначе восстановление не пришло бы никогда.
-- Запуск, за которым идёт слежение, хранится в `data/telegram-state.json`, поэтому перезапуск бота между попытками последнее сообщение не теряет.
-- Список ВМ под оповещением берётся из задач сессии (REST API 1.2) или из её лога (1.1). Показывается до пяти ВМ каждого вида, остальные считаются. Служебные строки Veeam — параметры подключения с логином, трассировка агента — вырезаются.
+- The bot reports a failure after the first attempt and then follows the run. Failed retries in between stay silent. A retry that succeeds sends «задание восстановлено» (job recovered); when the attempts run out, one «ОШИБКА, повторов больше не будет» (error, no more retries).
+- Until the next attempt starts, following a run makes no requests to Veeam.
+- While a retry runs, Veeam reports the result `none`. The bot does **not** write it over the result it knows: `none` means "I don't know right now". Otherwise a recovery would never come.
+- The run being followed is kept in `data/telegram-state.json`, so restarting the bot between attempts does not lose the last message.
+- The list of machines under an alert comes from the session's tasks (REST API 1.2) or from its log (1.1). Up to five machines of each kind are shown, the rest are counted. Veeam's internal lines (connection parameters with the user name, agent traces) are cut out.
 
-## Живые сообщения
+## Live messages
 
-Telegram разрешает боту править и удалять своё сообщение примерно двое суток **с момента отправки**, сколько бы раз его ни правили. Поэтому живое сообщение заменяется новым через 36 часов, пока старое ещё можно удалить. Если застывшие сообщения старше двух суток уже есть в теме, удалите их вручную — бот их не может.
+Telegram lets a bot edit and delete its message for about two days **from when it was sent**, however many times it was edited since. So a live message is replaced with a new one after 36 hours, while the old one can still be deleted. If a topic already has frozen messages older than two days, delete them by hand: the bot cannot.
 
-- **Удалённое сообщение или тему** бот возвращает сам: в следующем цикле, если содержимое меняется, или не позже чем через `TELEGRAM_LIVE_REFRESH_MIN` минут (по умолчанию 5). Тема 🚨 Alerts вернётся со следующим оповещением; история удалённой темы стирается вместе с ней.
-- **Разовый сбой Telegram** — 429, 5xx, оборванное соединение — не повод публиковать новое сообщение: старое остаётся, в следующем цикле бот правит его снова, а в журнал пишет `was not refreshed, kept for the next cycle`.
-- **Тема из нескольких сообщений** — 🗂, где список не влезает в одно, — пронумерована («· 1/3», «· 2/3»…). Если одно её сообщение публикуется заново, следующие за ним публикуются заново тоже, чтобы порядок в теме не перевернулся.
-- **Автоудаление** в группе держите **больше 36 часов**, иначе живое сообщение исчезнет раньше замены. Помните: оно одинаково стирает и живые сообщения, и оповещения — тема 🚨 Alerts превратится в скользящее окно.
+- **A deleted message or topic** is brought back by the bot itself: on the next cycle if its content changes, and no later than `TELEGRAM_LIVE_REFRESH_MIN` minutes (5 by default) otherwise. The 🚨 Alerts topic comes back with the next alert; the history of a deleted topic goes with it.
+- **A one-off Telegram failure** (429, 5xx, a dropped connection) is no reason to post a new message: the old one stays, the bot edits it again on the next cycle and logs `was not refreshed, kept for the next cycle`.
+- **A topic of several messages** (🗂, when its list does not fit in one) is numbered («· 1/3», «· 2/3»…). When one of its messages is posted again, the ones after it are posted again too, so the order in the topic does not turn upside down.
+- **Auto-delete** in the group must be **longer than 36 hours**, or a live message disappears before it is replaced. Keep in mind that it deletes live messages and alerts alike, so the 🚨 Alerts topic becomes a sliding window.
 
-## Несколько серверов Veeam
+## Several Veeam servers
 
-Серверы перечисляются в `VEEAM_SERVERS` через запятую, учётная запись у всех одна. Серверу вне домена, где общую учётную запись не знают, задаётся своя — `VEEAM_MONITOR_USERNAME_<ИМЯ>` и `VEEAM_MONITOR_PASSWORD_<ИМЯ>` (см. [настройки](configuration.md#veeam)).
+Servers are listed in `VEEAM_SERVERS`, comma-separated, and share one account. A server outside the domain, where the shared account is unknown, gets one of its own with `VEEAM_MONITOR_USERNAME_<NAME>` and `VEEAM_MONITOR_PASSWORD_<NAME>` (see [configuration](configuration.md#veeam)).
 
-- **Оповещения** приходят со всех серверов в те же темы. Если серверов больше одного, заголовок начинается с имени сервера: `BAAS · Files: ОШИБКА`. Ежедневная сводка приходит по каждому серверу.
-- **Живые темы, `/digest` и `/job`** показывают выбранный сервер: сначала первый в списке, сменить — «🖥 Серверы» или `/servers`. Выбор общий для группы и переживает перезапуск.
-- В 🩺 перечислены все серверы с IP: выбранный 🟢, остальные ⚪, упавший 🔴 с причиной.
-- **Нагрузка.** Каждый цикл спрашивает у каждого сервера доступность, статусы заданий и репозитории. Скан точек восстановления и выполняющиеся сессии читаются только у выбранного; после переключения первое обновление может занять до минуты.
-- **Новый сервер** первый цикл только запоминает: уже упавшие на нём задания оповещением не приходят. То же после переименования сервера.
+- **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files: ОШИБКА` (error). The daily digest comes for each server.
+- **The live topics, `/digest` and `/job`** show the selected server: the first in the list until somebody picks another with «🖥 Серверы» or `/servers`. The choice is shared by the whole group and survives a restart.
+- 🩺 lists every server with its IP: the selected one 🟢, the others ⚪, one that is down 🔴 with the reason.
+- **Load.** Every cycle asks each server for its availability, job states and repositories. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
+- **A new server** is only remembered on its first cycle: jobs that had already failed on it do not come as alerts. The same goes for a renamed server.
