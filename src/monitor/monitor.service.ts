@@ -4,7 +4,6 @@ import { AppConfig } from '../config/configuration';
 import { Job, WorkingSessions, workingUnavailable } from '../veeam/estate';
 import { DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
-import { RETIRED_SLOTS } from '../live/slots';
 import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
 import { NotificationEvent } from '../telegram/types';
@@ -406,8 +405,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         })),
       },
     });
-    for (const { slot, content } of pages) await this.live.publish(slot, content);
-    for (const slot of RETIRED_SLOTS) await this.live.retire(slot);
+    await this.live.publish(pages);
   }
 
   private async checkRepositories(watch: Watch): Promise<RepositoryCapacity[]> {

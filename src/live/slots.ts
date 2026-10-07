@@ -48,4 +48,10 @@ export const RETIRED_SLOTS = ['restorePoints'] as const;
 /** A topic that holds one always-current message instead of a stream of them. */
 export type LiveSlot = keyof typeof LIVE_SLOTS;
 
+/** One slot's content for this cycle, in the order the slots are published. */
+export interface LivePage {
+  slot: LiveSlot;
+  content: string | string[];
+}
+
 export const specOf = (slot: LiveSlot): LiveSlotSpec => LIVE_SLOTS[slot];

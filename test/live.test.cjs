@@ -171,19 +171,19 @@ test('a live message Telegram failed to edit for a moment is kept, not replaced'
     let failing = false;
     const fail = () => (failing ? failure() : undefined);
     const w = world({ TELEGRAM_LIVE: 'true' }, { editMessageText: fail, deleteMessage: fail });
-    await w.live.publish('running', '▶️ первый');
+    await w.live.publish([{ slot: 'running', content: '▶️ первый' }]);
     const first = w.store.liveMessages.of(CHAT, 'running').messageId;
 
     failing = true;
     w.api.reset();
-    await w.live.publish('running', '▶️ второй');
+    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
     assert.deepEqual(w.api.sent(), [], `${name}: no second message`);
     assert.deepEqual(w.api.of('deleteMessage'), [], `${name}: the first is not deleted`);
     assert.equal(w.store.liveMessages.of(CHAT, 'running').messageId, first, `${name}: the slot keeps it`);
 
     failing = false;
     w.api.reset();
-    await w.live.publish('running', '▶️ второй');
+    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
     assert.deepEqual(
       w.api.of('editMessageText').map((edit) => edit.message_id), [first],
       `${name}: the next cycle writes the same message`,
@@ -258,12 +258,12 @@ test('a live message Telegram will no longer let the bot edit is replaced', asyn
     editMessageText: () =>
       old ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
   });
-  await w.live.publish('running', '▶️ первый');
+  await w.live.publish([{ slot: 'running', content: '▶️ первый' }]);
   const first = w.store.liveMessages.of(CHAT, 'running').messageId;
 
   old = true;
   w.api.reset();
-  await w.live.publish('running', '▶️ второй');
+  await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
 
   assert.equal(w.api.sent().length, 1, 'a message the bot can write to takes over');
   assert.notEqual(w.store.liveMessages.of(CHAT, 'running').messageId, first);
@@ -295,17 +295,17 @@ test('a slot too long for one message owns a second, and drops it when it shrink
   await w.monitor.check();
 
   w.api.reset();
-  await w.live.publish('protection', ['страница один', 'страница два']);
+  await w.live.publish([{ slot: 'protection', content: ['страница один', 'страница два'] }]);
   assert.equal(w.api.sent().length, 1, 'the continuation is a message of its own');
   assert.equal(w.api.of('editMessageText').length, 1, 'the first page keeps its message');
 
   w.api.reset();
-  await w.live.publish('protection', ['страница один, иначе', 'страница два, иначе']);
+  await w.live.publish([{ slot: 'protection', content: ['страница один, иначе', 'страница два, иначе'] }]);
   assert.equal(w.api.sent().length, 0, 'both pages are edited in place');
   assert.equal(w.api.of('editMessageText').length, 2);
 
   w.api.reset();
-  await w.live.publish('protection', ['теперь всё помещается']);
+  await w.live.publish([{ slot: 'protection', content: ['теперь всё помещается'] }]);
   assert.equal(w.api.of('deleteMessage').length, 1, 'the page nothing fills is removed');
   assert.equal(w.api.sent().length, 0);
 });
@@ -318,12 +318,12 @@ test('a page posted anew takes the pages after it along, so the topic still read
     editMessageText: (payload) =>
       payload.message_id === lost ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
   });
-  await w.live.publish('protection', ['страница 1', 'страница 2', 'страница 3']);
+  await w.live.publish([{ slot: 'protection', content: ['страница 1', 'страница 2', 'страница 3'] }]);
   const second = w.store.liveMessages.of(CHAT, 'protection#1').messageId;
   lost = w.store.liveMessages.of(CHAT, 'protection').messageId;
 
   w.api.reset();
-  await w.live.publish('protection', ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе']);
+  await w.live.publish([{ slot: 'protection', content: ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе'] }]);
 
   assert.deepEqual(
     w.api.sent().map((message) => message.text),
@@ -337,17 +337,17 @@ test('a page posted anew takes the pages after it along, so the topic still read
 
   // The rest is edited in place again, all three pages now on one clock.
   w.api.reset();
-  await w.live.publish('protection', ['страница 1, снова', 'страница 2, снова', 'страница 3, снова']);
+  await w.live.publish([{ slot: 'protection', content: ['страница 1, снова', 'страница 2, снова', 'страница 3, снова'] }]);
   assert.equal(w.api.sent().length, 0);
   assert.equal(w.api.of('editMessageText').length, 3);
 });
 
 test('a page that only changed is edited in place and leaves the pages after it alone', async () => {
   const w = world({ TELEGRAM_LIVE: 'true' });
-  await w.live.publish('protection', ['страница 1', 'страница 2']);
+  await w.live.publish([{ slot: 'protection', content: ['страница 1', 'страница 2'] }]);
 
   w.api.reset();
-  await w.live.publish('protection', ['страница 1, иначе', 'страница 2']);
+  await w.live.publish([{ slot: 'protection', content: ['страница 1, иначе', 'страница 2'] }]);
   assert.equal(w.api.sent().length, 0);
   assert.deepEqual(w.api.of('deleteMessage'), []);
 });
@@ -1026,6 +1026,34 @@ test('the retired 🗂 topic loses its messages, once', async () => {
   assert.deepEqual(w.api.of('deleteMessage'), [], 'nothing is asked of Telegram once they are gone');
 });
 
+test('a slot switched off by its setting loses its message, once, rather than freezing', async () => {
+  // 🧹, turned off, kept its last message: nothing wrote to it, nothing deleted
+  // it, and two days later the bot could no longer delete it at all.
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  w.store.liveMessages.remember(CHAT, 'orphans', { messageId: 9101, hash: 'x', at: Date.now(), createdAt: Date.now() });
+
+  await w.monitor.check();
+  assert.ok(w.api.of('deleteMessage').some((payload) => payload.message_id === 9101));
+  assert.equal(w.store.liveMessages.of(CHAT, 'orphans'), undefined);
+
+  w.api.reset();
+  await w.monitor.check();
+  assert.deepEqual(w.api.of('deleteMessage'), [], 'nothing is asked of Telegram once it is gone');
+});
+
+test('with the live topics off, the messages they left are taken down and nothing is posted', async () => {
+  const w = world({ TELEGRAM_LIVE: 'false' });
+  const ref = (messageId) => ({ messageId, hash: 'x', at: Date.now(), createdAt: Date.now() });
+  w.store.liveMessages.remember(CHAT, 'running', ref(9201));
+  w.store.liveMessages.remember(CHAT, 'protection', ref(9202));
+  w.store.liveMessages.remember(CHAT, 'protection#1', ref(9203));
+
+  await w.live.publish([{ slot: 'running', content: '▶️ сейчас' }]);
+
+  assert.deepEqual(w.api.sent(), []);
+  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id).sort(), [9201, 9202, 9203]);
+});
+
 test('a point left behind by a failed run is not counted as a backup', async () => {
   const w = exchange({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' });
   await w.monitor.check();
@@ -1210,18 +1238,18 @@ test('an unchanged slot notices its message was deleted, on the heartbeat', asyn
       gone ? { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' } : undefined,
   });
   const text = '💾 <b>REPOSITORIES</b>\nRepo01 — 40%';
-  await w.live.publish('repositories', text);
+  await w.live.publish([{ slot: 'repositories', content: text }]);
   const first = w.store.liveMessages.of(CHAT, 'repositories').messageId;
 
   gone = true;
   w.api.reset();
-  await w.live.publish('repositories', text);
+  await w.live.publish([{ slot: 'repositories', content: text }]);
   assert.deepEqual(w.api.calls, [], 'unchanged and recent: nothing is asked of Telegram');
 
   const realNow = Date.now;
   Date.now = () => realNow() + 10 * 60_000;
   try {
-    await w.live.publish('repositories', text);
+    await w.live.publish([{ slot: 'repositories', content: text }]);
   } finally {
     Date.now = realNow;
   }
@@ -1240,13 +1268,13 @@ test('a slot returns to the topic it was in, not to the one now configured', asy
     }),
   });
   w.store.rememberTopic(CHAT, '📅 Upcoming runs', 86);
-  await w.live.publish('schedule', '📅 первый');
+  await w.live.publish([{ slot: 'schedule', content: '📅 первый' }]);
   const thread = w.store.liveMessages.of(CHAT, 'schedule').threadId;
   assert.equal(thread, 86, 'тема запомнена вместе с сообщением');
 
   w.store.forgetTopic(CHAT, '📅 Upcoming runs');
   w.api.reset();
-  await w.live.publish('schedule', '📅 второй');
+  await w.live.publish([{ slot: 'schedule', content: '📅 второй' }]);
 
   // Without the remembered thread the bot creates a second topic beside the
   // first and leaves the one everybody is looking at empty.

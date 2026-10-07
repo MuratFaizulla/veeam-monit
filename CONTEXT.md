@@ -205,8 +205,13 @@ numbered, when the list does not fit in Telegram's limit. It lists only the
 jobs that need somebody, two lines each — what is wrong, and under it the
 facts to check it by — and counts the rest, so that is a bad day rather than
 every day; listing all ninety took four messages. The chain, retention and
-totals are on /points, per job. A slot that no longer exists is **retired**:
-its messages are deleted from every chat, once (`RETIRED_SLOTS`). A page posted anew
+totals are on /points, per job. A slot a cycle does not publish is **taken
+down**: its messages are deleted from every chat, once — a slot that no longer
+exists (**retired**, `RETIRED_SLOTS`), one switched off by its setting, or
+every slot while `TELEGRAM_LIVE` is off. The live module is handed a whole
+cycle's pages and decides it; the monitor used to delete the retired slots
+itself, and nothing deleted a slot switched off: 🧹, turned off, kept its last
+message until it was too old for the bot to delete. A page posted anew
 takes the pages after it along: each used to be replaced on its own clock, and
 the continuation sat above the page it continued.
 

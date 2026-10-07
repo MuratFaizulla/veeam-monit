@@ -51,8 +51,8 @@ Every setting is made in `.env`; the full list with comments is in [.env.example
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_LIVE` | `true` | Live topics. |
-| `TELEGRAM_LIVE_ORPHANS` | `false` | The 🧹 Orphaned backups topic. |
+| `TELEGRAM_LIVE` | `true` | Live topics. Turned off, the bot deletes the messages it left in them. |
+| `TELEGRAM_LIVE_ORPHANS` | `false` | The 🧹 Orphaned backups topic. Turned off, the bot deletes the message it left there. |
 | `TELEGRAM_TOPIC_*` | see `.env.example` | Names of all the topics, both live and for alerts. |
 | `TELEGRAM_SEND_INTERVAL_MS`, `TELEGRAM_QUEUE_LIMIT` | `1500`, `200` | Pause between messages to one chat, and the size of the queue. |
 | `TELEGRAM_STATE_FILE` | `data/telegram-state.json` | State file. |

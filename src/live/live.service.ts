@@ -7,7 +7,7 @@ import { TelegramTopicsService } from '../telegram/topics.service';
 import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat } from '../telegram/types';
 import { isFooter } from './format';
-import { LiveSlot, specOf } from './slots';
+import { LIVE_SLOTS, LivePage, LiveSlot, RETIRED_SLOTS, specOf } from './slots';
 import { LiveMessageRef } from '../telegram/live-messages';
 
 /**
@@ -32,6 +32,13 @@ export { LiveSlot };
  * persisted, which is what makes a restart continue the same message instead of
  * starting a second one; if Telegram no longer has it, the stale one is deleted
  * and a new one takes over the slot.
+ *
+ * It is handed a whole cycle's pages, and a slot not among them is taken down:
+ * one switched off by a setting, one that no longer exists, or every slot while
+ * TELEGRAM_LIVE is off. Each used to be somebody else's to remember. The
+ * monitor deleted the retired slots itself, and nothing deleted a slot switched
+ * off — 🧹, turned off, kept its last message, frozen, until it was too old for
+ * the bot to delete.
  */
 @Injectable()
 export class TelegramLiveService {
@@ -48,18 +55,32 @@ export class TelegramLiveService {
   }
 
   /**
+   * Makes the live topics say this cycle's pages, in every registered chat, and
+   * nothing else: a slot not among them has its messages deleted, once, while
+   * Telegram still lets the bot delete them.
+   *
+   * Never throws: a status message that could not be refreshed must not abort
+   * the monitor cycle that produced it.
+   */
+  async publish(pages: readonly LivePage[]): Promise<void> {
+    if (!this.transport.enabled) return;
+    const shown = this.config.live ? pages : [];
+    for (const { slot, content } of shown) await this.publishSlot(slot, content);
+    const given = new Set<string>(shown.map(({ slot }) => slot));
+    for (const slot of [...Object.keys(LIVE_SLOTS), ...RETIRED_SLOTS]) {
+      if (!given.has(slot)) await this.takeDown(slot);
+    }
+  }
+
+  /**
    * Makes `content` the content of this slot in every registered chat.
    *
    * A slot usually owns one message. Where a list is too long for Telegram's
    * limit to be an honest cap, it may own several: each page is its own message
    * in the same topic, edited in place like the first, and pages that are no
    * longer needed are deleted rather than left behind saying something stale.
-   *
-   * Never throws: a status message that could not be refreshed must not abort
-   * the monitor cycle that produced it.
    */
-  async publish(slot: LiveSlot, content: string | string[]): Promise<void> {
-    if (!this.config.live || !this.transport.enabled) return;
+  private async publishSlot(slot: LiveSlot, content: string | string[]): Promise<void> {
     const pages = (Array.isArray(content) ? content : [content]).filter((page) => page.length > 0);
     if (pages.length === 0) return;
 
@@ -74,7 +95,8 @@ export class TelegramLiveService {
         for (const [index, page] of pages.entries()) {
           reposted = (await this.publishTo(chatId, chat, slot, page, index, reposted)) || reposted;
         }
-        await this.prune(chatId, slot, pages.length);
+        // The pages a now-shorter list no longer fills.
+        await this.removeFrom(chatId, slot, Math.max(pages.length, 1));
       } catch (error) {
         this.logger.error(
           `Live "${slot}" was not refreshed in chat ${chatId}: ${(error as Error).message}`,
@@ -84,41 +106,29 @@ export class TelegramLiveService {
   }
 
   /**
-   * Deletes what a slot that no longer exists left in every chat: its message
-   * and its further pages. Nothing to do, and nothing asked of Telegram, once
-   * they are gone. Never throws, like `publish`.
+   * Deletes what a slot nobody writes to left in every chat: its message and
+   * its further pages. Nothing is asked of Telegram once they are gone.
    */
-  async retire(slot: string): Promise<void> {
-    if (!this.transport.enabled) return;
+  private async takeDown(slot: string): Promise<void> {
     for (const [chatId] of this.store.chats()) {
-      for (let index = 0; ; index += 1) {
-        const key = index === 0 ? slot : `${slot}#${index}`;
-        const ref = this.store.liveMessages.of(chatId, key);
-        if (!ref) break;
-        this.store.liveMessages.forget(chatId, key);
-        if (!(await this.remove(chatId, ref.messageId))) {
-          this.logger.warn(`Retired live "${slot}" left message ${ref.messageId} behind in chat ${chatId}: delete it by hand`);
-        }
+      for (const messageId of await this.removeFrom(chatId, slot, 0)) {
+        this.logger.warn(`Live "${slot}" left message ${messageId} behind in chat ${chatId}: delete it by hand`);
       }
     }
   }
 
   /**
-   * The store key for one page of a slot. Page 0 keeps the bare slot name so
-   * that a slot which never grew past one message keeps the id it already has.
+   * Forgets a slot's pages from `from` on and deletes their messages; says
+   * which of them Telegram would not delete.
    */
-  private key(slot: LiveSlot, index: number): string {
-    return index === 0 ? slot : `${slot}#${index}`;
-  }
-
-  /** Removes the pages a now-shorter list no longer fills. */
-  private async prune(chatId: string, slot: LiveSlot, pages: number): Promise<void> {
-    for (let index = Math.max(pages, 1); ; index += 1) {
-      const key = this.key(slot, index);
+  private async removeFrom(chatId: string, slot: string, from: number): Promise<number[]> {
+    const left: number[] = [];
+    for (let index = from; ; index += 1) {
+      const key = pageKey(slot, index);
       const ref = this.store.liveMessages.of(chatId, key);
-      if (!ref) return;
+      if (!ref) return left;
       this.store.liveMessages.forget(chatId, key);
-      await this.remove(chatId, ref.messageId);
+      if (!(await this.remove(chatId, ref.messageId))) left.push(ref.messageId);
     }
   }
 
@@ -135,7 +145,7 @@ export class TelegramLiveService {
     index = 0,
     repost = false,
   ): Promise<boolean> {
-    const key = this.key(slot, index);
+    const key = pageKey(slot, index);
     const hash = this.hash(text);
     const held = this.store.liveMessages.of(chatId, key);
 
@@ -306,3 +316,9 @@ export class TelegramLiveService {
     return createHash('sha1').update(meaningful).digest('hex');
   }
 }
+
+/**
+ * The store key for one page of a slot. Page 0 keeps the bare slot name so
+ * that a slot which never grew past one message keeps the id it already has.
+ */
+const pageKey = (slot: string, index: number): string => (index === 0 ? slot : `${slot}#${index}`);

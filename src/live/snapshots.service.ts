@@ -29,7 +29,7 @@ import {
 } from './performance';
 import { renderProtection } from './protection';
 import { renderRepositories } from './repositories';
-import { LiveSlot } from './slots';
+import { LivePage } from './slots';
 
 /**
  * What a slot says when Veeam answered nothing this cycle. The evidence module
@@ -58,12 +58,6 @@ export interface LiveCycle {
   evidence: Evidence;
   /** The monitor's own view of itself, which only the monitor has. */
   health: LiveHealth;
-}
-
-/** One slot's content for this cycle, in the order the slots are published. */
-export interface LivePage {
-  slot: LiveSlot;
-  content: string | string[];
 }
 
 /**

@@ -36,6 +36,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Fixed
 
+- A live topic switched off by its setting kept its last message: 🧹 with `TELEGRAM_LIVE_ORPHANS=false`, or every topic with `TELEGRAM_LIVE=false`. Nothing wrote to it and nothing deleted it, and two days later the bot could no longer delete it at all. Now a topic the bot does not publish has its messages deleted, once.
 - A Veeam server that did not answer when the bot started was never reported in 🚨 Alerts, though «Veeam is reachable again» came once it did. Now a server that does not answer is reported the first time it is seen, and what the alerts last said about each server is kept in the state file: a restart during an outage repeats nothing, and the recovery still comes. A monitor account that signs in again after a restart is announced too; it used to come back without a word.
 - «Последняя ошибка» (last error) in `/status` stayed until the bot restarted, whatever had failed a week before. It is now what went wrong in the latest pass, and a pass that goes well clears it.
 - The bot locked the service account out itself: after the password was refused it tried to sign in every minute, and Veeam locked the account for 15 minutes, then for 30. Now, after a refusal, the next sign-in waits at least 15 minutes, or until the lockout Veeam named is over. The alert says when the next attempt will be. Restarting the bot tries at once.
