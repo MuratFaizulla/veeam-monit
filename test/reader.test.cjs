@@ -136,8 +136,8 @@ test('a server without task sessions still says which machine failed and why, fr
       '/api/v1/sessions/s1/taskSessions': () => { throw new VeeamApiError('Not found', 404); },
       '/api/v1/sessions/s1/logs': { records: [
         { status: 'Succeeded', title: 'Job started at 9/29/2026 8:47:52 PM' },
-        { status: 'Failed', title: 'Processing Test_sd' },
-        { status: 'Failed', title: 'Processing vApp_sdot_new Error: Failed to process the following VMs: Test_sd' },
+        { status: 'Failed', title: 'Processing Test_web' },
+        { status: 'Failed', title: 'Processing vApp_retail_new Error: Failed to process the following VMs: Test_web' },
         { status: 'Failed', title: 'Failed to create processing task for VM dom002.example.com Error: Failed to retrieve object hierarchy' },
         { status: 'Failed', title: 'Virtual Machine dc01.mgmt.example.com is unavailable and will be skipped from processing' },
         { status: 'Succeeded', title: 'Processing Argus' },
@@ -148,8 +148,8 @@ test('a server without task sessions still says which machine failed and why, fr
   );
 
   assert.deepEqual(await reader.machineResults('s1'), [
-    { name: 'Test_sd', result: 'failed', reason: undefined },
-    { name: 'vApp_sdot_new', result: 'failed', reason: 'Failed to process the following VMs: Test_sd' },
+    { name: 'Test_web', result: 'failed', reason: undefined },
+    { name: 'vApp_retail_new', result: 'failed', reason: 'Failed to process the following VMs: Test_web' },
     { name: 'dom002.example.com', result: 'failed', reason: 'Failed to retrieve object hierarchy' },
     {
       name: 'dc01.mgmt.example.com',

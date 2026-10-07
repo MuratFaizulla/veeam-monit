@@ -650,7 +650,7 @@ test('a weekly job is judged against its own rhythm, not against a flat threshol
 
   // Five days old, but this job only ever produces a point every five days.
   const onSchedule = assess({
-    jobs: [{ id: '1', name: 'OPS_ERP_REMS_REMS03' }],
+    jobs: [{ id: '1', name: 'OPS_ERP_CORE_CORE03' }],
     pointsByJob: new Map([['1', points(now, 5, 5)]]),
   });
   assert.deepEqual(onSchedule.risks, [], 'a flat 3-day rule would cry wolf here');
@@ -658,7 +658,7 @@ test('a weekly job is judged against its own rhythm, not against a flat threshol
 
   // The same job, now three of its own intervals late.
   const late = assess({
-    jobs: [{ id: '1', name: 'OPS_ERP_REMS_REMS03' }],
+    jobs: [{ id: '1', name: 'OPS_ERP_CORE_CORE03' }],
     pointsByJob: new Map([['1', points(now, 16, 5)]]),
   });
   assert.equal(late.risks.length, 1);
@@ -1042,12 +1042,12 @@ const HOUR_MS = 3_600_000;
 const isoAgo = (ms) => new Date(Date.now() - ms).toISOString();
 
 test('a failed run\'s points count for the machines that got through it, not for the one that failed', async () => {
-  // OPS_ERP_REMS_DBS03's nights: every run failed on one unreachable
+  // OPS_ERP_CORE_DBS03's nights: every run failed on one unreachable
   // machine, and the topics said "точек восстановления нет" of a job with 131
   // points on disk, thirteen machines a night.
-  const w = monitorWorld(LIVE, [job('1', 'REMS_DBS03', 'Failed')], {
+  const w = monitorWorld(LIVE, [job('1', 'CORE_DBS03', 'Failed')], {
     '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
-    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'REMS_DBS03' }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'CORE_DBS03' }] },
     '/api/v1/restorePoints': {
       data: ['DACA01', 'DACS01', 'DBS03'].map((name, i) => ({
         id: `p${i}`, backupId: 'b1', sessionId: 'night', name, creationTime: isoAgo(3 * HOUR_MS - i * 60_000),
@@ -1070,7 +1070,7 @@ test('a failed run\'s points count for the machines that got through it, not for
   const texts = w.api.sent().map((message) => message.text);
   const depth = texts.find((text) => /Точки восстановления/.test(text));
   // One night, and the two machines that got through it are backed up.
-  assert.match(depth, /<b>REMS_DBS03<\/b> — 1 точка ·/u, 'the machines that got through are backed up');
+  assert.match(depth, /<b>CORE_DBS03<\/b> — 1 точка ·/u, 'the machines that got through are backed up');
   assert.ok(!/Нет ни одной точки/u.test(depth), depth);
   const { machines, points } = w.evidence.evidence.depthByJob.get('1');
   assert.deepEqual({ machines, points }, { machines: 2, points: 2 }, 'and the one that failed is not');

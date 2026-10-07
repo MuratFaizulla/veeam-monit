@@ -352,7 +352,7 @@ export const readingOf = (read: EstateRead): Reading => {
     for (const { id, jobId, at, name, sessionId, run: coveringRun, failedBy, type } of placed) {
       // A failed run is not a failed machine. Veeam marks the whole run failed
       // when one machine of fifteen does, and every point of it used to be
-      // discarded: OPS_ERP_REMS_DBS03 read "точек восстановления нет" with
+      // discarded: OPS_ERP_CORE_DBS03 read "точек восстановления нет" with
       // 131 points on disk, thirteen machines a night. Only a failed
       // machine's point goes.
       if (failedBy) {

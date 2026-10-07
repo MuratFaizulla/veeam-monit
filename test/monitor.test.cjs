@@ -539,19 +539,19 @@ test('/help names every command the bot answers', async () => {
 });
 
 /**
- * OPS_ERP_EMM_DB1 as this VBR actually reports it: three days a week at
+ * OPS_ERP_APP_DB1 as this VBR actually reports it: three days a week at
  * 03:12, four twenty-second retries that all failed on the same unreachable
  * machine, and a fifth run that worked.
  */
 const configured = () => monitorWorld({}, [
   {
-    id: '1', name: 'OPS_ERP_EMM_DB1', type: 'Backup', status: 'Stopped',
+    id: '1', name: 'OPS_ERP_APP_DB1', type: 'Backup', status: 'Stopped',
     lastResult: 'Failed', lastRun: '2026-09-16T03:44:58+05:00',
     nextRun: '2026-09-18T03:12:00+05:00', objectsCount: 1,
   },
 ], {
   '/api/v1/jobs/1': {
-    id: '1', name: 'OPS_ERP_EMM_DB1',
+    id: '1', name: 'OPS_ERP_APP_DB1',
     schedule: {
       runAutomatically: true,
       // Veeam lists the days in its own order; the card must not.
@@ -589,7 +589,7 @@ const configured = () => monitorWorld({}, [
 test('/job shows how the job is set up, not just how it ran', async () => {
   const w = configured();
 
-  await said(w, '/job EMM_DB1');
+  await said(w, '/job APP_DB1');
 
   const reply = w.api.sent().at(-1).text;
   assert.match(reply, /Расписание:<\/b> пн, ср, пт в 03:12/, 'дни в порядке недели');
@@ -605,7 +605,7 @@ test('/job shows how the job is set up, not just how it ran', async () => {
 test('/job names the machine that failed, which the job name never does', async () => {
   const w = configured();
 
-  await said(w, '/job EMM_DB1');
+  await said(w, '/job APP_DB1');
 
   const reply = w.api.sent().at(-1).text;
   assert.match(reply, /Что именно не прошло/);
@@ -695,7 +695,7 @@ test('the card names the chain being written', () => {
 
 test('the reason is said once: at length by object, or briefly by run', async () => {
   const detailed = configured();
-  await said(detailed, '/job EMM_DB1');
+  await said(detailed, '/job APP_DB1');
   // The per-object block is about to say this at length; saying it twice is
   // how the card turned into a wall of the same Veeam paragraph.
   assert.doesNotMatch(detailed.api.sent().at(-1).text, /<b>Причина:<\/b>/);
@@ -983,7 +983,7 @@ test('pressing a job button opens that job, without anybody typing a name', asyn
 
   const sent = w.api.sent().at(-1);
   assert.equal(sent.message_thread_id, undefined, 'ответ в General');
-  assert.match(sent.text, /OPS_ERP_EMM_DB1/);
+  assert.match(sent.text, /OPS_ERP_APP_DB1/);
   assert.match(sent.text, /Расписание:<\/b> пн, ср, пт в 03:12/);
   // And the card offers its own refresh, so the loop closes.
   assert.deepEqual(
@@ -1475,7 +1475,7 @@ test('an attempt is counted from the sessions behind it', () => {
 
 test('the alert says which attempt it is', async () => {
   let sessions = [{ id: 's0', jobId: '1', result: { result: 'Success', message: 'ok' } }];
-  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Success')], {
+  const w = monitorWorld({}, [job('1', 'CORE_DBS03', 'Success')], {
     '/api/v1/jobs': { data: [{
       id: '1',
       schedule: { runAutomatically: true, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } },
@@ -1489,22 +1489,22 @@ test('the alert says which attempt it is', async () => {
   // these, and nothing in them said so.
   sessions = [
     { id: 's2', jobId: '1', creationTime: '2026-09-17T03:02:45+05:00', endTime: '2026-09-17T03:44:00+05:00',
-      result: { result: 'Failed', message: 'Processing REMS-DACA03' } },
+      result: { result: 'Failed', message: 'Processing CORE-DACA03' } },
     { id: 's1', jobId: '1', creationTime: '2026-09-16T23:46:16+05:00', endTime: '2026-09-17T02:52:00+05:00',
-      result: { result: 'Failed', message: 'Processing REMS-REMS01' } },
+      result: { result: 'Failed', message: 'Processing CORE-CORE01' } },
   ];
-  w.setJobs([job('1', 'REMS_DBS03', 'Failed')]);
+  w.setJobs([job('1', 'CORE_DBS03', 'Failed')]);
   await w.monitor.check();
 
   const alert = w.api.sent().at(-1);
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
-  assert.match(alert.text, /Processing REMS-DACA03/, 'и причина именно этой попытки');
+  assert.match(alert.text, /Processing CORE-DACA03/, 'и причина именно этой попытки');
 });
 
 /* ------------------------------------------------------------------ *
  * Job alerts: a failed run is followed until Veeam stops retrying it
  *
- * OPS_ERP_EMM_DB1 on 30 September: four attempts from 03:12 to 05:37, all
+ * OPS_ERP_APP_DB1 on 30 September: four attempts from 03:12 to 05:37, all
  * failed. The one alert said "Попытка: 1 из 4", because a failure is announced
  * when the result changes, and the three retries changed nothing. Nobody was
  * told the run had ended with no point, nor which machine failed and why.
@@ -1535,7 +1535,7 @@ const RETRY_FOUR = { runAutomatically: true, retry: { isEnabled: true, retryCoun
 const fieldOf = (event, label) => event.fields.find(([name]) => name === label)?.[1];
 
 /**
- * EMM_DB1's Job alerts, driven attempt by attempt. `attempt(n)` puts the n-th
+ * APP_DB1's Job alerts, driven attempt by attempt. `attempt(n)` puts the n-th
  * attempt's session in front and has Veeam report the job accordingly;
  * `check()` is one cycle. The clock is the test's own, moved by `later`.
  */
@@ -1588,7 +1588,7 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
       delivers = value;
     },
     check: () =>
-      alerts.check([jobOf({ id: '1', name: 'OPS_ERP_EMM_DB1', type: 'Backup', objectsCount: 1, ...state })], evidence),
+      alerts.check([jobOf({ id: '1', name: 'OPS_ERP_APP_DB1', type: 'Backup', objectsCount: 1, ...state })], evidence),
     /**
      * The n-th attempt ended with `result`; `ended: null` means it is still
      * running. `reported` is the job's result as Veeam's job list gives it,
@@ -1616,7 +1616,7 @@ test('the first failure says Veeam will try again, and which machine failed and 
   const [alert] = night.sent;
   const retryAt = new Date(night.ends[0] + 10 * MINUTE);
   const hhmm = `${String(retryAt.getUTCHours()).padStart(2, '0')}:${String(retryAt.getUTCMinutes()).padStart(2, '0')}`;
-  assert.equal(alert.title, 'OPS_ERP_EMM_DB1: ОШИБКА');
+  assert.equal(alert.title, 'OPS_ERP_APP_DB1: ОШИБКА');
   assert.match(fieldOf(alert, 'Попытка'), new RegExp(`^1 из 4 · Veeam повторит ≈ .*${hhmm}$`));
   assert.equal(
     alert.body,
@@ -1647,7 +1647,7 @@ test('the retries in between say nothing, and the last one says the run is over'
   night.attempt(4);
   await night.check();
   const [last] = night.sent;
-  assert.equal(last.title, 'OPS_ERP_EMM_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(last.title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
   assert.equal(fieldOf(last, 'Попытка'), '4 из 4 · повторов больше не будет');
   assert.match(last.body, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk/);
   assert.equal(fieldOf(last, 'Было'), undefined, 'что было до этого запуска, сказано в первом сообщении');
@@ -1690,7 +1690,7 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   await night.check();
 
   const [alert] = night.sent;
-  assert.equal(alert.title, 'OPS_ERP_EMM_DB1: ОШИБКА');
+  assert.equal(alert.title, 'OPS_ERP_APP_DB1: ОШИБКА');
   assert.equal(fieldOf(alert, 'Попытка'), '2 из 4 · повтор уже идёт');
   assert.match(alert.body, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk/, 'причина — из попытки, что упала');
   assert.equal(night.memory.retryingOf('1').attempt, 2);
@@ -1703,7 +1703,7 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   assert.equal(night.sent.length, 1);
   night.attempt(4);
   await night.check();
-  assert.equal(night.sent.at(-1).title, 'OPS_ERP_EMM_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
   assert.equal(night.sent.length, 2);
 });
 
@@ -1721,7 +1721,7 @@ test('a job only a hand can start is promised no retry, and not waited on', asyn
     await night.check();
 
     assert.equal(night.sent.length, 1, 'одно сообщение, без «повторов больше не будет» полчаса спустя');
-    assert.equal(night.sent[0].title, 'OPS_ERP_EMM_DB1: ОШИБКА');
+    assert.equal(night.sent[0].title, 'OPS_ERP_APP_DB1: ОШИБКА');
     assert.equal(fieldOf(night.sent[0], 'Попытка'), undefined, 'повтора не обещано');
     assert.equal(night.memory.retryingOf('1'), undefined);
   }
@@ -1745,7 +1745,7 @@ test('a run Veeam stopped retrying early is called over once the wait has passed
   night.later(31 * MINUTE);
   await night.check();
   const [last] = night.sent;
-  assert.equal(last.title, 'OPS_ERP_EMM_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(last.title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
   assert.equal(fieldOf(last, 'Попытка'), '1 из 4 · повторов больше не будет');
 });
 
@@ -1760,7 +1760,7 @@ test('a retry that works is a recovery that says which attempt did it', async ()
   await night.check();
 
   const [recovered] = night.sent;
-  assert.equal(recovered.title, 'OPS_ERP_EMM_DB1: задание восстановлено');
+  assert.equal(recovered.title, 'OPS_ERP_APP_DB1: задание восстановлено');
   assert.equal(fieldOf(recovered, 'Попытка'), '2 из 4');
   assert.equal(recovered.body, undefined);
   assert.equal(night.memory.retryingOf('1'), undefined);
@@ -1793,7 +1793,7 @@ test('an alert that reached nobody is not remembered, and is sent again next cyc
   assert.equal(night.memory.retryingOf('1').attempt, 3, 'не доставлено — не забыто');
   night.delivers = true;
   await night.check();
-  assert.equal(night.sent.at(-1).title, 'OPS_ERP_EMM_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
   assert.equal(night.memory.retryingOf('1'), undefined);
 });
 
@@ -1801,7 +1801,7 @@ test('the monitor hands every server\'s jobs to its Job alerts, and the run foll
   const now = Date.now();
   let sessions = [];
   const emm = (lastResult, lastRun) => ({
-    id: '1', name: 'OPS_ERP_EMM_DB1', type: 'Backup', status: 'Inactive', lastResult, lastRun, objectsCount: 1,
+    id: '1', name: 'OPS_ERP_APP_DB1', type: 'Backup', status: 'Inactive', lastResult, lastRun, objectsCount: 1,
   });
   const failed = (id, start, end) => ({
     id, jobId: '1', sessionType: 'BackupJob', creationTime: at(start), endTime: at(end),

@@ -15,7 +15,7 @@ const HOUR = 3_600_000;
 const MINUTE = 60_000;
 const iso = (ms) => new Date(ms).toISOString();
 
-/** Three attempts at one run, shaped like the REMS_DBS03 night: a long first
+/** Three attempts at one run, shaped like the CORE_DBS03 night: a long first
  * attempt, then two retries ten minutes after each previous one ended. */
 const oneRetriedRun = (end) => [
   { id: 's3', jobId: '1', sessionType: 'BackupJob', creationTime: iso(end - 1 * MINUTE),
@@ -92,7 +92,7 @@ test('a session that is not the job running is neither a run nor a failure', () 
 test('the first alert after Veeam comes back still knows the retry policy', async () => {
   let down = false;
   let sessions = [];
-  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Success')], {
+  const w = monitorWorld({}, [job('1', 'CORE_DBS03', 'Success')], {
     '/api/v1/serverTime': () => {
       if (down) throw new Error('connect ECONNREFUSED');
       return { serverTime: '2026-09-14T11:00:00+05:00' };
@@ -111,10 +111,10 @@ test('the first alert after Veeam comes back still knows the retry policy', asyn
   w.api.reset();
 
   sessions = oneRetriedRun(Date.now() - HOUR).slice(1);
-  w.setJobs([job('1', 'REMS_DBS03', 'Failed')]);
+  w.setJobs([job('1', 'CORE_DBS03', 'Failed')]);
   await w.monitor.check();
 
-  const alert = w.api.sent().find((message) => /REMS_DBS03/.test(message.text));
+  const alert = w.api.sent().find((message) => /CORE_DBS03/.test(message.text));
   assert.ok(alert, 'об отказе сообщено');
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
 });
@@ -126,8 +126,8 @@ test('the first alert after Veeam comes back still knows the retry policy', asyn
 test('a job card lists one retried run as one line, with its attempts counted', async () => {
   const { CHAT } = require('./world.cjs');
   const end = Date.now() - HOUR;
-  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Failed')], {
-    '/api/v1/jobs/1': { id: '1', name: 'REMS_DBS03', schedule: RETRY_POLICY },
+  const w = monitorWorld({}, [job('1', 'CORE_DBS03', 'Failed')], {
+    '/api/v1/jobs/1': { id: '1', name: 'CORE_DBS03', schedule: RETRY_POLICY },
     '/api/v1/backupInfrastructure/repositories': { data: [] },
     '/api/v1/backupInfrastructure/proxies': { data: [] },
     '/api/v1/sessions': { data: [
@@ -140,7 +140,7 @@ test('a job card lists one retried run as one line, with its attempts counted', 
 
   await w.updates.handleUpdate({
     update_id: 1,
-    message: { message_id: 1, text: '/job REMS_DBS03', chat: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
+    message: { message_id: 1, text: '/job CORE_DBS03', chat: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
   });
   const card = w.api.sent().at(-1).text;
   const list = card.slice(card.indexOf('Последние запуски'));
@@ -266,9 +266,9 @@ test('an alert before any scan has finished still knows the job\'s retry policy'
   // a scan can fail outright. The alert used to lose "из 4" for as long as it
   // did; the job's own configuration answers the same question in one request.
   let sessions = [];
-  const w = monitorWorld({}, [job('1', 'REMS_DBS03', 'Success')], {
+  const w = monitorWorld({}, [job('1', 'CORE_DBS03', 'Success')], {
     '/api/v1/backups': () => { throw new Error('backups unavailable'); },
-    '/api/v1/jobs/1': { id: '1', name: 'REMS_DBS03', schedule: RETRY_POLICY },
+    '/api/v1/jobs/1': { id: '1', name: 'CORE_DBS03', schedule: RETRY_POLICY },
     '/api/v1/sessions': () => ({ data: sessions }),
   });
   await w.monitor.check();
@@ -276,10 +276,10 @@ test('an alert before any scan has finished still knows the job\'s retry policy'
   w.api.reset();
 
   sessions = oneRetriedRun(Date.now() - HOUR).slice(1);
-  w.setJobs([job('1', 'REMS_DBS03', 'Failed')]);
+  w.setJobs([job('1', 'CORE_DBS03', 'Failed')]);
   await w.monitor.check();
 
-  const alert = w.api.sent().find((message) => /REMS_DBS03/.test(message.text));
+  const alert = w.api.sent().find((message) => /CORE_DBS03/.test(message.text));
   assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
 });
 

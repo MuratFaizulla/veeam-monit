@@ -88,13 +88,13 @@ test('📈 counts job runs only, and names Veeam\'s own sessions apart', () => {
 
 test('📈 on a Veeam with no task sessions lists what runs and says why there is no rate', () => {
   const text = renderPerformance({
-    jobs: [{ id: 's1', name: 'KTZH_SDOT_AST', creationTime: '2026-09-29T15:00:00Z', progressPercent: 40 }],
+    jobs: [{ id: 's1', name: 'CUST_RETAIL_DB', creationTime: '2026-09-29T15:00:00Z', progressPercent: 40 }],
     activeCount: 1,
     statisticsAvailable: false,
     statisticsUnsupported: true,
   }, clock);
   assert.match(text, /REST API \(1\.1\)/, 'not "временно недоступны": it never will be');
-  assert.match(text, /<b>KTZH_SDOT_AST<\/b>\nидёт 14 ч 52 мин/, 'the job is still listed, with no "нет данных" beside it');
+  assert.match(text, /<b>CUST_RETAIL_DB<\/b>\nидёт 14 ч 52 мин/, 'the job is still listed, with no "нет данных" beside it');
   assert.match(text, /Прогресс: 40%/);
   assert.doesNotMatch(text, /временно|нет данных|Не определено/);
 });

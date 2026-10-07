@@ -59,7 +59,7 @@ export const machineLine = (text: string): { machine?: string; reason?: string }
  *
  *   APPDB1-T3Q4 — Failed to open VDDK disk […] ( is read-only mode - [true] ) / Failed to open disk for read.
  *   Processing APPDB1-T3Q4
- *   Virtual Machine REMS-DBS03 (…) is unavailable and will be skipped from processing
+ *   Virtual Machine CORE-DBS03 (…) is unavailable and will be skipped from processing
  *
  * A machine and its reason read as one; a name with no reason stays as Veeam
  * wrote it, since "Processing" is what says the name is a machine; any other

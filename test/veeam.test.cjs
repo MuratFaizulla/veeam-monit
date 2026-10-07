@@ -478,8 +478,8 @@ test('Veeam\'s ways of saying a machine failed are read as the machine and the r
     { machine: 'dom002.example.com', reason: 'Failed to retrieve object hierarchy: exception ID d1dd9757' },
   );
   assert.deepEqual(
-    machineLine('Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
-    { machine: 'REMS-DBS03', reason: 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing' },
+    machineLine('Virtual Machine CORE-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing'),
+    { machine: 'CORE-DBS03', reason: 'Virtual Machine CORE-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing' },
   );
   assert.deepEqual(
     machineLine('Error: Выдано исключение типа "Veeam.Backup.AgentProvider.AgentClosedException".'),
@@ -502,7 +502,7 @@ test('a session\'s message is shown as a machine and its reason, never with the 
   // the name is a machine.
   assert.equal(sessionText('Processing APPDB1-T3Q4'), 'Processing APPDB1-T3Q4');
   // A reason that names its machine already is not given the name twice.
-  const unavailable = 'Virtual Machine REMS-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing';
+  const unavailable = 'Virtual Machine CORE-DBS03 (937da18e-dc71-48f4-b68e-9cee11ccb42b) is unavailable and will be skipped from processing';
   assert.equal(sessionText(unavailable), unavailable);
   assert.equal(sessionText('Removing VM snapshot Details: A connection attempt failed'), 'Removing VM snapshot Details: A connection attempt failed');
   assert.equal(sessionText('   '), undefined);
