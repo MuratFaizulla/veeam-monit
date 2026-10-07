@@ -116,7 +116,7 @@ test('the first alert after Veeam comes back still knows the retry policy', asyn
 
   const alert = w.api.sent().find((message) => /CORE_DBS03/.test(message.text));
   assert.ok(alert, 'об отказе сообщено');
-  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+  assert.match(alert.text, /CORE_DBS03 \(retry 1\) — failed/);
 });
 
 /* ------------------------------------------------------------------ *
@@ -280,7 +280,7 @@ test('an alert before any scan has finished still knows the job\'s retry policy'
   await w.monitor.check();
 
   const alert = w.api.sent().find((message) => /CORE_DBS03/.test(message.text));
-  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+  assert.match(alert.text, /CORE_DBS03 \(retry 1\) — failed/);
 });
 
 test('a job the last scan did not know still gets its retry policy', async () => {
@@ -301,7 +301,7 @@ test('a job the last scan did not know still gets its retry policy', async () =>
   await w.monitor.check();
 
   const alert = w.api.sent().find((message) => /NEW_JOB/.test(message.text));
-  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+  assert.match(alert.text, /NEW_JOB \(retry 1\) — failed/);
 });
 
 /* ------------------------------------------------------------------ *

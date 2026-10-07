@@ -1,7 +1,8 @@
 import { escapeHtml } from './format';
 
 /**
- * How the bot writes time and counts, in Russian, in the operator's zone.
+ * How the bot writes time and counts, in Russian, in the operator's zone —
+ * and in English for the alerts, which are written in English.
  *
  * Every message the bot sends — alerts, answers, live slots — says when
  * things happened and how many of them there were, and says it the same way.
@@ -110,6 +111,23 @@ export const dayOf = (iso: string, clock: Clock): string => {
 };
 
 /**
+ * A moment as `dayOf` writes it, in English, for the alerts: "today at 03:54",
+ * "yesterday at 23:40", "tomorrow at 04:00", "on 16.09 at 03:00", "on
+ * 01.04.2025 at 22:38".
+ */
+export const dayOfEn = (iso: string, clock: Clock): string => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return escapeHtml(iso);
+  const time = timeOnly(iso, clock);
+  const day = (offset: number): string => dayKey(new Date(clock.now.getTime() + offset * 86_400_000), clock);
+  const target = dayKey(date, clock);
+  if (target === day(0)) return `today at ${time}`;
+  if (target === day(-1)) return `yesterday at ${time}`;
+  if (target === day(1)) return `tomorrow at ${time}`;
+  return `on ${target.slice(-4) === day(0).slice(-4) ? target.slice(0, 5) : target} at ${time}`;
+};
+
+/**
  * The day alone, from epoch milliseconds: "19.09", or "19.09.2025" when it is
  * not this year. For where a day is the answer — since when a job can be
  * restored, when its chain began — and "сегодня в 01:25" would be too exact.
@@ -139,19 +157,24 @@ export const everyLabel = (days: number): string => {
 };
 
 /** "45 с", "22 мин", "3 ч 33 мин", "2 д 4 ч" — never more than two units. */
-export const duration = (ms: number): string => {
+export const duration = (ms: number): string => spanOf(ms, ['с', 'мин', 'ч', 'д']);
+
+/** The same in English, for the alerts: "45 s", "22 min", "3 h 33 min", "2 d 4 h". */
+export const durationEn = (ms: number): string => spanOf(ms, ['s', 'min', 'h', 'd']);
+
+const spanOf = (ms: number, [second, minute, hour, day]: string[]): string => {
   const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds} с`;
+  if (seconds < 60) return `${seconds} ${second}`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} мин`;
+  if (minutes < 60) return `${minutes} ${minute}`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
     const rest = minutes % 60;
-    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+    return rest ? `${hours} ${hour} ${rest} ${minute}` : `${hours} ${hour}`;
   }
   const days = Math.floor(hours / 24);
   const rest = hours % 24;
-  return rest ? `${days} д ${rest} ч` : `${days} д`;
+  return rest ? `${days} ${day} ${rest} ${hour}` : `${days} ${day}`;
 };
 
 /** Russian needs three forms; "1 задание, 2 задания, 5 заданий". */

@@ -1,14 +1,15 @@
 import { Logger } from '@nestjs/common';
 import { Evidence } from '../estate/evidence';
 import { FailedObject, JobSession } from '../estate/job-card';
-import { iconOf, isBadResult, isDisabled, isRunning, statusOf } from '../estate/job-state';
+import { isBadResult, isDisabled, isRunning } from '../estate/job-state';
 import { RunStanding, standingOf } from '../estate/runs';
 import { ServerEstate } from '../estate/server-estates';
 import { JobMemory, RetryingRun } from '../telegram/job-memory';
+import { escapeHtml } from '../telegram/format';
 import { DeliveryReport } from '../telegram/telegram.service';
-import { dayOf, momentOf } from '../telegram/time';
+import { Clock, dayOfEn, durationEn } from '../telegram/time';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
-import { jobStatusWord, jobTypeWord, resultWord } from '../telegram/words';
+import { jobTypeWordEn } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamSchedule } from '../veeam/types';
 import { jobTransitions, Transition } from './transitions';
@@ -125,44 +126,40 @@ export class JobAlerts {
     run: JobRun | undefined,
     final = false,
   ): Promise<NotificationEvent> {
-    const { job, result, previous, severity } = transition;
-    const { name } = job;
+    const { job, result, severity } = transition;
     const recovery = severity === 'success';
-    const title = recovery
-      ? `${name}: задание восстановлено`
-      : final
-        ? `${name}: ОШИБКА, повторов больше не будет`
-        : `${name}: ${result === 'failed' ? 'ОШИБКА' : 'предупреждение'}`;
-
-    // Written as every other message writes a moment — "сегодня в 01:21", in
-    // the operator's zone — not as Veeam's own string, offset and fractions of
-    // a second included, which nobody reads at three in the morning.
+    // Written in the operator's zone, "today at 01:21" — not as Veeam's own
+    // string, offset and fractions of a second included, which nobody reads
+    // at three in the morning.
     const clock = { now: new Date(this.now()), timezone: this.settings.timezone };
-    const when = (iso: string | undefined): string | undefined => (iso ? dayOf(iso, clock) : undefined);
 
-    // The attempt that went wrong, and which of its machines did and why.
-    const bad = recovery ? undefined : run?.sessions.find((session) => isBadResult(session.result ?? ''));
-    const objects = bad ? await this.server.jobs.objectsOf(bad) : [];
+    // The attempt the alert is about: the one that went wrong, or for a
+    // recovery the one that worked; and how its machines ended, and why.
+    const attempt = recovery
+      ? run?.sessions[0]
+      : run?.sessions.find((session) => isBadResult(session.result ?? '')) ?? run?.sessions[0];
+    const objects = attempt && !recovery ? await this.server.jobs.objectsOf(attempt) : [];
+    const outcome = recovery
+      ? 'succeeded'
+      : result === 'failed'
+        ? final ? 'failed, no more retries' : 'failed'
+        : 'finished with warnings';
+
+    const details = detailsOf(job, attempt, clock);
+    const machines = recovery ? [] : machineLines(objects, attempt?.message);
+    // Veeam retries a failure only; after a warning or a success comes the schedule.
+    const next = result === 'failed' ? nextLine(run?.standing, final, job.nextRun, clock) : undefined;
+    // Under the title the details, then a blank line before each part that follows.
+    const lines = [details ? [`<i>${escapeHtml(details)}</i>`] : [], machines, next ? [next] : []]
+      .filter((part) => part.length > 0)
+      .flatMap((part, index) => (index === 0 ? part : ['', ...part]));
 
     return {
       kind: 'job',
       severity,
-      subject: name,
-      title,
-      fields: [
-        ['Результат', resultWord(result)],
-        // The last word on a run already announced: what came before is in that alert.
-        ['Было', final ? undefined : resultWord(previous) ?? '—'],
-        ['Попытка', run ? attemptLine(run.standing, result, (at) => momentOf(at, clock)) : undefined],
-        ['Тип', jobTypeWord(job.type)],
-        // Not running is what every job an alert is about is doing; only
-        // another status — switched off, say — tells anybody anything.
-        ['Статус', IDLE.has(statusOf(job)) ? undefined : jobStatusWord(job.status)],
-        ['Последний запуск', when(job.lastRun)],
-        ['Следующий запуск', when(job.nextRun)],
-        ['Объектов', job.objectsCount],
-      ],
-      body: recovery ? undefined : objectsBody(objects, (bad ?? run?.sessions[0])?.message),
+      subject: job.name,
+      title: `${job.name}${labelOf(run, attempt, objects)} — ${outcome}`,
+      lines,
       // One message per job per transition; the cooldown only guards against a
       // job flapping between two results within the window.
       dedupeKey: `job:${job.id}:${result}${final ? ':final' : ''}`,
@@ -216,9 +213,6 @@ export interface JobAlertsSettings {
   now?: () => number;
 }
 
-/** Statuses of a job that is simply not running, lower-cased: nothing an alert needs to say. */
-const IDLE = new Set(['inactive', 'stopped']);
-
 /** A job's newest sessions, newest first, and where its newest run stands. */
 interface JobRun {
   sessions: JobSession[];
@@ -234,65 +228,115 @@ const retryingRunOf = (job: Job, standing: RunStanding): RetryingRun | undefined
   return { attempt: standing.attempt, lastRun: job.lastRun, retryBy: standing.retryBy };
 };
 
-/** Objects listed per group; the rest are counted. */
+
+/** Machines listed per kind; the rest are counted. */
 const OBJECTS_SHOWN = 5;
 
 /** A reason longer than this is cut: the head of it is what says what broke. */
 const REASON_SHOWN = 300;
 
 /**
- * "2 из 4 · Veeam повторит ≈ сегодня в 04:33", "4 из 4 · повторов больше не
- * будет", or nothing when there is nothing to count.
+ * "(retry 1)", "(Full)", "(Full, retry 2)", as Veeam's console names the
+ * session; nothing for the first attempt at an incremental run.
  *
  * "Попытка: 1 из 4" was on every failure alert, because a failure is announced
- * after its first attempt; whether Veeam would try again, and when, was not.
- * `when` writes an epoch-ms moment as the rest of the message writes moments.
+ * after its first attempt, and it said nothing anybody acted on.
  */
-export const attemptLine = (
-  standing: RunStanding,
-  result: string,
-  when: (at: number) => string,
-): string | undefined => {
-  const { attempt, allowed, retryAt } = standing;
-  const count = allowed ? `${attempt} из ${allowed}` : String(attempt);
-  // Veeam retries a failure only. A warning or a success ends the run, and its
-  // count is worth saying only when retries came before it; so is a failure's
-  // when the job's policy could not be read and nothing is known of what next.
-  if (result !== 'failed' || !allowed) return attempt > 1 ? count : undefined;
-  if (standing.inFlight) return `${count} · повтор уже идёт`;
-  if (retryAt !== undefined) return `${count} · Veeam повторит ≈ ${when(retryAt)}`;
-  return `${count} · повторов больше не будет`;
+const labelOf = (run: JobRun | undefined, attempt: JobSession | undefined, objects: FailedObject[]): string => {
+  const parts: string[] = [];
+  if (isFull(objects)) parts.push('Full');
+  const retry = run && attempt ? attemptNumberOf(run, attempt) - 1 : 0;
+  if (retry > 0) parts.push(`retry ${retry}`);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
 };
 
 /**
- * The machines that went wrong, each with its reason, or `message` — the
- * session's own — when Veeam named none: a run that never reached its machine
- * starts no task for it, and then the session message is the whole story.
- * That message, for a machine that failed, is "Processing APPDB1-T3Q4": its
- * name, and not a word about why — which is why the machines are listed.
- *
- * Plain text: it is sent as the alert's preformatted block, which is also what
- * lets an error be copied whole into a search or a ticket.
+ * Which attempt of its run `attempt` was. The standing counts the newest
+ * session; the one an alert is about can be the one before it, when the next
+ * attempt is already going.
  */
-export const objectsBody = (objects: FailedObject[], message?: string): string | undefined => {
+const attemptNumberOf = ({ sessions, standing }: JobRun, attempt: JobSession): number =>
+  Math.max(1, standing.attempt - Math.max(0, sessions.indexOf(attempt)));
+
+/**
+ * A run is a Full when most of its machines took one: a machine added to a
+ * job takes its first Full on an incremental night, and that night was not
+ * one. Only where Veeam said; a server whose REST API has no task sessions
+ * (1.1) does not.
+ */
+const isFull = (objects: FailedObject[]): boolean => {
+  const known = objects.filter(({ algorithm }) => algorithm === 'full' || algorithm === 'increment');
+  return known.length > 0 && known.filter(({ algorithm }) => algorithm === 'full').length * 2 > known.length;
+};
+
+/** "VM backup · started today at 03:02 · ran 42 min", and that the job is switched off when it is. */
+const detailsOf = (job: Job, attempt: JobSession | undefined, clock: Clock): string => {
+  const startedAt = attempt?.startedAt ?? job.lastRun;
+  const ran = Date.parse(attempt?.endedAt ?? '') - Date.parse(attempt?.startedAt ?? '');
+  return [
+    jobTypeWordEn(job.type),
+    startedAt ? `started ${dayOfEn(startedAt, clock)}` : undefined,
+    Number.isFinite(ran) && ran >= 0 ? `ran ${durationEn(ran)}` : undefined,
+    // It runs only when somebody starts it, and Veeam never retries that.
+    isDisabled(job) ? 'disabled in Veeam' : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+};
+
+/**
+ * A line for each machine that went wrong, and why in Veeam's words; or
+ * `message`, the session's own, when Veeam named none: a run that never
+ * reached its machine starts no task for it, and then the session message is
+ * the whole story. That message, for a machine that failed, is "Processing
+ * APPDB1-T3Q4": its name, and not a word about why — which is why the
+ * machines are listed.
+ */
+export const machineLines = (objects: FailedObject[], message?: string): string[] => {
   const failed = objects.filter((object) => object.result === 'failed');
   const warned = objects.filter((object) => object.result === 'warning');
-  if (failed.length + warned.length === 0) return message;
+  if (failed.length + warned.length === 0) return message ? [escapeHtml(clip(message))] : [];
 
   const lines: string[] = [];
-  const group = (title: string, list: FailedObject[]): void => {
-    if (list.length === 0) return;
-    if (lines.length > 0) lines.push('');
-    lines.push(`${title}: ${list.length} из ${objects.length}`);
-    for (const object of list.slice(0, OBJECTS_SHOWN)) {
-      const why = object.message ? ` — ${clip(object.message)}` : '';
-      lines.push(`${iconOf(object.result ?? '')} ${object.name}${why}`);
+  const list = (icon: string, which: FailedObject[], more: string): void => {
+    for (const object of which.slice(0, OBJECTS_SHOWN)) {
+      const why = object.message ? ` — ${escapeHtml(clip(object.message))}` : '';
+      lines.push(`${icon} <b>${escapeHtml(object.name)}</b>${why}`);
     }
-    if (list.length > OBJECTS_SHOWN) lines.push(`… и ещё ${list.length - OBJECTS_SHOWN}`);
+    if (which.length > OBJECTS_SHOWN) lines.push(`… and ${which.length - OBJECTS_SHOWN} more ${more}`);
   };
-  group('Не прошли', failed);
-  group('С предупреждением', warned);
-  return lines.join('\n');
+  list('❌', failed, 'failed');
+  list('⚠️', warned, 'with warnings');
+  const fine = objects.length - failed.length - warned.length;
+  if (fine > 0) lines.push(`✅ ${fine} other ${fine === 1 ? 'machine' : 'machines'} — no errors`);
+  return lines;
+};
+
+/**
+ * What happens next to a failed run: "🔁 Veeam will retry ≈ today at 03:54
+ * (retry 1).", "🔁 Retry 1 is running now.", "⛔ No more retries. Next
+ * scheduled run: today at 22:00." — or the next scheduled run alone, when
+ * Veeam does not retry the job or its policy could not be read.
+ *
+ * Whether Veeam will try again is what decides between waiting and going to
+ * look, so it closes the alert, apart from the rest.
+ */
+export const nextLine = (
+  standing: RunStanding | undefined,
+  final: boolean,
+  nextRun: string | undefined,
+  clock: Clock,
+): string | undefined => {
+  const scheduled = nextRun ? `Next scheduled run: ${dayOfEn(nextRun, clock)}.` : '';
+  if (standing?.allowed && !final) {
+    if (standing.inFlight) return `🔁 Retry ${standing.attempt - 1} is running now.`;
+    if (standing.retryAt !== undefined) {
+      const at = dayOfEn(new Date(standing.retryAt).toISOString(), clock);
+      return `🔁 Veeam will retry ≈ ${at} (retry ${standing.attempt}). If it succeeds, a recovery message follows.`;
+    }
+  }
+  if (final || standing?.allowed) return `⛔ No more retries.${scheduled ? ` ${scheduled}` : ''}`;
+  return scheduled ? `⏭ ${scheduled}` : undefined;
 };
 
 const clip = (text: string): string =>

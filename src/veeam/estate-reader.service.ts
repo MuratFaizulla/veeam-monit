@@ -47,6 +47,8 @@ export interface MachineResult {
   result: string;
   /** Why it went wrong, in Veeam's words and without its boilerplate; absent when Veeam gave none. */
   reason?: string;
+  /** Lower-cased: `full`, `increment`. Only from the task sessions; a log does not say. */
+  algorithm?: string;
 }
 
 /**
@@ -141,6 +143,7 @@ export class VeeamEstateReader {
           name: task.name,
           result: task.result?.result ?? '',
           reason: machineLine(task.result?.message ?? '').reason,
+          ...(task.algorithm ? { algorithm: task.algorithm.toLowerCase() } : {}),
         }));
     } catch (error) {
       if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;

@@ -120,7 +120,7 @@ test('every server is watched, and an alert says which server it is about', asyn
 
   const alerts = texts(w);
   assert.equal(alerts.length, 1, alerts.join('\n---\n'));
-  assert.match(alerts[0], /BAAS · Files: ОШИБКА/);
+  assert.match(alerts[0], /BAAS · Files — failed/);
   assert.equal(w.store.jobMemoryOf('baas').resultOf('b1'), 'failed');
   assert.equal(w.store.jobMemoryOf('ast').resultOf('a1'), 'success');
   // The same job id on two servers would be two conditions, not one.

@@ -379,10 +379,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       await this.emit(watch, {
         kind: 'infrastructure',
         severity: reachable ? 'success' : 'critical',
-        title: reachable ? 'Veeam: связь восстановлена' : 'Veeam: сервер недоступен',
+        title: reachable ? 'Veeam is reachable again' : 'Veeam is unreachable',
         fields: [
-          ['Сервер', http.baseUrl],
-          [reachable ? 'Время сервера' : 'Ошибка', detail],
+          ['Server', http.baseUrl],
+          [reachable ? 'Server time' : 'Error', detail],
         ],
       });
     }
@@ -404,8 +404,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       await this.emit(watch, {
         kind: 'infrastructure',
         severity: 'warning',
-        title: 'Мониторинг заданий выключен',
-        body: 'VEEAM_MONITOR_USERNAME / VEEAM_MONITOR_PASSWORD не заданы, поэтому состояние заданий не проверяется.',
+        title: 'Job monitoring is off',
+        body: 'VEEAM_MONITOR_USERNAME / VEEAM_MONITOR_PASSWORD are not set, so the jobs are not checked.',
         dedupeKey: 'veeam:auth:unconfigured',
         cooldownMs: 24 * HOUR,
       });
@@ -420,8 +420,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         await this.emit(watch, {
           kind: 'infrastructure',
           severity: 'success',
-          title: 'Veeam: служебная учётная запись снова работает',
-          fields: [['Учётная запись', auth.username]],
+          title: 'Veeam: the monitor account signs in again',
+          fields: [['Account', auth.username]],
         });
       }
       watch.lastAuthenticated = true;
@@ -433,12 +433,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       await this.emit(watch, {
         kind: 'infrastructure',
         severity: 'critical',
-        title: 'Veeam: служебная учётная запись не авторизуется',
+        title: 'Veeam: the monitor account cannot sign in',
         fields: [
-          ['Учётная запись', auth.username],
-          ['Сервер', http.baseUrl],
+          ['Account', auth.username],
+          ['Server', http.baseUrl],
         ],
-        body: `${(error as Error).message}\n\nПока вход не восстановлен, изменения статусов заданий не отслеживаются.`,
+        body: `${(error as Error).message}\n\nUntil it signs in, changes in the jobs' results are not followed.`,
         dedupeKey: 'veeam:auth:failed',
         cooldownMs: this.config.authAlertCooldownMs,
       });

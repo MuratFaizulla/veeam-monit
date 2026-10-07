@@ -72,7 +72,7 @@ test('a token refused in the middle of a cycle costs one sign-in, not the rest o
   assert.equal(state.logins, 2, 'one sign-in for the cycle, one for the refusal');
   assert.equal(monitor.status.lastError, null, 'no step of the cycle failed');
   const texts = textsOf(w);
-  assert.ok(texts.some((t) => /Repo01: мало свободного места/.test(t)), 'repositories were read');
+  assert.ok(texts.some((t) => /Repository Repo01 is low on space/.test(t)), 'repositories were read');
   assert.ok(!texts.some((t) => /не прочитаны/.test(t)), 'the Evidence was read');
   assert.ok(!texts.some((t) => /временно недоступны/.test(t)), 'the Working sessions were read');
 });
@@ -212,7 +212,7 @@ test('a job Veeam gave no name is called by its id in the alert, the Summary and
   });
 
   const texts = textsOf(w);
-  assert.ok(texts.some((t) => /5f1c0e2a: ОШИБКА/.test(t)), 'the alert');
+  assert.ok(texts.some((t) => /5f1c0e2a — failed/.test(t)), 'the alert');
   assert.ok(w.api.of('createForumTopic').some((topic) => topic.name === '5f1c0e2a'), 'the topic the alert is routed to');
   assert.ok(texts.some((t) => /🔴 5f1c0e2a/.test(t)), 'the Summary');
   assert.ok(texts.some((t) => /Сейчас выполняется: 1 задание[\s\S]*<b>5f1c0e2a<\/b>/.test(t)), '▶️');

@@ -390,10 +390,11 @@ export class JobQueryService {
     // machine, "Error: Cannot get service content. / Soap fault. Temporary
     // failure in name resolution". An error named for a machine wins.
     const { blames } = session;
-    return machines.map(({ name, result, reason }) => ({
+    return machines.map(({ name, result, reason, algorithm }) => ({
       name,
       result,
       message: blames?.machine === name ? blames.reason : reason,
+      ...(algorithm ? { algorithm } : {}),
     }));
   }
 

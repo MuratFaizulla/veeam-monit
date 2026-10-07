@@ -79,6 +79,8 @@ export interface FailedObject {
   /** Lower-cased. */
   result?: string;
   message?: string;
+  /** Lower-cased: `full`, `increment`, where Veeam said. */
+  algorithm?: string;
 }
 
 /** Everything worth saying about one job, gathered from every source. */

@@ -70,7 +70,7 @@ test('a repository under the threshold warns, under half of it is critical, abov
   assert.deepEqual(Object.keys(bySubject).sort(), ['BKP_empty', 'BKP_low']);
   assert.equal(bySubject.BKP_low.severity, 'warning');
   assert.equal(bySubject.BKP_empty.severity, 'critical');
-  assert.match(bySubject.BKP_low.title, /BKP_low: мало свободного места/);
+  assert.match(bySubject.BKP_low.title, /Repository BKP_low is low on space/);
   assert.equal(bySubject.BKP_low.dedupeKey, 'repo:low');
   assert.deepEqual(cleared, ['repo:ok'], 'восстановившийся снова может предупредить');
 });
@@ -98,7 +98,7 @@ test('a monitor with no service account says so once, not every cycle', async ()
   await w.monitor.check();
   await w.monitor.check();
 
-  const told = w.api.sent().filter((m) => /Мониторинг заданий выключен/.test(m.text));
+  const told = w.api.sent().filter((m) => /Job monitoring is off/.test(m.text));
   assert.equal(told.length, 1);
 });
 

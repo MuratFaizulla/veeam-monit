@@ -72,7 +72,7 @@ test('the first cycle seeds job results silently and the next one reports change
   const sent = w.api.sent();
   assert.equal(sent.length, 1);
   assert.match(sent[0].text, /SQL Daily/);
-  assert.match(sent[0].text, /Результат:<\/b> ошибка/);
+  assert.match(sent[0].text, /SQL Daily — failed<\/b>/);
   assert.match(sent[0].text, /Agent failed to process method/);
   assert.equal(w.api.of('createForumTopic').at(-1).name, 'SQL Daily');
 });
@@ -91,7 +91,7 @@ test('a job that stays failed is not reported again, and its recovery is', async
   await w.monitor.check();
   const sent = w.api.sent();
   assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /восстановлено/);
+  assert.match(sent[0].text, /SQL Daily — succeeded/);
 });
 
 test('a run in progress is not an event', async () => {
@@ -143,7 +143,7 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
-  const alerts = w.api.sent().filter((payload) => /не авторизуется/.test(payload.text));
+  const alerts = w.api.sent().filter((payload) => /cannot sign in/.test(payload.text));
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].text, /Authentication failed/);
   assert.equal(monitor.status.authenticated, false);
@@ -155,7 +155,7 @@ test('a monitor account that cannot log in is reported, once, and its recovery t
   broken = false;
   w.api.reset();
   await monitor.check();
-  assert.match(w.api.sent()[0].text, /снова работает/);
+  assert.match(w.api.sent()[0].text, /signs in again/);
   assert.equal(monitor.status.authenticated, true);
 });
 
@@ -176,12 +176,12 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
   w.api.reset();
   up = false;
   await monitor.check();
-  assert.match(w.api.sent()[0].text, /сервер недоступен/);
+  assert.match(w.api.sent()[0].text, /Veeam is unreachable/);
 
   w.api.reset();
   up = true;
   await monitor.check();
-  assert.match(w.api.sent()[0].text, /связь восстановлена/);
+  assert.match(w.api.sent()[0].text, /Veeam is reachable again/);
 });
 
 test('a repository below the free-space threshold is reported once per cooldown', async () => {
@@ -1450,7 +1450,7 @@ test('a run that fails, retries and finally succeeds is one alert and one recove
   await w.monitor.check();
   const sent = w.api.sent();
   assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /восстановлено/);
+  assert.match(sent[0].text, /SQL Daily — succeeded/);
 });
 
 test('an attempt is counted from the sessions behind it', () => {
@@ -1497,7 +1497,7 @@ test('the alert says which attempt it is', async () => {
   await w.monitor.check();
 
   const alert = w.api.sent().at(-1);
-  assert.match(alert.text, /Попытка:<\/b> 2 из 4/);
+  assert.match(alert.text, /CORE_DBS03 \(retry 1\) — failed<\/b>/, 'the second attempt is its first retry');
   assert.match(alert.text, /Processing CORE-DACA03/, 'и причина именно этой попытки');
 });
 
@@ -1531,8 +1531,8 @@ const VDDK =
   'Agent failed to process method {DataTransfer.SyncDisk}.';
 const RETRY_FOUR = { runAutomatically: true, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } };
 
-/** One field of an alert, as it is sent. */
-const fieldOf = (event, label) => event.fields.find(([name]) => name === label)?.[1];
+/** What an alert says under its title, as it is sent. */
+const textOf = (event) => event.lines.join('\n');
 
 /**
  * APP_DB1's Job alerts, driven attempt by attempt. `attempt(n)` puts the n-th
@@ -1616,15 +1616,14 @@ test('the first failure says Veeam will try again, and which machine failed and 
   const [alert] = night.sent;
   const retryAt = new Date(night.ends[0] + 10 * MINUTE);
   const hhmm = `${String(retryAt.getUTCHours()).padStart(2, '0')}:${String(retryAt.getUTCMinutes()).padStart(2, '0')}`;
-  assert.equal(alert.title, 'OPS_ERP_APP_DB1: ОШИБКА');
-  assert.match(fieldOf(alert, 'Попытка'), new RegExp(`^1 из 4 · Veeam повторит ≈ .*${hhmm}$`));
-  assert.equal(
-    alert.body,
-    'Не прошли: 1 из 1\n🔴 APPDB1-T3Q4 — Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.',
+  assert.equal(alert.title, 'OPS_ERP_APP_DB1 — failed');
+  assert.match(textOf(alert), new RegExp(`\n\n🔁 Veeam will retry ≈ .*${hhmm} \\(retry 1\\)\\.`));
+  assert.ok(
+    alert.lines.includes('❌ <b>APPDB1-T3Q4</b> — Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.'),
     'параметры подключения и трасса агента — не причина',
   );
-  // "не выполняется" is what every job an alert is about is doing.
-  assert.equal(fieldOf(alert, 'Статус'), undefined);
+  // Not running is what every job an alert is about is doing.
+  assert.match(alert.lines[0], /^<i>VM backup · started .* · ran 59 min<\/i>$/);
   assert.equal(night.memory.retryingOf('1').attempt, 1, 'запуск запомнен до конца повторов');
 });
 
@@ -1647,10 +1646,9 @@ test('the retries in between say nothing, and the last one says the run is over'
   night.attempt(4);
   await night.check();
   const [last] = night.sent;
-  assert.equal(last.title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
-  assert.equal(fieldOf(last, 'Попытка'), '4 из 4 · повторов больше не будет');
-  assert.match(last.body, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk/);
-  assert.equal(fieldOf(last, 'Было'), undefined, 'что было до этого запуска, сказано в первом сообщении');
+  assert.equal(last.title, 'OPS_ERP_APP_DB1 (retry 3) — failed, no more retries');
+  assert.match(textOf(last), /\n\n⛔ No more retries\.$/);
+  assert.match(textOf(last), /❌ <b>APPDB1-T3Q4<\/b> — Failed to open VDDK disk/);
   assert.equal(night.memory.retryingOf('1'), undefined);
 
   await night.check();
@@ -1690,9 +1688,9 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   await night.check();
 
   const [alert] = night.sent;
-  assert.equal(alert.title, 'OPS_ERP_APP_DB1: ОШИБКА');
-  assert.equal(fieldOf(alert, 'Попытка'), '2 из 4 · повтор уже идёт');
-  assert.match(alert.body, /🔴 APPDB1-T3Q4 — Failed to open VDDK disk/, 'причина — из попытки, что упала');
+  assert.equal(alert.title, 'OPS_ERP_APP_DB1 — failed');
+  assert.match(textOf(alert), /\n\n🔁 Retry 1 is running now\.$/);
+  assert.match(textOf(alert), /❌ <b>APPDB1-T3Q4<\/b> — Failed to open VDDK disk/, 'причина — из попытки, что упала');
   assert.equal(night.memory.retryingOf('1').attempt, 2);
 
   // It fails, and so do the two after it: the last word comes, once.
@@ -1703,7 +1701,7 @@ test('a failure first read while Veeam is already retrying says so, and the run 
   assert.equal(night.sent.length, 1);
   night.attempt(4);
   await night.check();
-  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1 (retry 3) — failed, no more retries');
   assert.equal(night.sent.length, 2);
 });
 
@@ -1721,11 +1719,12 @@ test('a job only a hand can start is promised no retry, and not waited on', asyn
     await night.check();
 
     assert.equal(night.sent.length, 1, 'одно сообщение, без «повторов больше не будет» полчаса спустя');
-    assert.equal(night.sent[0].title, 'OPS_ERP_APP_DB1: ОШИБКА');
-    assert.equal(fieldOf(night.sent[0], 'Попытка'), undefined, 'повтора не обещано');
+    assert.equal(night.sent[0].title, 'OPS_ERP_APP_DB1 — failed');
+    assert.doesNotMatch(textOf(night.sent[0]), /retr/i, 'повтора не обещано');
     assert.equal(night.memory.retryingOf('1'), undefined);
   }
-  assert.equal(fieldOf(switchedOff.sent[0], 'Статус'), 'выключено в Veeam');
+  assert.match(switchedOff.sent[0].lines[0], / · disabled in Veeam<\/i>$/);
+  assert.doesNotMatch(byHand.sent[0].lines[0], /disabled/);
 });
 
 test('a run Veeam stopped retrying early is called over once the wait has passed', async () => {
@@ -1745,8 +1744,8 @@ test('a run Veeam stopped retrying early is called over once the wait has passed
   night.later(31 * MINUTE);
   await night.check();
   const [last] = night.sent;
-  assert.equal(last.title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
-  assert.equal(fieldOf(last, 'Попытка'), '1 из 4 · повторов больше не будет');
+  assert.equal(last.title, 'OPS_ERP_APP_DB1 — failed, no more retries');
+  assert.match(textOf(last), /\n\n⛔ No more retries\.$/);
 });
 
 test('a retry that works is a recovery that says which attempt did it', async () => {
@@ -1760,9 +1759,10 @@ test('a retry that works is a recovery that says which attempt did it', async ()
   await night.check();
 
   const [recovered] = night.sent;
-  assert.equal(recovered.title, 'OPS_ERP_APP_DB1: задание восстановлено');
-  assert.equal(fieldOf(recovered, 'Попытка'), '2 из 4');
-  assert.equal(recovered.body, undefined);
+  assert.equal(recovered.title, 'OPS_ERP_APP_DB1 (retry 1) — succeeded');
+  // The attempt that worked, and nothing about machines or what comes next.
+  assert.equal(recovered.lines.length, 1);
+  assert.match(recovered.lines[0], /^<i>VM backup · started .* · ran 40 s<\/i>$/);
   assert.equal(night.memory.retryingOf('1'), undefined);
 });
 
@@ -1793,7 +1793,7 @@ test('an alert that reached nobody is not remembered, and is sent again next cyc
   assert.equal(night.memory.retryingOf('1').attempt, 3, 'не доставлено — не забыто');
   night.delivers = true;
   await night.check();
-  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1: ОШИБКА, повторов больше не будет');
+  assert.equal(night.sent.at(-1).title, 'OPS_ERP_APP_DB1 (retry 3) — failed, no more retries');
   assert.equal(night.memory.retryingOf('1'), undefined);
 });
 
@@ -1816,7 +1816,7 @@ test('the monitor hands every server\'s jobs to its Job alerts, and the run foll
   sessions = [failed('a1', now - 60 * MINUTE, now - MINUTE)];
   w.setJobs([emm('Failed', at(now - 60 * MINUTE))]);
   await w.monitor.check();
-  assert.match(w.api.sent().at(-1).text, /Попытка:<\/b> 1 из 4 · Veeam повторит/);
+  assert.match(w.api.sent().at(-1).text, /\n\n🔁 Veeam will retry ≈ .* \(retry 1\)\./);
   assert.equal(w.store.snapshot().retrying[SERVER]['1'].attempt, 1, 'в файле состояния');
 
   sessions = [
@@ -1827,7 +1827,7 @@ test('the monitor hands every server\'s jobs to its Job alerts, and the run foll
   ];
   w.setJobs([emm('Failed', at(now - 5_000))]);
   await w.monitor.check();
-  assert.match(w.api.sent().at(-1).text, /ОШИБКА, повторов больше не будет/);
+  assert.match(w.api.sent().at(-1).text, /OPS_ERP_APP_DB1 \(retry 3\) — failed, no more retries/);
   assert.equal(w.store.snapshot().retrying[SERVER]['1'], undefined);
 });
 
@@ -1872,7 +1872,7 @@ test('an alert with no machine to list gives the session\'s reason, without the 
   await w.monitor.check();
 
   const alert = w.api.sent().at(-1).text;
-  assert.match(alert, /<pre>comp01vc01 — Cannot get service content\. \/ Soap fault\. Temporary failure in name resolution<\/pre>/);
+  assert.match(alert, /\n\ncomp01vc01 — Cannot get service content\. \/ Soap fault\. Temporary failure in name resolution(\n|$)/);
   assert.doesNotMatch(alert, /Logon attempt|svc@example\.com/);
 });
 
@@ -1896,22 +1896,47 @@ test('the machine a session blames takes the session\'s reason, and the others k
   ]);
 });
 
-test('an alert lists at most five machines of a group and counts the rest', () => {
-  const { objectsBody } = require('../dist/monitor/job-alerts');
+test('an alert lists at most five machines of a kind and counts the rest', () => {
+  const { machineLines } = require('../dist/monitor/job-alerts');
   const objects = [
     ...Array.from({ length: 7 }, (_, i) => ({ name: `vm${i}`, result: 'failed', message: 'x'.repeat(400) })),
     { name: 'ok', result: 'success' },
     { name: 'slow', result: 'warning', message: 'Removing VM snapshot' },
   ];
 
-  const body = objectsBody(objects, 'Processing vm0');
+  const lines = machineLines(objects, 'Processing vm0');
 
-  assert.match(body, /^Не прошли: 7 из 9\n/);
-  assert.equal((body.match(/^🔴 /gm) ?? []).length, 5);
-  assert.match(body, /… и ещё 2\n\nС предупреждением: 1 из 9\n🟡 slow — Removing VM snapshot$/);
-  assert.ok(body.split('\n').every((line) => line.length < 320), 'длинная причина обрезана');
+  assert.equal(lines.filter((line) => line.startsWith('❌ <b>vm')).length, 5);
+  assert.deepEqual(lines.slice(5), ['… and 2 more failed', '⚠️ <b>slow</b> — Removing VM snapshot', '✅ 1 other machine — no errors']);
+  assert.ok(lines.every((line) => line.length < 340), 'длинная причина обрезана');
   // Nothing named: the session's own message is the whole story.
-  assert.equal(objectsBody([{ name: 'ok', result: 'success' }], 'Virtual Machine X is unavailable'), 'Virtual Machine X is unavailable');
+  assert.deepEqual(machineLines([{ name: 'ok', result: 'success' }], 'Virtual Machine X is unavailable'), ['Virtual Machine X is unavailable']);
+  assert.deepEqual(machineLines([{ name: 'a&b', result: 'failed', message: '<none>' }]), ['❌ <b>a&amp;b</b> — &lt;none&gt;']);
+});
+
+test('an alert names a Full and a retry the way Veeam\'s console names the session', async () => {
+  const night = retriedNight();
+  await night.check();
+  night.attempt(1);
+  await night.check();
+  assert.equal(night.sent[0].title, 'OPS_ERP_APP_DB1 — failed', 'a first attempt at an increment says neither');
+
+  const server = serverOf(world(), veeamFake({
+    '/api/v1/sessions': { data: [{ id: 'f1', jobId: '1', creationTime: at(Date.now() - 50 * MINUTE), endTime: at(Date.now() - MINUTE), result: { result: 'Failed' } }] },
+    '/api/v1/sessions/f1/taskSessions': { data: [
+      { name: 'new01', algorithm: 'Increment', result: { result: 'Success' } },
+      { name: 'db01', algorithm: 'Full', result: { result: 'Failed', message: 'Disk full' } },
+      { name: 'db02', algorithm: 'Full', result: { result: 'Success' } },
+    ] },
+  }));
+  const sent = [];
+  const alerts = new JobAlerts(server, new JobMemory({ results: { 1: 'success' }, retrying: {} }, () => {}), async (event) => {
+    sent.push(event);
+    return { outcome: 'delivered' };
+  }, { timezone: 'UTC', cooldownMs: 0 });
+  await alerts.check([jobOf({ id: '1', name: 'OPS_Files', type: 'Backup', status: 'Inactive', lastResult: 'Failed' })], { status: 'ready', schedulesByJob: new Map([['1', RETRY_FOUR]]) });
+  // Two machines of three took a Full: the run was one.
+  assert.equal(sent[0].title, 'OPS_Files (Full) — failed');
 });
 
 /* ------------------------------------------------------------------ *
@@ -1974,15 +1999,14 @@ test('a job alert says when the job ran and runs next as people write it, in the
   w.setJobs([esb('Failed', '2026-09-16T01:21:14.7+05:00', '2026-09-17T01:21:00+05:00')]);
   await w.monitor.check();
   const failed = w.api.sent().at(-1).text;
-  assert.match(failed, /Последний запуск:<\/b> 16\.09 в 01:21/);
-  assert.match(failed, /Следующий запуск:<\/b> 17\.09 в 01:21/);
+  assert.match(failed, /started on 16\.09 at 01:21/);
+  assert.match(failed, /⏭ Next scheduled run: on 17\.09 at 01:21\./);
   assert.ok(!/\d{4}-\d\d-\d\dT/.test(failed), `no ISO string is left: ${failed}`);
 
   // The recovery is written the same way; in UTC it would read 20:21 the day before.
   w.setJobs([esb('Success', '2026-09-17T01:21:00+05:00', '2026-09-18T01:21:00+05:00')]);
   await w.monitor.check();
   const recovered = w.api.sent().at(-1).text;
-  assert.match(recovered, /задание восстановлено/);
-  assert.match(recovered, /Последний запуск:<\/b> 17\.09 в 01:21/);
-  assert.match(recovered, /Следующий запуск:<\/b> 18\.09 в 01:21/);
+  assert.match(recovered, /— succeeded/);
+  assert.match(recovered, /started on 17\.09 at 01:21/);
 });

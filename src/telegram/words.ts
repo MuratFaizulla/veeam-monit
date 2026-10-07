@@ -1,7 +1,8 @@
 import { Clock, dateOf } from './time';
 
 /**
- * Veeam's own words, as the bot writes them in Russian.
+ * Veeam's own words, as the bot writes them in Russian — and the job types in
+ * English as well, for the alerts.
  *
  * Veeam answers in identifiers — `inactive`, `CloudDirectorBackup`, `Source`,
  * `NONE` — and they reached the chat as they came: "Статус: inactive" in an
@@ -48,6 +49,30 @@ export const jobTypeWord = lookup({
   windowsagentbackupserverpolicy: 'агент Windows',
   linuxagentbackupworkstationpolicy: 'агент Linux',
   linuxagentbackupserverpolicy: 'агент Linux',
+  surebackup: 'SureBackup',
+});
+
+/** What kind of job it is, in English, for the alerts: "VM backup", "replication". */
+export const jobTypeWordEn = lookup({
+  backup: 'VM backup',
+  clouddirectorbackup: 'vCloud backup',
+  vspherereplica: 'replication',
+  hypervreplica: 'Hyper-V replication',
+  clouddirectorreplica: 'vCloud replication',
+  cdpreplica: 'CDP replication',
+  backupcopy: 'backup copy',
+  vmbackupcopy: 'backup copy',
+  filebackup: 'file backup',
+  filebackupcopy: 'file backup copy',
+  objectstoragebackup: 'object storage backup',
+  entraidtenantbackup: 'Entra ID backup',
+  entraidauditlogbackup: 'Entra ID audit log backup',
+  windowsagentbackup: 'Windows agent',
+  linuxagentbackup: 'Linux agent',
+  windowsagentbackupworkstationpolicy: 'Windows agent',
+  windowsagentbackupserverpolicy: 'Windows agent',
+  linuxagentbackupworkstationpolicy: 'Linux agent',
+  linuxagentbackupserverpolicy: 'Linux agent',
   surebackup: 'SureBackup',
 });
 

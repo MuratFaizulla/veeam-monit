@@ -38,13 +38,13 @@ export const repositoryAlarms = (
       // Under half the threshold is the one that fills up tonight.
       severity: freePercent < thresholdPercent / 2 ? 'critical' : 'warning',
       subject: repository.subject,
-      title: `Репозиторий ${repository.name}: мало свободного места`,
+      title: `Repository ${repository.name} is low on space`,
       fields: [
-        ['Свободно', `${(freeGB ?? 0).toFixed(1)} ГБ (${freePercent.toFixed(1)}%)`],
-        ['Ёмкость', `${(capacityGB ?? 0).toFixed(1)} ГБ`],
-        ['Порог', `${thresholdPercent}%`],
-        ['Сервер', repository.hostName],
-        ['Путь', repository.path],
+        ['Free', `${sizeOf(freeGB ?? 0)} (${freePercent.toFixed(1)}%)`],
+        ['Capacity', sizeOf(capacityGB ?? 0)],
+        ['Alert below', `${thresholdPercent}% free`],
+        ['Server', repository.hostName],
+        ['Path', repository.path],
       ],
       dedupeKey: key,
       cooldownMs,
@@ -52,3 +52,6 @@ export const repositoryAlarms = (
   }
   return alarms;
 };
+
+/** "3.8 TB", "512.0 GB". */
+const sizeOf = (gb: number): string => (gb >= 1024 ? `${(gb / 1024).toFixed(1)} TB` : `${gb.toFixed(1)} GB`);

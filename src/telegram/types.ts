@@ -132,6 +132,11 @@ export interface NotificationEvent {
   title: string;
   /** Label/value rows rendered under the title. Values are HTML-escaped. */
   fields?: Array<[string, string | number | null | undefined]>;
+  /**
+   * Lines under the title, already written as HTML, for an event laid out by
+   * whoever raised it — a job alert. Shown in place of `fields`.
+   */
+  lines?: string[];
   /** Free-form trailing block, HTML-escaped. */
   body?: string;
   /**

@@ -443,7 +443,7 @@ test('a transition whose delivery failed is retried on the next cycle', async ()
   const sent = w.api.sent();
   assert.equal(sent.length, 1, 'переход сообщается на следующем цикле');
   assert.match(sent[0].text, /SQL Daily/);
-  assert.match(sent[0].text, /Результат:<\/b> ошибка/);
+  assert.match(sent[0].text, /SQL Daily — failed<\/b>/);
   assert.equal(w.store.jobMemoryOf(SERVER).resultOf('1'), 'failed');
   assert.equal(w.monitor.status.lastOutcome, 'delivered');
 });

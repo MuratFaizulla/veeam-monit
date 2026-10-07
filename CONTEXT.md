@@ -291,13 +291,14 @@ three or four sessions. Two of them are the same **Run** when the newer started
 inside the retry window of the older finishing — the job's own `awaitMinutes`
 plus an allowance for how long the failing attempt took.
 
-The alert says which attempt it is ("2 из 4"), because three messages a night
-with identical text were three attempts at one run and nothing said so — and
-what comes next, which is what decides between waiting and going to look:
-"Veeam повторит ≈ сегодня в 04:33" while the job has attempts left and the
-wait since the last one has not run out, "повторов больше не будет" once
-either has, and "повтор уже идёт" when the next attempt is running as the
-failure is read. That answer is `standingOf`, by the same rule that folds the
+The alert says which attempt it is, as Veeam's console names the session —
+"(retry 1)", and "(Full)" when the run was one — because three messages a
+night with identical text were three attempts at one run and nothing said so;
+and what comes next, which is what decides between waiting and going to look:
+"Veeam will retry ≈ today at 04:33" while the job has attempts left and the
+wait since the last one has not run out, "No more retries" once either has,
+and "Retry 1 is running now" when the next attempt is running as the failure
+is read. Alerts are written in English; the live topics in Russian. That answer is `standingOf`, by the same rule that folds the
 attempts; an attempt with no end yet is the next attempt of the failed run
 it follows, never the end of it. Veeam retries only the runs it starts
 itself, so a job set to start by hand, or switched off in Veeam, has no
@@ -306,11 +307,11 @@ scheduled job somebody started by hand cannot be told apart: the REST API does
 not say who started a session.
 
 A failure is announced when the result changes, which is after the first
-attempt, so that alert alone always said "1 из 4". A run announced while
+attempt, so that alert alone always said "попытка 1 из 4", as it used to read. A run announced while
 Veeam still had attempts left is a **Retrying run**: it is followed until the
 job's result changes — a retry that worked is a recovery, and says which
-attempt did it — or Veeam stops trying, which is one more alert, "ОШИБКА,
-повторов больше не будет". The attempts in between say nothing. Following
+attempt did it — or Veeam stops trying, which is one more alert, "(retry 3) —
+failed, no more retries". The attempts in between say nothing. Following
 costs no request until the job's last run moves, which is when Veeam starts
 another attempt. Kept in the state file, so a restart between two attempts
 does not lose the last word; remembered by the **Job memory**, followed by
@@ -513,7 +514,7 @@ without them; `VEEAM_LEGACY_TLS` names the servers that are offered them.
 
 Every server is watched every cycle — reachability, sign-in, job states,
 repositories — and its alerts carry its name first in the title, when there is
-more than one: `BAAS · Files: ОШИБКА`. The daily **Summary** goes out once per
+more than one: `BAAS · Files — failed`. The daily **Summary** goes out once per
 server.
 
 Owned by `src/veeam/servers.ts` (`VeeamServers`) and, with its Evidence and

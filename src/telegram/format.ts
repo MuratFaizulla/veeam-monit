@@ -30,8 +30,9 @@ export const MAX_LENGTH = 4096;
 
 export const renderEvent = (event: NotificationEvent): string => {
   const lines = [`${SEVERITY_ICON[event.severity]} <b>${escapeHtml(event.title)}</b>`];
+  if (event.lines) lines.push(...event.lines);
 
-  for (const [label, value] of event.fields ?? []) {
+  for (const [label, value] of event.lines ? [] : event.fields ?? []) {
     if (value === null || value === undefined || value === '') continue;
     lines.push(`<b>${escapeHtml(label)}:</b> ${escapeHtml(value)}`);
   }

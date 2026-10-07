@@ -24,19 +24,22 @@ For explicit rules, copy [telegram-routes.example.json](../telegram-routes.examp
 
 Veeam retries a failed job in a new session, so one bad night looks like three or four failures. The bot counts them as **one run**: two sessions are one run when the newer one started within the retry window after the earlier one ended (the job's `awaitMinutes` pause plus an allowance for the length of the attempt itself).
 
-The **«Попытка»** (attempt) line says what happens next:
+Alerts are written in English; the live topics stay in Russian. An alert opens with the job, which attempt it was and how it ended, as Veeam's console names the session: `OPS_SQL_Nightly — failed`, `OPS_SQL_Nightly (retry 1) — succeeded`, `OPS_SQL_Nightly (Full, retry 3) — failed, no more retries`. «Full» is said when most machines of the run took a Full, which Veeam reports in the task sessions (REST API 1.2; a 1.1 server does not say). Under it are the job type, when the attempt started and how long it ran, then each machine that went wrong with Veeam's reason, and the machines that did not.
 
-| Text | Meaning | When |
-| --- | --- | --- |
-| `1 из 4 · Veeam повторит ≈ сегодня в 03:54` | 1 of 4 · Veeam retries ≈ today at 03:54 | attempts are left and the pause has not passed yet |
-| `2 из 4 · повтор уже идёт` | 2 of 4 · a retry is already running | the next attempt has started |
-| `4 из 4 · повторов больше не будет` | 4 of 4 · no more retries | the attempts are used up, or the pause passed with no new one |
+The last line says what happens next:
+
+| Text | When |
+| --- | --- |
+| `🔁 Veeam will retry ≈ today at 03:54 (retry 1).` | attempts are left and the pause has not passed yet |
+| `🔁 Retry 1 is running now.` | the next attempt has started |
+| `⛔ No more retries. Next scheduled run: today at 22:00.` | the attempts are used up, or the pause passed with no new one |
+| `⏭ Next scheduled run: today at 22:00.` | Veeam does not retry the job, or its retry policy could not be read |
 
 Veeam retries only the runs it started itself, so for jobs that are started by hand or disabled in Veeam the bot neither promises a retry nor waits for one.
 
 **How the bot follows a retry**
 
-- The bot reports a failure after the first attempt and then follows the run. Failed retries in between stay silent. A retry that succeeds sends «задание восстановлено» (job recovered); when the attempts run out, one «ОШИБКА, повторов больше не будет» (error, no more retries).
+- The bot reports a failure after the first attempt and then follows the run. Failed retries in between stay silent. A retry that succeeds sends `(retry N) — succeeded` to Recovered; when the attempts run out, one `(retry N) — failed, no more retries`.
 - Until the next attempt starts, following a run makes no requests to Veeam.
 - While a retry runs, Veeam reports the result `none`. The bot does **not** write it over the result it knows: `none` means "I don't know right now". Otherwise a recovery would never come.
 - The run being followed is kept in `data/telegram-state.json`, so restarting the bot between attempts does not lose the last message.
@@ -56,7 +59,7 @@ Telegram lets a bot edit and delete its message for about two days **from when i
 
 Servers are listed in `VEEAM_SERVERS`, comma-separated, and share one account. A server outside the domain, where the shared account is unknown, gets one of its own with `VEEAM_MONITOR_USERNAME_<NAME>` and `VEEAM_MONITOR_PASSWORD_<NAME>` (see [configuration](configuration.md#veeam)).
 
-- **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files: ОШИБКА` (error). The daily digest comes for each server.
+- **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files — failed`. The daily digest comes for each server.
 - **The live topics, `/digest` and `/job`** show the selected server: the first in the list until somebody picks another with «🖥 Серверы» or `/servers`. The choice is shared by the whole group and survives a restart.
 - 🩺 is about every server: its first line counts the ones that are fine («🟡 4 из 5 серверов в порядке»), a server in trouble comes first with the reason in Veeam's or the network's words, the selected one is 🔵 and leads the servers that are fine (in trouble it stays 🔴: trouble matters more), and the IP addresses of all of them are listed together under the list. The last line says when the message was written and how often the servers are checked.
 - **Load.** Every cycle asks each server for its availability, job states and repositories. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
