@@ -12,6 +12,7 @@ import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
 import { addressable, digestDue, digestEvent, summarise } from '../estate/digest';
 import { repositoryAlarms } from './repository-alarms';
 import { JobAlerts } from './job-alerts';
+import { ServerWatch } from './server-watch';
 import { escapeHtml, renderEvent } from '../telegram/format';
 import { Answer } from '../estate/answer';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
@@ -21,15 +22,12 @@ const HOUR = 3_600_000;
 
 export type { Answer, MonitorHealth } from './monitor';
 
-/** What the monitor remembers about one server from one pass to the next. */
+/** What the monitor keeps about one server from one pass to the next. */
 interface Watch {
   estate: ServerEstate;
-  lastReachable?: boolean;
-  lastAuthenticated?: boolean;
+  /** Whether the server answers and its account signs in, and what is said when either changes. */
+  server: ServerWatch;
   lastCheckAt: string | null;
-  reachable: boolean | null;
-  authenticated: boolean | null;
-  lastError: string | null;
   jobs?: ServerStatus['jobs'];
   /** What the bot says about this server's jobs. */
   alerts: JobAlerts;
@@ -44,9 +42,9 @@ type Pass = Omit<LiveCycle, 'health' | 'server'>;
  * Three independent signals are checked on each server, because they fail
  * independently and an operator needs to tell them apart: the API answering at
  * all, the monitor service account being able to log in, and the jobs
- * themselves. The previous version folded the second into the first, so an
- * expired monitor password looked exactly like a healthy server with no
- * failing jobs.
+ * themselves. The first two are each server's Server watch, the jobs its Job
+ * alerts; the monitor runs them on a timer, with the repositories, the daily
+ * Summary and the live slots.
  *
  * Every server is watched every cycle, whichever one is selected: a failure on
  * a server nobody is looking at is exactly the one that must not wait until
@@ -79,18 +77,20 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
     this.watches = estates.all.map((estate) => {
+      // Through the monitor's own sending, which names the server and counts
+      // what was delivered.
+      const send = (event: NotificationEvent) => this.emit(watch, event);
       const watch: Watch = {
         estate,
+        server: new ServerWatch(estate, store.serverMemoryOf(estate.key), send, {
+          authCooldownMs: this.config.authAlertCooldownMs,
+          forget: (key) => store.cooldowns.clear(this.scoped(watch, key)),
+        }),
         lastCheckAt: null,
-        reachable: null,
-        authenticated: null,
-        lastError: null,
         alerts: new JobAlerts(
           estate,
           store.jobMemoryOf(estate.key),
-          // Through the monitor's own sending, which names the server and
-          // counts what was delivered.
-          (event) => this.emit(watch, event),
+          send,
           { timezone: this.config.timezone, cooldownMs: this.config.jobAlertCooldownMs },
         ),
       };
@@ -115,11 +115,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
   get status(): MonitorHealth {
     const watch = this.shown();
+    const { reachable, authenticated, error } = watch.server.health;
     return {
       lastCheckAt: watch.lastCheckAt,
-      reachable: watch.reachable,
-      authenticated: watch.authenticated,
-      lastError: watch.lastError,
+      reachable,
+      authenticated,
+      lastError: error,
       trackedJobs: this.store.jobMemoryOf(watch.estate.key).count(),
       delivered: this.delivered,
       undelivered: this.undelivered,
@@ -129,16 +130,19 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
   servers(): ServerStatus[] {
     const shown = this.shown();
-    return this.watches.map((watch) => ({
-      key: watch.estate.key,
-      name: watch.estate.name,
-      selected: watch === shown,
-      reachable: watch.reachable,
-      authenticated: watch.authenticated,
-      address: watch.estate.http.address,
-      jobs: watch.jobs,
-      lastError: watch.lastError,
-    }));
+    return this.watches.map((watch) => {
+      const { reachable, authenticated, error } = watch.server.health;
+      return {
+        key: watch.estate.key,
+        name: watch.estate.name,
+        selected: watch === shown,
+        reachable,
+        authenticated,
+        address: watch.estate.http.address,
+        jobs: watch.jobs,
+        lastError: error,
+      };
+    });
   }
 
   select(key: string): Selection {
@@ -294,8 +298,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
   private async pass(watch: Watch, shown: boolean): Promise<Pass> {
     const { estate } = watch;
-    const reachable = await this.checkReachability(watch);
-    const authenticated = reachable && (await this.checkAuthentication(watch));
+    const { authenticated } = await watch.server.observe();
     // Each step is isolated: one hiccup on /jobs/states used to abort the
     // rest of the cycle, taking the repository check and the digest with it.
     const jobs = authenticated ? await this.step(watch, 'jobs', () => estate.reader.jobStates()) : undefined;
@@ -311,7 +314,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     const working = authenticated && (shown || digest) ? await this.working(estate) : undefined;
     // Said in the health too, and only here: /digest reads the same thing, and
     // a command asking its own question must not overwrite the cycle's health.
-    if (working?.unavailable) watch.lastError = working.unavailable;
+    if (working?.unavailable) watch.server.failed(working.unavailable);
 
     // Once, before anything reads it — the alerts as much as the live slots.
     // It used to be refreshed by the live step, which runs last, so the
@@ -358,92 +361,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     try {
       return await run();
     } catch (error) {
-      watch.lastError = (error as Error).message;
+      watch.server.failed((error as Error).message);
       this.logger.error(
         `Veeam monitor step "${name}" failed on ${watch.estate.name}: ${(error as Error).message}`,
       );
       return undefined;
-    }
-  }
-
-  private async checkReachability(watch: Watch): Promise<boolean> {
-    const { http } = watch.estate;
-    const { reachable, serverTime, error } = await http.reachability();
-    const detail = (reachable ? serverTime : error) ?? '';
-    if (!reachable) watch.lastError = detail;
-    watch.reachable = reachable;
-
-    // Starting up is not an event. It used to be announced every time, which
-    // put six "монитор запущен" messages in the chat over one afternoon of
-    // restarts; the live health message answers the same question, once.
-    if (watch.lastReachable !== undefined && watch.lastReachable !== reachable) {
-      await this.emit(watch, {
-        kind: 'infrastructure',
-        severity: reachable ? 'success' : 'critical',
-        title: reachable ? 'Veeam is reachable again' : 'Veeam is unreachable',
-        fields: [
-          ['Server', http.baseUrl],
-          [reachable ? 'Server time' : 'Error', detail],
-        ],
-      });
-    }
-    watch.lastReachable = reachable;
-    return reachable;
-  }
-
-  /**
-   * Whether the monitor account can sign in. The token itself stays with the
-   * auth service; the estate reader asks it for one on every request.
-   *
-   * A broken service account is reported once per cooldown instead of every
-   * tick, and the recovery is announced so nobody has to check the log.
-   */
-  private async checkAuthentication(watch: Watch): Promise<boolean> {
-    const { auth, http } = watch.estate;
-    if (!auth.configured) {
-      watch.authenticated = null;
-      await this.emit(watch, {
-        kind: 'infrastructure',
-        severity: 'warning',
-        title: 'Job monitoring is off',
-        body: 'VEEAM_MONITOR_USERNAME / VEEAM_MONITOR_PASSWORD are not set, so the jobs are not checked.',
-        dedupeKey: 'veeam:auth:unconfigured',
-        cooldownMs: 24 * HOUR,
-      });
-      return false;
-    }
-
-    try {
-      await auth.getAccessToken();
-      watch.authenticated = true;
-      if (watch.lastAuthenticated === false) {
-        this.store.cooldowns.clear(this.scoped(watch, 'veeam:auth:failed'));
-        await this.emit(watch, {
-          kind: 'infrastructure',
-          severity: 'success',
-          title: 'Veeam: the monitor account signs in again',
-          fields: [['Account', auth.username]],
-        });
-      }
-      watch.lastAuthenticated = true;
-      return true;
-    } catch (error) {
-      watch.authenticated = false;
-      watch.lastError = (error as Error).message;
-      watch.lastAuthenticated = false;
-      await this.emit(watch, {
-        kind: 'infrastructure',
-        severity: 'critical',
-        title: 'Veeam: the monitor account cannot sign in',
-        fields: [
-          ['Account', auth.username],
-          ['Server', http.baseUrl],
-        ],
-        body: `${(error as Error).message}\n\nUntil it signs in, changes in the jobs' results are not followed.`,
-        dedupeKey: 'veeam:auth:failed',
-        cooldownMs: this.config.authAlertCooldownMs,
-      });
-      return false;
     }
   }
 
@@ -461,15 +383,16 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    */
   private async publishLive(watch: Watch, pass: Pass): Promise<void> {
     const { estate } = watch;
+    const health = watch.server.health;
     const pages = await this.snapshots.pages({
       ...pass,
       server: estate,
       health: {
-        reachable: watch.reachable === true,
-        authenticated: watch.authenticated,
+        reachable: health.reachable === true,
+        authenticated: health.authenticated,
         serverUrl: estate.baseUrl,
         serverAddress: estate.http.address,
-        error: watch.lastError,
+        error: health.error,
         trackedJobs: this.store.jobMemoryOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
         servers: this.servers().map(({ name, selected, reachable, authenticated, address, jobs, lastError }) => ({

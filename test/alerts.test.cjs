@@ -113,3 +113,124 @@ test('a summary counted without the Working sessions says its running figure is 
   assert.equal(running(digestEvent(summarise(jobs, new Set()))), 1);
   assert.match(String(running(digestEvent(summarise(jobs, new Set(), 'timeout')))), /^1 .*по статусу/);
 });
+
+/* ------------------------------------------------------------------ *
+ * Server watch: whether a server answers and its account signs in,
+ * asked without a cycle
+ *
+ * The monitor kept this in private methods and in memory: an outage the bot
+ * was started into was never announced though its recovery was, a sign-in
+ * that came back after a restart came back without a word, and /status said
+ * «Последняя ошибка» of whatever failed last, until a restart.
+ * ------------------------------------------------------------------ */
+
+/**
+ * A Server watch over a server that answers and signs in as `state` says,
+ * remembering into `record` — the server's part of the state file, which a
+ * restart hands to the next watch.
+ */
+const watched = (record = {}) => {
+  const { ServerWatch } = require('../dist/monitor/server-watch');
+  const { ServerMemory } = require('../dist/telegram/server-memory');
+  const state = { up: true, signs: true, outcome: 'delivered' };
+  const sent = [];
+  const forgotten = [];
+  const server = {
+    http: {
+      baseUrl: 'https://veeam01main.example.com:9419',
+      reachability: async () =>
+        state.up ? { reachable: true, serverTime: 'now' } : { reachable: false, error: 'connect ECONNREFUSED 192.0.2.10:9419' },
+    },
+    auth: {
+      configured: true,
+      username: 'svc_monitor',
+      getAccessToken: async () => {
+        if (!state.signs) throw new Error('Veeam API 401: Authentication failed');
+        return 'token';
+      },
+    },
+  };
+  const watch = new ServerWatch(
+    server,
+    new ServerMemory(record, () => {}),
+    async (event) => {
+      sent.push(event.title);
+      return { outcome: state.outcome };
+    },
+    { authCooldownMs: 3_600_000, forget: (key) => forgotten.push(key) },
+  );
+  return { watch, state, sent, forgotten, record };
+};
+
+test('a server that does not answer the first time it is seen is reported; one that answers is not', async () => {
+  const down = watched();
+  down.state.up = false;
+  assert.deepEqual(await down.watch.observe(), { reachable: false, authenticated: false });
+  assert.deepEqual(down.sent, ['Veeam is unreachable']);
+
+  const up = watched();
+  assert.deepEqual(await up.watch.observe(), { reachable: true, authenticated: true });
+  assert.deepEqual(up.sent, [], 'starting up is not an event');
+  assert.deepEqual(up.record, { reachable: true, authenticated: true });
+});
+
+test('an outage across a restart is reported once, and its recovery after it', async () => {
+  const before = watched();
+  before.state.up = false;
+  await before.watch.observe();
+
+  // The bot restarts while the server is still down.
+  const after = watched(before.record);
+  after.state.up = false;
+  await after.watch.observe();
+  assert.deepEqual(after.sent, [], 'already said');
+
+  after.state.up = true;
+  await after.watch.observe();
+  assert.deepEqual(after.sent, ['Veeam is reachable again']);
+});
+
+test('a change nobody was told of is said again on the next pass', async () => {
+  const w = watched({ reachable: true });
+  w.state.up = false;
+  w.state.outcome = 'failed';
+  await w.watch.observe();
+
+  w.state.outcome = 'delivered';
+  await w.watch.observe();
+  await w.watch.observe();
+  assert.deepEqual(w.sent, ['Veeam is unreachable', 'Veeam is unreachable']);
+});
+
+test('a sign-in that comes back after a restart is announced', async () => {
+  const before = watched();
+  before.state.signs = false;
+  assert.deepEqual(await before.watch.observe(), { reachable: true, authenticated: false });
+  assert.deepEqual(before.sent, ['Veeam: the monitor account cannot sign in']);
+
+  const after = watched(before.record);
+  await after.watch.observe();
+  assert.deepEqual(after.sent, ['Veeam: the monitor account signs in again']);
+  assert.deepEqual(after.forgotten, ['veeam:auth:failed'], 'the next failure is news at once');
+
+  await after.watch.observe();
+  assert.equal(after.sent.length, 1, 'and only once');
+});
+
+test('the health says what went wrong in this pass, and a clean pass clears it', async () => {
+  const w = watched();
+  assert.deepEqual(w.watch.health, { reachable: null, authenticated: null, error: null }, 'not asked yet');
+
+  w.state.up = false;
+  await w.watch.observe();
+  assert.equal(w.watch.health.error, 'connect ECONNREFUSED 192.0.2.10:9419');
+
+  w.state.up = true;
+  await w.watch.observe();
+  assert.equal(w.watch.health.error, null);
+
+  w.watch.failed('Veeam 500 Internal Server Error');
+  assert.equal(w.watch.health.error, 'Veeam 500 Internal Server Error', 'a later step of the pass');
+  await w.watch.observe();
+  assert.equal(w.watch.health.error, null);
+});

@@ -474,6 +474,30 @@ test('a failing job step does not abort the repository check', async () => {
   assert.ok(monitor.status.lastCheckAt, 'цикл дошёл до конца');
 });
 
+test('the last error is the last pass\'s: a pass that goes well clears it', async () => {
+  const w = world();
+  let broken = true;
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: 'now' },
+    '/api/v1/jobs/states': () => {
+      if (broken) throw new Error('Veeam 500 Internal Server Error');
+      return { data: [] };
+    },
+    '/api/v1/sessions': { data: [] },
+    '/api/v1/backupInfrastructure/repositories/states': { data: [] },
+  });
+  const monitor = monitorOf(w, veeam, monitorAccount());
+
+  await monitor.check();
+  assert.match(monitor.status.lastError, /Veeam 500/);
+
+  broken = false;
+  await monitor.check();
+  // /status used to say «Последняя ошибка: Veeam 500» until the bot restarted.
+  assert.equal(monitor.status.lastError, null);
+  assert.equal(monitor.servers()[0].lastError, null);
+});
+
 test('the digest cooldown is armed only once the digest was delivered', async () => {
   let broken = true;
   const hour = new Date().getHours();
@@ -523,6 +547,44 @@ test('every state write persists without the caller managing save()', async () =
   reopened.jobMemoryOf(SERVER).keepOnly(new Set(['other']));
   reopened.flush();
   assert.equal(new TelegramStateStore(file).jobMemoryOf(SERVER).resultOf('job-1'), undefined);
+  fs.rmSync(file, { force: true });
+});
+
+test('what was said about a server survives a restart, and goes with the server', async () => {
+  const file = path.join(os.tmpdir(), `veeam-servers-${Math.random().toString(36).slice(2)}.json`);
+  const store = new TelegramStateStore(file, [CHAT]);
+  store.serverMemoryOf('veeam01main').remember({ reachable: false, authenticated: true });
+  store.serverMemoryOf('veeam02baas').remember({ reachable: true });
+  store.flush();
+
+  const reopened = new TelegramStateStore(file, [CHAT]);
+  assert.equal(reopened.serverMemoryOf('veeam01main').reachable, false);
+  assert.equal(reopened.serverMemoryOf('veeam01main').authenticated, true);
+
+  // A server taken off the list takes what was said about it along.
+  reopened.keepServers(new Set(['veeam01main']));
+  reopened.flush();
+  const after = new TelegramStateStore(file, [CHAT]);
+  assert.equal(after.serverMemoryOf('veeam02baas').reachable, undefined);
+  assert.equal(after.serverMemoryOf('veeam01main').reachable, false);
+  fs.rmSync(file, { force: true });
+});
+
+test('a server entry this version would not have written is forgotten, not the file', async () => {
+  const file = path.join(os.tmpdir(), `veeam-servers-${Math.random().toString(36).slice(2)}.json`);
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1,
+    chats: { [CHAT]: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
+    topics: { [CHAT]: { Alerts: 5 } },
+    jobResults: {}, cooldowns: {}, liveMessages: {},
+    servers: { veeam01main: { reachable: 'yes' }, veeam02baas: { reachable: false } },
+  }));
+
+  const store = new TelegramStateStore(file, [CHAT]);
+
+  assert.equal(store.serverMemoryOf('veeam01main').reachable, undefined, 'seen afresh');
+  assert.equal(store.serverMemoryOf('veeam02baas').reachable, false);
+  assert.equal(store.threadId(CHAT, 'Alerts'), 5, 'the topics beside it are kept');
   fs.rmSync(file, { force: true });
 });
 

@@ -388,10 +388,37 @@ what an alert looks like copied the field list by hand, and the copy drifted
 within the day. Sending is handed in — the monitor's, which names the server
 and counts deliveries — and so is the clock.
 
-Not in it: the server not answering, the account not signing in, repository
-space and the daily **Summary**, which are the monitor's own.
+Not in it: the server not answering and the account not signing in, which are
+the **Server watch**'s; repository space and the daily **Summary**, which are
+the monitor's own.
 
 Owned by `src/monitor/job-alerts.ts`.
+
+## Server watch
+
+Whether one **Server** answers and whether the monitor account signs in there,
+and what the bot says when either changes: "Veeam is unreachable", "Veeam is
+reachable again", "the monitor account cannot sign in", "signs in again", and
+"Job monitoring is off" while no account is configured. One per server, built
+by the monitor beside it like the **Job alert**, and asked first in every pass;
+sending is handed in.
+
+What was last said is kept in the state file, so a change is said once
+whatever restarts in between, and said again next pass if it reached nobody.
+A server that does not answer the first time it is seen is reported; one that
+answers is not — "starting up is not an event" was written against six
+"монитор запущен" in one afternoon of restarts, not against a server that never
+answered. It used to be kept by the monitor in memory: an outage the bot was
+started into was never announced, though its recovery was, and a sign-in that
+came back after a restart came back without a word.
+
+Its health is the latest pass's. The error it carries is what went wrong in
+that pass — in it, or in any step the monitor ran after — and a clean pass
+clears it. /status used to show "Последняя ошибка" from whatever failed last,
+a week ago as readily as now, until the bot restarted.
+
+Owned by `src/monitor/server-watch.ts`; what it remembers by
+`src/telegram/server-memory.ts`.
 
 ## Job memory
 
@@ -523,8 +550,8 @@ it and names the ones it speaks, and then the newest of those. An old one may
 also insist on SHA-1 signatures in the TLS handshake and reset the connection
 without them; `VEEAM_LEGACY_TLS` names the servers that are offered them.
 
-Every server is watched every cycle — reachability, sign-in, job states,
-repositories — and its alerts carry its name first in the title, when there is
+Every server is watched every cycle — reachability and sign-in (its **Server
+watch**), job states, repositories — and its alerts carry its name first in the title, when there is
 more than one: `BAAS · Files — failed`. The daily **Summary** goes out once per
 server.
 
@@ -629,8 +656,9 @@ Newest 500 per chat, entries older than 48 hours dropped on read.
 Owned by `src/telegram/answer-log.ts`. It is persisted in the state file
 like everything else, but the state store only hands it its part of the file
 and a way to save; the rules above live in the answer log. The **Job
-memory**, cooldowns and live messages are split out the same way —
-`store.jobMemoryOf`, `store.cooldowns`, `store.liveMessages` — and the store
+memory**, what the **Server watch** last said, cooldowns and live messages are
+split out the same way — `store.jobMemoryOf`, `store.serverMemoryOf`,
+`store.cooldowns`, `store.liveMessages` — and the store
 itself keeps only the file, the chats and the forum topics.
 
 ## Button

@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFile
 import { dirname } from 'path';
 import { LiveMessageRef, LiveMessages } from './live-messages';
 import { JobMemory, memoryFromFile, RetryingRun } from './job-memory';
+import { ServerMemory, ServerSeen, serversFromFile } from './server-memory';
 import { AnswerLog, AnswerRef } from './answer-log';
 import { Cooldowns } from './cooldowns';
 import { TelegramChat } from './types';
@@ -32,6 +33,11 @@ interface TelegramState {
    * -> the run. Absent from files written before it existed, and read as empty.
    */
   retrying: Record<string, Record<string, RetryingRun>>;
+  /**
+   * server key -> whether it last answered and its account last signed in, as
+   * the alerts said it. Absent from files written before it existed.
+   */
+  servers: Record<string, ServerSeen>;
   /** Key of the server the live slots and commands show; absent means the first. */
   selectedServer?: string;
   /**
@@ -53,6 +59,7 @@ const empty = (): TelegramState => ({
   topics: {},
   jobResults: {},
   retrying: {},
+  servers: {},
   cooldowns: {},
   liveMessages: {},
   answers: {},
@@ -63,7 +70,7 @@ const empty = (): TelegramState => ({
  *
  * The store owns the file, the chats, the forum topics and which Veeam server
  * is selected. The other things kept in it — what is remembered about the
- * jobs, cooldowns, live messages and the answer log — are each their own
+ * jobs and the servers, cooldowns, live messages and the answer log — are each their own
  * module, handed their part of the state and a way to save it. They carry their own rules (48 hours, 500 answers, "never arm on
  * the way in") where somebody looking for those rules will find them, and are
  * tested on a plain object without a file.
@@ -87,6 +94,7 @@ export class TelegramStateStore implements OnModuleDestroy {
   readonly liveMessages: LiveMessages;
   readonly answerLog: AnswerLog;
   private readonly memories = new Map<string, JobMemory>();
+  private readonly serverMemories = new Map<string, ServerMemory>();
   /** The chats named in configuration: the only ones anything is sent to. */
   private readonly configured: ReadonlySet<string>;
 
@@ -158,14 +166,25 @@ export class TelegramStateStore implements OnModuleDestroy {
     return memory;
   }
 
+  /** What the alerts last said about one server: whether it answered, whether its account signed in. */
+  serverMemoryOf(server: string): ServerMemory {
+    let memory = this.serverMemories.get(server);
+    if (!memory) {
+      memory = new ServerMemory((this.state.servers[server] ??= {}), () => this.save());
+      this.serverMemories.set(server, memory);
+    }
+    return memory;
+  }
+
   /** Drops what is remembered about servers no longer configured. */
   keepServers(servers: ReadonlySet<string>): void {
     let changed = false;
-    for (const part of [this.state.jobResults, this.state.retrying]) {
+    for (const part of [this.state.jobResults, this.state.retrying, this.state.servers]) {
       for (const server of Object.keys(part)) {
         if (servers.has(server)) continue;
         delete part[server];
         this.memories.delete(server);
+        this.serverMemories.delete(server);
         changed = true;
       }
     }
@@ -320,7 +339,8 @@ export class TelegramStateStore implements OnModuleDestroy {
         const memory = memoryFromFile(this.byServer(parsed.jobResults!), parsed.retrying, (message) =>
           this.logger.warn(message),
         );
-        return { ...empty(), ...parsed, ...memory, version: 1 };
+        const servers = serversFromFile(parsed.servers, (message) => this.logger.warn(message));
+        return { ...empty(), ...parsed, ...memory, servers, version: 1 };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           this.logger.warn(`Telegram state at ${path} is unreadable: ${(error as Error).message}`);
