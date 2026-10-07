@@ -33,7 +33,7 @@ test('the live status is one message per topic, edited in place on later cycles'
   const opening = w.api.sent();
   assert.equal(opening.length, 7, 'one message per live slot');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
-  assert.ok(opening.some((m) => /Сейчас ничего не идёт/.test(m.text)));
+  assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
     w.api.of('createForumTopic').map((t) => t.name),
     [
@@ -54,7 +54,7 @@ test('the live status is one message per topic, edited in place on later cycles'
   assert.deepEqual(w.api.sent(), [], 'a restart-free change never posts a second message');
   const edits = w.api.of('editMessageText');
   assert.equal(edits.length, 1, 'only the message whose content actually changed');
-  assert.match(edits[0].text, /Идёт 1 задание/);
+  assert.match(edits[0].text, /Сейчас выполняется: 1 задание/);
 });
 
 test('an unchanged live message is left alone instead of rewritten every cycle', async () => {
@@ -78,7 +78,7 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
 
   await w.monitor.check();
 
-  const text = w.api.sent().find((m) => /Ид(?:ёт|ут) \d+ задани/.test(m.text)).text;
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
   assert.match(text, /<b>SQL Daily<\/b> — 62%/);
   // Block elements, the same ones 💾 Repositories draws with: a Windows client
   // with no glyph for ▰ rendered half the bar as hyphens.
@@ -88,31 +88,6 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
   assert.ok(!/Ближайший запуск/.test(text));
   const schedule = w.api.sent().find((m) => /Upcoming runs|Сегодня|расписан/.test(m.text)).text;
   assert.match(schedule, /SQL Daily/);
-});
-
-test('▶️ says how long a job usually takes from its past runs, read in the same cycle', async () => {
-  const MINUTE = 60_000;
-  const ago = (ms) => new Date(Date.now() - ms).toISOString();
-  const night = (id, daysAgo, minutes) => ({
-    id, jobId: '1', sessionType: 'BackupJob', state: 'Stopped', result: { result: 'Success' },
-    creationTime: ago(daysAgo * 1440 * MINUTE), endTime: ago(daysAgo * 1440 * MINUTE - minutes * MINUTE),
-  });
-  const w = monitorWorld(LIVE, [running('OPS_FileServer')], {
-    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
-    '/api/v1/sessions': {
-      data: [
-        { id: 'now', jobId: '1', sessionType: 'BackupJob', state: 'Working', progressPercent: 23, creationTime: ago(17 * MINUTE) },
-        night('n1', 1, 120),
-        night('n2', 2, 130),
-        night('n3', 3, 110),
-      ],
-    },
-  });
-
-  await w.monitor.check();
-
-  const text = w.api.sent().find((m) => /Ид(?:ёт|ут) \d+ задани/.test(m.text)).text;
-  assert.match(text, /<b>OPS_FileServer<\/b> — 23%\n<code>██░░░░░░░░<\/code> идёт 17 мин · обычно ~2 ч · закончит ≈ /u);
 });
 
 test('a run somebody started on a switched-off job is still a run', async () => {
@@ -133,9 +108,9 @@ test('a run somebody started on a switched-off job is still a run', async () => 
   });
 
   await w.monitor.check();
-  const text = w.api.sent().find((m) => /Ид(?:ёт|ут) \d+ задани/.test(m.text)).text;
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
 
-  assert.match(text, /Идут 2 задания/);
+  assert.match(text, /Сейчас выполняются: 2 задания/);
   assert.match(text, /<b>OPS_Kingston_EM_DB<\/b> — 97%/);
   // And it says why it is unusual, because the schedule will not start it again.
   assert.match(text, /выключено в Veeam/);
@@ -154,9 +129,9 @@ test('a session that belongs to no job of ours is not listed as a job', async ()
   });
 
   await w.monitor.check();
-  const text = w.api.sent().find((m) => /Ид(?:ёт|ут) \d+ задани/.test(m.text)).text;
+  const text = w.api.sent().find((m) => /Сейчас выполня[ею]тся/.test(m.text)).text;
 
-  assert.match(text, /Идёт 1 задание/);
+  assert.match(text, /Сейчас выполняется: 1 задание/);
   assert.ok(!/Malware/.test(text));
 });
 
@@ -177,7 +152,7 @@ test('a live message Telegram no longer has is deleted and replaced, not duplica
 
   assert.equal(w.api.of('deleteMessage').length, 1, 'the stale message is removed');
   assert.equal(w.api.sent().length, 1, 'exactly one replacement');
-  assert.match(w.api.sent()[0].text, /Ид(?:ёт|ут) \d+ задани/);
+  assert.match(w.api.sent()[0].text, /Сейчас выполня[ею]тся/);
   assert.equal(w.api.of('createForumTopic').length, 0, 'the topic itself is still known');
 });
 
@@ -413,7 +388,7 @@ test('an unreachable Veeam is reported as unknown, not as "nothing is running"',
   const texts = w.api.sent().map((m) => m.text);
   assert.ok(texts.some((t) => /🔴 <b>Veeam — сервер недоступен/.test(t)));
   assert.ok(texts.some((t) => /Данные о заданиях недоступны/.test(t)));
-  assert.ok(!texts.some((t) => /Сейчас ничего не идёт/.test(t)));
+  assert.ok(!texts.some((t) => /не выполняется ни одно задание/.test(t)));
 });
 
 test('counts are written in Russian, with the right form for 1, 2 and 5', async () => {
@@ -1337,7 +1312,7 @@ test('▶️ counts a job running by status and one running by session as two', 
   ];
   const pages = await snapshots.pages({ jobs, working, authenticated: true, evidence: PENDING, health: liveHealth() });
   const running = pageOf(pages, 'running');
-  assert.match(running, /Идут 2 задания/);
+  assert.match(running, /выполняются: 2 задания/);
   assert.match(running, /By status/);
   assert.match(running, /By session<\/b> — 40%/);
   assert.doesNotMatch(running, /Idle|malware/);
@@ -1354,7 +1329,7 @@ test('a cycle Veeam did not answer says so in every slot instead of "nothing"', 
   );
   assert.match(pageOf(pages, 'health'), /сервер недоступен/);
   assert.match(pageOf(pages, 'running'), /Сервер Veeam не отвечает/);
-  assert.doesNotMatch(pageOf(pages, 'running'), /Сейчас ничего не идёт/);
+  assert.doesNotMatch(pageOf(pages, 'running'), /не выполняется ни одно/);
   assert.match(pageOf(pages, 'schedule'), /Расписание недоступно/);
   assert.match(pageOf(pages, 'performance'), /не авторизована/);
 });
@@ -1410,99 +1385,13 @@ test('Veeam\'s identifiers are written in Russian, and one it does not know is k
   assert.equal(resultWord(undefined), undefined);
 });
 
-test('a run going for days says how long, and a finish on another day says which', async () => {
+test('a job running since another day says which day it started', async () => {
   const { renderRunning } = require('../dist/live/format');
   const clock = { now: new Date('2026-09-30T05:52:00Z'), timezone: 'Asia/Qyzylorda' };
   const text = renderRunning({
-    jobs: [{
-      name: 'CUST_Mining_vm', type: 'Backup', percent: 56, startedAt: '2026-09-26T18:11:00Z',
-      usual: { took: 5.5 * 86_400_000, longest: 6 * 86_400_000 },
-    }],
+    jobs: [{ name: 'CUST_Mining_vm', type: 'Backup', percent: 56, startedAt: '2026-09-26T18:11:00Z' }],
+    totalJobs: 112,
   }, clock);
-  // "старт 23:11" read as last night's start for a job four days in; how long
-  // it has been going says the same at a glance.
-  assert.match(text, /<code>██████░░░░<\/code> идёт 3 д 11 ч · обычно ~5 д 12 ч · закончит ≈ 02\.10 в 11:15/);
-  assert.doesNotMatch(text, /старт|бэкап ВМ/, 'a VM backup is what nearly every job is, and says nothing of its type');
-});
-
-test('▶️ says when a run should end, and which runs are going longer than the ones like them', async () => {
-  const { renderRunning } = require('../dist/live/format');
-  const clock = { now: new Date('2026-10-07T03:00:00+05:00'), timezone: 'Asia/Qyzylorda' };
-  const ago = (minutes) => new Date(clock.now.getTime() - minutes * 60_000).toISOString();
-  const usual = { took: 120 * 60_000, longest: 180 * 60_000 };
-  const text = renderRunning({
-    jobs: [
-      { name: 'OPS_FileServer', type: 'Backup', percent: 23, startedAt: ago(17), usual },
-      { name: 'OPS_Mail', type: 'Backup', percent: 80, startedAt: ago(130), usual },
-      { name: 'OPS_Web', type: 'Backup', percent: 95, startedAt: ago(200), usual },
-      { name: 'CUST_HOUSING_1', type: 'BackupCopy', startedAt: ago(5) },
-    ],
-  }, clock);
-
-  const [headline, list] = text.split('\n\n');
-  assert.equal(headline, '▶️ <b>Идут 4 задания, 1 дольше обычного</b>');
-  assert.deepEqual(list.split('\n'), [
-    '<b>OPS_FileServer</b> — 23%',
-    // Two hours from 02:43, to the next five minutes: it is a guess.
-    '<code>██░░░░░░░░</code> идёт 17 мин · обычно ~2 ч · закончит ≈ в 04:45',
-    '<b>OPS_Mail</b> — 80%',
-    // Past the usual two hours, and no longer than runs before it have been.
-    '<code>████████░░</code> идёт 2 ч 10 мин · обычно ~2 ч',
-    '<b>OPS_Web</b> — 95%',
-    '<code>██████████</code> идёт 3 ч 20 мин · ⚠️ дольше обычного (~2 ч)',
-    // No history to tell from: how long it has been going, and no more.
-    '<b>CUST_HOUSING_1</b> · копия бэкапа',
-    'идёт 5 мин',
-  ]);
-});
-
-test('the first line of ▶️ counts the runs, and says when every one of them is late', async () => {
-  const { renderRunning } = require('../dist/live/format');
-  const clock = { now: new Date('2026-10-07T03:00:00Z'), timezone: 'UTC' };
-  const late = { startedAt: '2026-10-06T20:00:00Z', usual: { took: 60 * 60_000, longest: 90 * 60_000 } };
-  const going = { startedAt: '2026-10-07T02:50:00Z' };
-  const headline = (jobs) =>
-    renderRunning({ jobs: jobs.map((job, i) => ({ name: `J${i}`, ...job })) }, clock).split('\n')[0];
-
-  assert.equal(headline([going]), '▶️ <b>Идёт 1 задание</b>');
-  assert.equal(headline([late]), '▶️ <b>Идёт 1 задание, дольше обычного</b>');
-  assert.equal(headline([late, late]), '▶️ <b>Идут 2 задания, оба дольше обычного</b>');
-  assert.equal(headline([late, late, late]), '▶️ <b>Идут 3 задания, все дольше обычного</b>');
-  assert.equal(headline(Array(21).fill(going)), '▶️ <b>Идёт 21 задание</b>');
-  assert.match(
-    renderRunning({ jobs: [] }, clock),
-    /^💤 <b>Сейчас ничего не идёт<\/b>\n\n<b>Ближайший запуск:<\/b> по расписанию ничего не запланировано\n\n<i>Обновлено /u,
-  );
-});
-
-test('a run on the day its Full is owed says which Full, and a switched-off job says so too', async () => {
-  const { renderRunning } = require('../dist/live/format');
-  const clock = { now: new Date('2026-10-10T23:00:00+05:00'), timezone: 'Asia/Qyzylorda' };
-  const text = renderRunning({
-    jobs: [{
-      name: 'OPS_FileServer', type: 'Backup', percent: 40, startedAt: '2026-10-10T22:00:00+05:00', disabled: true,
-      usual: { took: 6 * 3_600_000, longest: 7 * 3_600_000, full: 'Synthetic Full' },
-    }],
-  }, clock);
-  assert.match(text, /^<b>OPS_FileServer<\/b> — 40% · Synthetic Full · ⚠️ выключено в Veeam$/mu);
-  assert.match(text, /идёт 1 ч · обычно ~6 ч · закончит ≈ завтра в 04:00$/mu);
-});
-
-test('when the runs do not all fit, the ones left out are going as usual, and the rest keep their order', async () => {
-  const { renderRunning } = require('../dist/live/format');
-  const clock = { now: new Date('2026-10-07T03:00:00Z'), timezone: 'UTC' };
-  const jobs = Array.from({ length: 120 }, (_, i) => ({
-    name: `OPS_JOB_${String(i).padStart(3, '0')} ${'x'.repeat(40)}`,
-    percent: 50,
-    startedAt: '2026-10-07T02:00:00Z',
-    ...(i === 110 ? { usual: { took: 20 * 60_000, longest: 30 * 60_000 } } : {}),
-  }));
-  const text = renderRunning({ jobs }, clock);
-
-  assert.ok(text.length <= 4096, `message is ${text.length} characters`);
-  assert.match(text, /^▶️ <b>Идут 120 заданий, 1 дольше обычного<\/b>/u);
-  assert.match(text, /OPS_JOB_110 x+<\/b> — 50%\n.*⚠️ дольше обычного/u, 'the late one, far down the list, is kept');
-  assert.match(text, /…и ещё \d+ задани/u);
-  const shown = [...text.matchAll(/OPS_JOB_(\d{3})/gu)].map((match) => Number(match[1]));
-  assert.deepEqual([...shown].sort((a, b) => a - b), shown);
+  // "старт 23:11" read as last night's start for a job four days in.
+  assert.match(text, /старт 26\.09 в 23:11 · идёт 3 д 11 ч · бэкап ВМ/);
 });

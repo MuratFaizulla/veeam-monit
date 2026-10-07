@@ -10,7 +10,6 @@ import { Standings, standingsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
 import { RepositoryCapacity } from '../estate/repository-capacity';
 import { ScheduledRun, todayRuns } from '../estate/schedule-planner';
-import { usualRunOf } from '../estate/usual-run';
 import {
   Clock,
   headed,
@@ -101,7 +100,7 @@ export class LiveSnapshotsService {
 
     const pages: LivePage[] = [
       { slot: 'health', content: renderHealth(cycle.health, clock) },
-      { slot: 'running', content: renderRunning(this.runningState(cycle, clock), clock) },
+      { slot: 'running', content: renderRunning(this.runningState(cycle), clock) },
       { slot: 'schedule', content: renderSchedule(this.scheduleState(jobs, evidence, clock), clock) },
       { slot: 'performance', content: renderPerformance(await this.performanceState(cycle), clock) },
       { slot: 'repositories', content: renderRepositories(repositories, clock) },
@@ -135,13 +134,14 @@ export class LiveSnapshotsService {
     return { now: new Date(), timezone: this.config.timezone };
   }
 
-  private runningState(cycle: LiveCycle, clock: Clock): LiveRunning {
-    const { jobs, authenticated, evidence } = cycle;
+  private runningState(cycle: LiveCycle): LiveRunning {
+    const { jobs, authenticated } = cycle;
     if (!jobs || !authenticated) {
       // Saying "nothing is running" when we simply could not ask would be a
       // lie, and this message is the one an operator trusts at a glance.
       return {
         jobs: [],
+        totalJobs: cycle.health.trackedJobs,
         unavailable: !cycle.health.reachable
           ? 'Сервер Veeam не отвечает, поэтому список заданий не обновляется.'
           : 'Служебная учётная запись Veeam не авторизована, поэтому список заданий не обновляется.',
@@ -158,24 +158,19 @@ export class LiveSnapshotsService {
         .filter((job) => isRunningNow(job, sessions))
         .map((job) => {
           const session = sessions.get(job.id);
-          const startedAt = session?.creationTime ?? job.lastRun;
-          const began = Date.parse(startedAt ?? '');
           return {
             name: job.name,
             type: job.type,
             percent: session?.progressPercent,
-            startedAt,
+            startedAt: session?.creationTime ?? job.lastRun,
             disabled: isDisabled(job),
-            usual:
-              evidence.status === 'ready' && Number.isFinite(began)
-                ? usualRunOf(evidence.cleanRunsByJob.get(job.id), evidence.fullsByJob.get(job.id), began, clock.timezone)
-                : undefined,
           };
         })
         // The renderer prints them in the order it is given, and an operator
         // rereads this message every few minutes: a stable order is what makes
         // "is my job still there" answerable at a glance.
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })),
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      totalJobs: jobs.length,
       next: upcomingRuns(jobs)[0] ?? null,
     };
   }

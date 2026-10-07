@@ -1301,7 +1301,7 @@ test('the summary and the running list cannot disagree about the count', async (
   });
 
   await w.monitor.check();
-  const live = w.api.sent().find((m) => /Ид(?:ёт|ут) \d+ задани/.test(m.text));
+  const live = w.api.sent().find((m) => /Сейчас выполня/.test(m.text));
   w.api.reset();
   await said(w, '/digest');
 

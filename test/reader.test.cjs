@@ -191,7 +191,7 @@ test('a cycle reads the Working sessions once, and ▶️, 📈 and the Summary 
 
   assert.equal(workingReads, 1, 'one read of the Working sessions for the whole cycle');
   const texts = textsOf(w);
-  assert.ok(texts.some((t) => /Идёт 1 задание/.test(t)), '▶️ counts one');
+  assert.ok(texts.some((t) => /Сейчас выполняется: 1 задание/.test(t)), '▶️ counts one');
   assert.ok(texts.some((t) => /Выполняется заданий:<\/b> 1/.test(t)), '📈 counts one');
   assert.ok(texts.some((t) => /сводка по заданиям[\s\S]*Выполняются:<\/b> 1/.test(t)), 'the daily Summary counts one');
 });
@@ -215,7 +215,7 @@ test('a job Veeam gave no name is called by its id in the alert, the Summary and
   assert.ok(texts.some((t) => /5f1c0e2a: ОШИБКА/.test(t)), 'the alert');
   assert.ok(w.api.of('createForumTopic').some((topic) => topic.name === '5f1c0e2a'), 'the topic the alert is routed to');
   assert.ok(texts.some((t) => /🔴 5f1c0e2a/.test(t)), 'the Summary');
-  assert.ok(texts.some((t) => /Идёт 1 задание[\s\S]*<b>5f1c0e2a<\/b>/.test(t)), '▶️');
+  assert.ok(texts.some((t) => /Сейчас выполняется: 1 задание[\s\S]*<b>5f1c0e2a<\/b>/.test(t)), '▶️');
   assert.ok(!texts.some((t) => /без имени|неизвестное задание/.test(t)), 'and nowhere by another name');
 });
 
