@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please do not describe a vulnerability in Issues or commits. Write to the repository owner privately through [GitHub](https://github.com/MuratFaizulla): what you found, how to reproduce it and what it lets an attacker do. You will get an answer within a few working days.
+Please do not describe a vulnerability in Issues, pull requests or commits: they are public. Report it privately instead, through GitHub: the repository's **Security** tab → **Report a vulnerability** ([direct link](https://github.com/MuratFaizulla/veeam-monit/security/advisories/new)). Say what you found, how to reproduce it and what it lets an attacker do. Only the maintainer sees the report, and you will get an answer within a few working days.
 
 Fixes are made for the latest version only: the server always runs the latest release from the `main` branch.
 

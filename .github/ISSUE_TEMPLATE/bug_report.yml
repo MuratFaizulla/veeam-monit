@@ -1,0 +1,81 @@
+name: Bug report
+description: The bot said something wrong, said nothing, or stopped.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. [Troubleshooting](https://github.com/MuratFaizulla/veeam-monit/blob/main/docs/troubleshooting.md) covers the common problems; it may already have the answer.
+
+        **This issue is public.** Before pasting anything, replace host names, addresses, job, machine and customer names with invented ones (`veeam01.example.com`, `192.0.2.10`, `OPS_Exchange`), and never paste a token, a password or the contents of `.env`. A vulnerability goes to [Security → Report a vulnerability](https://github.com/MuratFaizulla/veeam-monit/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What the bot did, or did not do. A screenshot of the message helps, with names blurred.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. A job fails, and Veeam retries it
+        2. The retry succeeds
+        3. ...
+  - type: input
+    id: bot-version
+    attributes:
+      label: Bot version
+      description: The release (`1.1.0`), or the commit (`git log --oneline -1`).
+    validations:
+      required: true
+  - type: input
+    id: veeam-version
+    attributes:
+      label: Veeam Backup & Replication version
+      placeholder: "12.3.1.1139"
+    validations:
+      required: true
+  - type: dropdown
+    id: api-version
+    attributes:
+      label: REST API version the server speaks
+      description: "`VEEAM_API_VERSION` (1.2 unless set) is what the bot asks for; a server that speaks only an older one makes the log say \"does not speak REST API …; speaking …\"."
+      options:
+        - "1.2"
+        - "1.1"
+        - I don't know
+    validations:
+      required: true
+  - type: dropdown
+    id: runs
+    attributes:
+      label: How the bot runs
+      options:
+        - Docker Compose, built from the checkout
+        - Docker Compose, published image (MONITOR_IMAGE)
+        - deploy/offline.sh
+        - PM2 or plain Node.js
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: The lines around the problem from `logs/backend.log` or `docker compose logs`, with names and addresses replaced.
+      render: text
+  - type: checkboxes
+    id: clean
+    attributes:
+      label: Before sending
+      options:
+        - label: Nothing above holds a token, a password, or the real names and addresses of my installation.
+          required: true

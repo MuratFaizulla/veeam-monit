@@ -180,7 +180,8 @@ A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam
 - Commands and the menu: [docs/commands.md](docs/commands.md)
 - Topics, Veeam's retries and live messages: [docs/telegram.md](docs/telegram.md)
 - HTTP API and Swagger: [docs/http-api.md](docs/http-api.md)
-- How the code is organised: [docs/architecture.md](docs/architecture.md)
+- How the code is organised, CI and releases: [docs/architecture.md](docs/architecture.md)
+- Common problems and what to do: [docs/troubleshooting.md](docs/troubleshooting.md)
 - The domain language the code is written in: [CONTEXT.md](CONTEXT.md)
 
 ## Development
@@ -195,8 +196,8 @@ CI runs the tests and starts the Docker image on every push and pull request; a 
 
 ## Get involved
 
-- Found a bug, or missing something? [Open an issue](https://github.com/MuratFaizulla/veeam-monit/issues): say which Veeam version and REST API version the server runs, and what the bot said.
-- Pull requests are welcome. Keep `npm test` green and add a test for the behaviour you change; [docs/architecture.md](docs/architecture.md) explains how the code is laid out.
+- Found a bug, or missing something? [Open an issue](https://github.com/MuratFaizulla/veeam-monit/issues/new/choose); the form asks for what usually explains it. [Troubleshooting](docs/troubleshooting.md) may already have the answer.
+- Pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) explains how the code is laid out, how it is tested and what a change needs.
 - Use only invented names and documentation addresses (`example.com`, `192.0.2.0/24`) in code, tests and issues, never those of a real installation.
 
 ## Security

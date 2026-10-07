@@ -9,7 +9,9 @@
 | ⌨️ | [Commands and the menu](commands.md) | The bot's commands, the menu under the input field, who can talk to the bot |
 | ⚙️ | [Configuration](configuration.md) | Every `.env` variable and its default |
 | 🔌 | [HTTP API](http-api.md) | Routes, the admin key, Swagger |
-| 🧭 | [How it works](architecture.md) | Diagram, modules and folders, development and tests |
+| 🧭 | [How it works](architecture.md) | Diagram, modules and folders, development, CI and releases |
+| 🩹 | [Troubleshooting](troubleshooting.md) | Common problems: certificates, locked accounts, topics, commands, live messages |
+| 🤝 | [CONTRIBUTING.md](../CONTRIBUTING.md) | How to report a problem and how to send a change |
 | 📘 | [CONTEXT.md](../CONTEXT.md) | The domain glossary |
 | 🏛 | [adr/](adr/) | Architecture decisions and why they were made |
 | 📜 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each version |

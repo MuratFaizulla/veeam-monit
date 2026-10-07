@@ -1,0 +1,31 @@
+# GitHub's code scanning: CodeQL reads the TypeScript for the mistakes that
+# become vulnerabilities (injection, unchecked paths, leaked secrets) on every
+# push to main and every pull request. Findings appear under Security → Code
+# scanning. A private repository needs GitHub Advanced Security for it, so the
+# job only runs once the repository is public.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      # TypeScript is read from the source; nothing needs building first.
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4

@@ -16,10 +16,14 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 - CI builds the Docker image and starts it as `docker-compose.yml` does, until Docker calls it healthy, on every push and pull request, after the type check and the tests.
 - A tag `vX.Y.Z` makes a release: the image on `ghcr.io/muratfaizulla/veeam-monit` for amd64 and arm64, and a GitHub release with the version's section of this changelog. The tag must match `package.json`.
 - `MONITOR_IMAGE` in `.env` runs a published image instead of building one; `deploy/offline.sh` refuses to run while it is set.
+- [Troubleshooting](docs/troubleshooting.md): the common problems, with the messages the bot writes for them and what to do.
+- [CONTRIBUTING.md](CONTRIBUTING.md), forms for bug reports and feature requests, and a pull request checklist.
+- CodeQL scans the code on every push and pull request, once the repository is public.
 - `deploy/offline.sh user@host` ships a new version to a server without internet access: the build and the libraries are made on a machine with internet access, the commit and a ready archive go to the server over SSH, and the image is built there by copying on top of a base. The previous image is kept for rolling back.
 
 ### Changed
 
+- A vulnerability is reported through GitHub's private vulnerability reporting, which SECURITY.md now points to: GitHub has no private messages to write to the owner with.
 - The project is open under the [Apache 2.0](LICENSE) licence instead of a proprietary one; the README, the documentation, SECURITY.md and this changelog are in English. The README shows the bot in screenshots, rendered by its own code from invented data. The repository's history no longer holds the addresses, or the names of servers, jobs and customers, of a real installation.
 - The menu under the input field holds every command: added «📦 Задание» (job) and «🗂 Точки» (points), which without a name offer the jobs that need attention, «📑 Темы» (topics) and «🧹 Очистить» (clear). «Очистить» asks for confirmation with a button first: a key is easier to hit by accident than `/clear` is to type. The bot posts the new menu to General by itself after the update.
 - 🗂 is cut down to a list of the jobs that need attention, one line each: what is wrong and the date to look for in Veeam («пропущено 3 запуска · последний бэкап 02.10 в 03:32»: 3 runs missed, last backup on 02.10 at 03:32; «пропущен 03.10 · последний Full 26.09»: 03.10 missed, last Full on 26.09). Sections for jobs with no point at all, jobs missing backups, jobs missing a scheduled Full (more misses rank higher) and jobs with too few points to judge; the jobs that keep to their schedule are one line with their number. Explanations, totals and job details (chain, retention, points per machine, Full schedule) are gone: all of that is in `/points` for each job. Usually one message; if the list is longer, the messages are numbered.
