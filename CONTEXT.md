@@ -521,6 +521,24 @@ guessing.
 
 Owned by `src/estate/job-card.ts`.
 
+## Job reads
+
+What a **Job alert** and a **Job card** ask Veeam about one job when it comes
+up: its newest attempts, with their messages as worth showing; its own
+configuration, the retry policy in it; and how the machines of one attempt
+ended, and why. Best effort, all three: an alert or a card without one of them
+is still the answer.
+
+The alert used to ask them of the whole module behind the Job card — three
+methods made public for it beside the card's answers — and its tests had to
+stand up a server and write Veeam's paths, session by session, to say what a
+night of retries looked like. Two adapters sit behind the seam: Veeam's, and
+the one an alert test hands in, which answers what the test says happened.
+Where the retry policy comes from is still the alert's to decide (see ADR
+0001); the reads only answer.
+
+Owned by `src/estate/job-reads.ts`.
+
 ## Inventory
 
 The names behind the ids a job points at — repositories and proxies. A job

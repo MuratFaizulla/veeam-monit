@@ -20,6 +20,7 @@ const {
 } = require('../dist/telegram/types');
 const { MonitorService } = require('../dist/monitor/monitor.service');
 const { JobQueryService } = require('../dist/estate/job-query.service');
+const { VeeamJobReads } = require('../dist/estate/job-reads');
 const { LiveSnapshotsService } = require('../dist/live/snapshots.service');
 const { TelegramLiveService } = require('../dist/live/live.service');
 const { BackupEvidenceService } = require('../dist/estate/backup-evidence.service');
@@ -221,11 +222,35 @@ function serverOf(w, veeam, auth = monitorAccount(), evidence, endpoint = w.app.
   const reader = new VeeamEstateReader(veeam, auth);
   const scan = evidence ?? new BackupEvidenceService(w.config, reader);
   const inventory = new VeeamInventoryService(reader);
+  const reads = new VeeamJobReads(reader);
   return {
     key: endpoint.key, name: endpoint.name, baseUrl: veeam.baseUrl,
-    http: veeam, auth, reader, inventory, evidence: scan,
-    jobs: new JobQueryService(w.config, reader, auth, scan, inventory),
+    http: veeam, auth, reader, inventory, evidence: scan, reads,
+    jobs: new JobQueryService(w.config, reader, auth, scan, inventory, reads),
   };
+}
+
+/**
+ * Job reads that answer what a test says happened, the other adapter at the
+ * seam: the job's attempts newest first — a list, or a function asked each
+ * time — and each attempt's machines by its id. `asked` counts how often
+ * the attempts were read.
+ */
+function jobReadsOf({ sessions = [], machines = {}, configuration } = {}) {
+  const reads = {
+    asked: 0,
+    async sessionsOf() {
+      reads.asked += 1;
+      return typeof sessions === 'function' ? sessions() : sessions;
+    },
+    async configurationOf() {
+      return configuration;
+    },
+    async machinesOf(attempt) {
+      return machines[attempt.id] ?? [];
+    },
+  };
+  return reads;
 }
 
 /** A monitor watching several servers, the first of them selected until one is chosen. */
@@ -316,7 +341,7 @@ module.exports = {
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramChatAccess,
-  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf,
+  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf, jobReadsOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

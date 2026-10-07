@@ -4,35 +4,24 @@ import { AppConfig } from '../config/configuration';
 import { Clock } from '../telegram/time';
 import { escapeHtml } from '../telegram/format';
 import { Job } from '../veeam/estate';
-import { MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service';
-import { blameOf, sessionText } from '../veeam/session-text';
+import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
 import { VeeamApiError } from '../veeam/api.error';
-import { VeeamJob, VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
+import { VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
 import { Answer } from './answer';
 import { byLongest, MACHINE_LOGS, RunSpeed, speedOf } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
-import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
+import { JobCard, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
+import { FailedObject, JobReads, JobSession, RECENT_SESSIONS } from './job-reads';
 import { RetainedRun } from './evidence';
 import { assessProtection, excuseFor, standingOf, standingsOf, thresholdsOf, verdictOf } from './job-standing';
 import { pointsOf } from './point-facts';
 import { PointsCard, renderPointsCard } from './points-card';
 import { PointSizes, sizesOf } from './points-sizes';
-
-/**
- * Sessions read for one job — by its card and by its alert, which counts the
- * attempt from the same read.
- *
- * Sessions are attempts and the card lists Runs: five of them at Veeam's
- * default four attempts is twenty sessions. Six used to be read, which was
- * one night and half of the one before it. Thirty leaves room for a job that
- * retries more, and for the Run the limit cuts short, which the card leaves out.
- */
-const RECENT_SESSIONS = 30;
 
 /** Machine logs asked for at once when a card reads a run's speed. */
 const LOGS_AT_ONCE = 5;
@@ -57,6 +46,7 @@ export class JobQueryService {
     private readonly monitorAuth: VeeamMonitorAuthService,
     private readonly evidence: BackupEvidenceService,
     private readonly inventory: VeeamInventoryService,
+    private readonly reads: JobReads,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -283,8 +273,8 @@ export class JobQueryService {
     // In parallel: the three reads are independent, and a card that took three
     // round trips in sequence is a card nobody waits for.
     const [sessions, configured, names] = await Promise.all([
-      this.recentSessions(job),
-      this.configurationOf(job),
+      this.reads.sessionsOf(job),
+      this.reads.configurationOf(job),
       this.inventory.names(),
     ]);
 
@@ -322,83 +312,6 @@ export class JobQueryService {
       pointsUnavailable: evidence.status === 'ready' ? undefined : evidence.reason,
       pointsElsewhere: scanned?.provenByRuns.has(job.id),
     };
-  }
-
-  /**
-   * Newest sessions of one job. Best effort: a card without them still helps.
-   *
-   * Public because an alert needs the same thing a card does — the reason the
-   * run failed, and enough history around it to say which attempt this is.
-   * Reading it twice would be two requests to answer one question.
-   */
-  async recentSessions(job: Job): Promise<JobSession[]> {
-    try {
-      return (await this.reader.recentSessions(job.id, RECENT_SESSIONS)).map((session) => ({
-        id: session.id,
-        startedAt: session.creationTime,
-        endedAt: session.endTime,
-        result: session.result?.result,
-        // Read once, here, so that nothing downstream can show the message
-        // as Veeam wrote it — which is what a card's run list once did.
-        message: sessionText(session.result?.message),
-        blames: blameOf(session.result?.message),
-        percent: session.progressPercent,
-      }));
-    } catch (error) {
-      this.logger.debug(`No session history for job ${job.id}: ${(error as Error).message}`);
-      return [];
-    }
-  }
-
-  /**
-   * The job's own configuration — schedule, repository, proxies, machines.
-   *
-   * Read by id rather than taken from the estate scan's copy: that copy keeps
-   * only the schedules and retention of all 112 jobs, and holding every job's full storage
-   * settings in memory to answer a question nobody may ask is the wrong trade.
-   *
-   * Public because an alert sent before any scan has finished needs the retry
-   * policy from here too. Best effort: undefined when it could not be read.
-   */
-  async configurationOf(job: Job): Promise<VeeamJob | undefined> {
-    try {
-      return await this.reader.jobConfiguration(job.id);
-    } catch (error) {
-      this.logger.debug(`No configuration for job ${job.id}: ${(error as Error).message}`);
-      return undefined;
-    }
-  }
-
-  /**
-   * How each object of one session ended, and why the ones that went wrong did.
-   * Best effort: empty when Veeam could not say.
-   *
-   * An empty answer is not a failure of this method: a run that could not
-   * reach the machine at all — "Virtual Machine … is unavailable" — never
-   * starts a task for it, and then the session message is the whole story.
-   *
-   * Public because an alert asks the same question a card does.
-   */
-  async objectsOf(session: JobSession): Promise<FailedObject[]> {
-    if (!session.id) return [];
-    let machines: MachineResult[];
-    try {
-      machines = await this.reader.machineResults(session.id);
-    } catch (error) {
-      this.logger.debug(`No per-object detail for session ${session.id}: ${(error as Error).message}`);
-      return [];
-    }
-    // The task's own message is sometimes only the step it stopped at —
-    // "Getting VM info from vSphere" — while the session's says, of the same
-    // machine, "Error: Cannot get service content. / Soap fault. Temporary
-    // failure in name resolution". An error named for a machine wins.
-    const { blames } = session;
-    return machines.map(({ name, result, reason, algorithm }) => ({
-      name,
-      result,
-      message: blames?.machine === name ? blames.reason : reason,
-      ...(algorithm ? { algorithm } : {}),
-    }));
   }
 
   /**
@@ -456,7 +369,7 @@ export class JobQueryService {
   private async failedObjects(sessions: JobSession[]): Promise<FailedObject[]> {
     const bad = sessions.find((session) => isBadResult(session.result ?? ''));
     if (!bad) return [];
-    return (await this.objectsOf(bad)).filter((object) => isBadResult(object.result ?? ''));
+    return (await this.reads.machinesOf(bad)).filter((object) => isBadResult(object.result ?? ''));
   }
 
   private clock(): Clock {

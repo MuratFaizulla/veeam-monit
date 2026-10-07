@@ -5,6 +5,7 @@ import { Job } from '../veeam/estate';
 import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory, retentionFrom } from './evidence';
 import { describeFulls, fullSchedulesOf } from './full-schedule';
+import { FailedObject, JobSession } from './job-reads';
 import { iconOf, isBadResult } from './job-state';
 import { retentionWords } from './point-facts';
 import { runsOf } from './runs';
@@ -25,28 +26,6 @@ import { describeRetry, describeSchedule } from './schedule-planner';
  * about it. The two are separate because only the first can be wrong in a way
  * the asker must be told about.
  */
-
-/**
- * One session of this job — one attempt, not one run.
- *
- * Veeam retries a failed job by starting another session; which sessions are
- * one run is decided in runs.ts.
- */
-export interface JobSession {
-  /** The session id, which is how its per-object detail is reached. */
-  id?: string;
-  startedAt?: string;
-  /** Absent while the session is still going. */
-  endedAt?: string;
-  /** Lower-cased, as the estate reader hands every session result out. */
-  result?: string;
-  /** Veeam's message as it is worth showing — see `sessionText`; never as Veeam wrote it. */
-  message?: string;
-  /** The machine the message says went wrong, and why, when it says both. */
-  blames?: { machine: string; reason: string };
-  /** 0-100, only while running and only once Veeam reports any. */
-  percent?: number;
-}
 
 /**
  * How the job is set up, each line already written out.
@@ -71,16 +50,6 @@ export interface ProtectedObject {
   hostName?: string;
   /** Veeam's own formatting, shown as given. */
   size?: string;
-}
-
-/** One object of a run that went wrong, and what went wrong with it. */
-export interface FailedObject {
-  name: string;
-  /** Lower-cased. */
-  result?: string;
-  message?: string;
-  /** Lower-cased: `full`, `increment`, where Veeam said. */
-  algorithm?: string;
 }
 
 /** Everything worth saying about one job, gathered from every source. */

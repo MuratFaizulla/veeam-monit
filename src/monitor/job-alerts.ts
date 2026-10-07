@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Evidence } from '../estate/evidence';
-import { FailedObject, JobSession } from '../estate/job-card';
+import { FailedObject, JobSession } from '../estate/job-reads';
 import { isBadResult, isDisabled, isRunning } from '../estate/job-state';
 import { RunStanding, standingOf } from '../estate/runs';
 import { ServerEstate } from '../estate/server-estates';
@@ -39,7 +39,7 @@ export class JobAlerts {
   private readonly now: () => number;
 
   constructor(
-    private readonly server: Pick<ServerEstate, 'name' | 'jobs'>,
+    private readonly server: Pick<ServerEstate, 'name' | 'reads'>,
     private readonly memory: JobMemory,
     private readonly send: Send,
     private readonly settings: JobAlertsSettings,
@@ -138,7 +138,7 @@ export class JobAlerts {
     const attempt = recovery
       ? run?.sessions[0]
       : run?.sessions.find((session) => isBadResult(session.result ?? '')) ?? run?.sessions[0];
-    const objects = attempt && !recovery ? await this.server.jobs.objectsOf(attempt) : [];
+    const objects = attempt && !recovery ? await this.server.reads.machinesOf(attempt) : [];
     const outcome = recovery
       ? 'succeeded'
       : result === 'failed'
@@ -172,7 +172,7 @@ export class JobAlerts {
    * both, and the reason the run failed besides.
    */
   private async runOf(job: Job, evidence: Evidence): Promise<JobRun> {
-    const sessions = await this.server.jobs.recentSessions(job);
+    const sessions = await this.server.reads.sessionsOf(job);
     const schedule = await this.retryPolicyOf(job, evidence);
     // A job switched off in Veeam keeps its schedule, and runs only because
     // somebody started it by hand — which Veeam never retries. Promising
@@ -197,7 +197,7 @@ export class JobAlerts {
   private async retryPolicyOf(job: Job, evidence: Evidence): Promise<VeeamSchedule | undefined> {
     // A job created after the last scan is not in it, however ready it is.
     const scanned = evidence.status === 'ready' ? evidence.schedulesByJob.get(job.id) : undefined;
-    return scanned ?? (await this.server.jobs.configurationOf(job))?.schedule;
+    return scanned ?? (await this.server.reads.configurationOf(job))?.schedule;
   }
 }
 

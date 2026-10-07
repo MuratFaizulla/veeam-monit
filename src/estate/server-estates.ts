@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { VeeamServer, VeeamServers } from '../veeam/servers';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { JobQueryService } from './job-query.service';
+import { JobReads, VeeamJobReads } from './job-reads';
 
 /**
  * One Veeam server with what the estate establishes about it: its Evidence and
@@ -15,6 +16,8 @@ import { JobQueryService } from './job-query.service';
 export interface ServerEstate extends VeeamServer {
   evidence: BackupEvidenceService;
   jobs: JobQueryService;
+  /** What its Job alerts and Job cards ask Veeam about one job. */
+  reads: JobReads;
 }
 
 /** Every configured server's estate, in the order the servers are listed. */
@@ -30,6 +33,7 @@ export class ServerEstates {
 /** A server's estate, wired. */
 export const estateOf = (config: ConfigService, server: VeeamServer): ServerEstate => {
   const evidence = new BackupEvidenceService(config, server.reader, server.name);
-  const jobs = new JobQueryService(config, server.reader, server.auth, evidence, server.inventory);
-  return { ...server, evidence, jobs };
+  const reads = new VeeamJobReads(server.reader);
+  const jobs = new JobQueryService(config, server.reader, server.auth, evidence, server.inventory, reads);
+  return { ...server, evidence, jobs, reads };
 };

@@ -11,7 +11,7 @@ const {
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
-  announcement, probe, capacities, capacityOf,
+  announcement, probe, capacities, capacityOf, jobReadsOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
 
@@ -1571,6 +1571,9 @@ const VDDK =
   'Failed to open disk for read.\r\n' +
   "Failed to upload disk 'vddkConnSpec>'\r\n" +
   'Agent failed to process method {DataTransfer.SyncDisk}.';
+/** VDDK as the Job reads hand it on: the reason, without the connection parameters and the agent's call stack. */
+const VDDK_REASON =
+  'Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.';
 const RETRY_FOUR = { runAutomatically: true, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } };
 
 /** What an alert says under its title, as it is sent. */
@@ -1589,32 +1592,26 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
   const starts = [now - 60 * MINUTE, now - 50_000, now - 8_000, now - 5_000];
   const ends = [now - 1 * MINUTE, now - 10_000, now - 6_000, now - 1_000];
   let sessions = [];
-  let reads = 0;
   let state = { lastResult: 'Success', status, lastRun: at(now - DAY) };
   let delivers = true;
   const sent = [];
 
-  const server = serverOf(world(), veeamFake({
-    '/api/v1/sessions': (req) => {
-      if (req.params?.jobIdFilter === '1') reads += 1;
-      return { data: sessions };
-    },
-    ...Object.fromEntries([1, 2, 3, 4].map((n) => [`/api/v1/sessions/a${n}/taskSessions`, {
-      data: [{ name: 'APPDB1-T3Q4', result: { result: 'Failed', message: VDDK } }],
-    }])),
-  }));
+  const reads = jobReadsOf({
+    sessions: () => sessions,
+    machines: Object.fromEntries([1, 2, 3, 4].map((n) => [`a${n}`, [{ name: 'APPDB1-T3Q4', result: 'failed', message: VDDK_REASON }]])),
+  });
   const memory = new JobMemory({ results: {}, retrying: {} }, () => {});
   const send = async (event) => {
     if (!delivers) return { outcome: 'failed' };
     sent.push(event);
     return { outcome: 'delivered' };
   };
-  const alerts = new JobAlerts(server, memory, send, { timezone: 'UTC', cooldownMs: 0, now: () => now });
+  const alerts = new JobAlerts({ name: 'veeam01main', reads }, memory, send, { timezone: 'UTC', cooldownMs: 0, now: () => now });
   const evidence = { status: 'ready', schedulesByJob: new Map([['1', schedule]]) };
   const session = (n, result, ended = ends[n - 1]) => ({
-    id: `a${n}`, jobId: '1', sessionType: 'BackupJob', creationTime: at(starts[n - 1]),
+    id: `a${n}`, startedAt: at(starts[n - 1]),
     // A session still going has no result yet.
-    endTime: ended === null ? undefined : at(ended), result: { result: ended === null ? 'None' : result, message: 'Processing APPDB1-T3Q4' },
+    endedAt: ended === null ? undefined : at(ended), result: ended === null ? 'none' : result.toLowerCase(), message: 'Processing APPDB1-T3Q4',
   });
 
   return {
@@ -1623,7 +1620,7 @@ const retriedNight = ({ schedule = RETRY_FOUR, status = 'Inactive' } = {}) => {
     ends,
     /** Reads of this job's sessions so far. */
     get reads() {
-      return reads;
+      return reads.asked;
     },
     /** Whether Telegram takes what is sent. */
     set delivers(value) {
@@ -1660,10 +1657,7 @@ test('the first failure says Veeam will try again, and which machine failed and 
   const hhmm = `${String(retryAt.getUTCHours()).padStart(2, '0')}:${String(retryAt.getUTCMinutes()).padStart(2, '0')}`;
   assert.equal(alert.title, 'OPS_ERP_APP_DB1 — failed');
   assert.match(textOf(alert), new RegExp(`\n\n🔁 Veeam will retry ≈ .*${hhmm} \\(retry 1\\)\\.`));
-  assert.ok(
-    alert.lines.includes('❌ <b>APPDB1-T3Q4</b> — Failed to open VDDK disk [[SITE1_SSD_DATA09] APPDB1-T3Q4/APPDB1-T3Q4_1.vmdk] ( is read-only mode - [true] ) / Failed to open disk for read.'),
-    'параметры подключения и трасса агента — не причина',
-  );
+  assert.ok(alert.lines.includes(`❌ <b>APPDB1-T3Q4</b> — ${VDDK_REASON}`), 'the machine, and why');
   // Not running is what every job an alert is about is doing.
   assert.match(alert.lines[0], /^<i>VM backup · started .* · ran 59 min<\/i>$/);
   assert.equal(night.memory.retryingOf('1').attempt, 1, 'запуск запомнен до конца повторов');
@@ -1918,23 +1912,26 @@ test('an alert with no machine to list gives the session\'s reason, without the 
   assert.doesNotMatch(alert, /Logon attempt|svc@example\.com/);
 });
 
-test('the machine a session blames takes the session\'s reason, and the others keep their own', async () => {
-  const server = serverOf(world(), veeamFake({
+test('the Job reads hand on a machine\'s reason, the session\'s for the machine it blames, and never the connection parameters', async () => {
+  const { reads } = serverOf(world(), veeamFake({
     '/api/v1/sessions': { data: [kingstonNight('n2', 29)] },
     '/api/v1/sessions/n2/taskSessions': { data: [
       // Its own task says only the step it stopped at.
       { name: 'comp01vc01', result: { result: 'Failed', message: 'Getting VM info from vSphere' } },
       { name: 'mgmt01vc01', result: { result: 'Failed', message: 'Processing mgmt01vc01 Error: Disk full' } },
       { name: 'ok01', result: { result: 'Success', message: 'Success' } },
+      { name: 'APPDB1-T3Q4', result: { result: 'Failed', message: VDDK } },
     ] },
   }));
 
-  const [session] = await server.jobs.recentSessions({ id: '1', name: 'OPS_Kingston_vCenters', result: 'failed' });
+  const [session] = await reads.sessionsOf({ id: '1', name: 'OPS_Kingston_vCenters', result: 'failed' });
 
-  assert.deepEqual(await server.jobs.objectsOf(session), [
+  assert.equal(session.message, 'comp01vc01 — Cannot get service content. / Soap fault. Temporary failure in name resolution');
+  assert.deepEqual(await reads.machinesOf(session), [
     { name: 'comp01vc01', result: 'failed', message: 'Cannot get service content. / Soap fault. Temporary failure in name resolution' },
     { name: 'mgmt01vc01', result: 'failed', message: 'Disk full' },
     { name: 'ok01', result: 'success', message: 'Success' },
+    { name: 'APPDB1-T3Q4', result: 'failed', message: VDDK_REASON },
   ]);
 });
 
@@ -1963,16 +1960,16 @@ test('an alert names a Full and a retry the way Veeam\'s console names the sessi
   await night.check();
   assert.equal(night.sent[0].title, 'OPS_ERP_APP_DB1 — failed', 'a first attempt at an increment says neither');
 
-  const server = serverOf(world(), veeamFake({
-    '/api/v1/sessions': { data: [{ id: 'f1', jobId: '1', creationTime: at(Date.now() - 50 * MINUTE), endTime: at(Date.now() - MINUTE), result: { result: 'Failed' } }] },
-    '/api/v1/sessions/f1/taskSessions': { data: [
-      { name: 'new01', algorithm: 'Increment', result: { result: 'Success' } },
-      { name: 'db01', algorithm: 'Full', result: { result: 'Failed', message: 'Disk full' } },
-      { name: 'db02', algorithm: 'Full', result: { result: 'Success' } },
+  const reads = jobReadsOf({
+    sessions: [{ id: 'f1', startedAt: at(Date.now() - 50 * MINUTE), endedAt: at(Date.now() - MINUTE), result: 'failed' }],
+    machines: { f1: [
+      { name: 'new01', algorithm: 'increment', result: 'success' },
+      { name: 'db01', algorithm: 'full', result: 'failed', message: 'Disk full' },
+      { name: 'db02', algorithm: 'full', result: 'success' },
     ] },
-  }));
+  });
   const sent = [];
-  const alerts = new JobAlerts(server, new JobMemory({ results: { 1: 'success' }, retrying: {} }, () => {}), async (event) => {
+  const alerts = new JobAlerts({ name: 'veeam01main', reads }, new JobMemory({ results: { 1: 'success' }, retrying: {} }, () => {}), async (event) => {
     sent.push(event);
     return { outcome: 'delivered' };
   }, { timezone: 'UTC', cooldownMs: 0 });
