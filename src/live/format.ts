@@ -113,8 +113,6 @@ export interface LiveHealth {
   serverUrl: string;
   /** The IP address `serverUrl` leads to, once a connection has resolved it. */
   serverAddress?: string;
-  /** Veeam's own clock, as returned by /api/v1/serverTime. */
-  serverTime?: string;
   error?: string | null;
   trackedJobs: number;
   intervalMs: number;
@@ -207,19 +205,19 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
     lines.push('', `<b>Причина:</b> ${escapeHtml(health.error)}`);
   }
 
-  lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
-
-  // Veeam's own clock belongs on the volatile line: it moves every poll, and a
-  // field that always differs would mean rewriting this message every minute
-  // just to say the same thing.
-  const serverClock =
-    health.reachable && health.serverTime
-      ? ` · часы сервера ${escapeHtml(moment(health.serverTime, clock))}`
-      : '';
-  lines.push(footerOf(clock, serverClock));
-
+  lines.push('', healthFooter(health, clock));
   return truncate(lines.join('\n'));
 };
+
+/**
+ * One time under 🩺: when it was written, and how often it is checked.
+ *
+ * It used to be three — the check interval on a line of its own, then the
+ * time of writing beside Veeam's own clock — and two clocks a few seconds
+ * apart read as a puzzle, not as a check that the monitor is alive.
+ */
+const healthFooter = (health: LiveHealth, clock: Clock): string =>
+  footerOf(clock, ` · проверка каждые ${Math.round(health.intervalMs / 1000)} с`);
 
 /**
  * 🩺 when there are several servers: is every one of them watched?
@@ -246,16 +244,17 @@ const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], cl
     // Red where the monitor is shut out; a server with no account configured
     // was left unwatched on purpose, or by an oversight, and is yellow.
     const icon = server.reachable === false || server.authenticated === false ? '🔴' : '🟡';
-    lines.push(`${icon} ${serverName(server)} — ${troubleOf(server)}${shownMark(server)}`);
+    lines.push(`${icon} ${serverName(server)} — ${troubleOf(server)}`);
     if (server.error) lines.push(`<i>${escapeHtml(server.error)}</i>`);
   }
   for (const server of fine) {
     const jobs = server.jobs === undefined ? '' : ` · ${server.jobs} ${plural(server.jobs, 'задание', 'задания', 'заданий')}`;
     // In trouble, the selected one keeps its red or yellow above: trouble
-    // matters more than which server is shown.
-    lines.push(`${server.selected ? '🔵' : '🟢'} ${serverName(server)}${jobs}${shownMark(server)}`);
+    // matters more than which server is shown, and the other topics name the
+    // server they show on top anyway.
+    lines.push(`${server.selected ? '🔵' : '🟢'} ${serverName(server)}${jobs}`);
   }
-  for (const server of unasked) lines.push(`⚪ ${serverName(server)} — ещё не опрошен${shownMark(server)}`);
+  for (const server of unasked) lines.push(`⚪ ${serverName(server)} — ещё не опрошен`);
 
   const addressed = servers.filter((server) => server.address && server.address !== server.name);
   if (addressed.length) {
@@ -265,13 +264,7 @@ const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], cl
     }
   }
 
-  lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
-  const shown = servers.find((server) => server.selected);
-  const serverClock =
-    shown && health.reachable && health.serverTime
-      ? ` · часы ${escapeHtml(shown.name)} ${escapeHtml(moment(health.serverTime, clock))}`
-      : '';
-  lines.push(footerOf(clock, serverClock));
+  lines.push('', healthFooter(health, clock));
   return truncate(lines.join('\n'));
 };
 
@@ -292,9 +285,6 @@ const countWords = (total: number, fine: number, troubled: number, unasked: numb
 };
 
 const serverName = (server: LiveServerHealth): string => `<b>${escapeHtml(server.name)}</b>`;
-
-/** The selected server, said in words as well: blue says it only while the server is fine. */
-const shownMark = (server: LiveServerHealth): string => (server.selected ? ' · <i>показан в темах</i>' : '');
 
 /** What keeps a server from being watched, or nothing while it is watched or not asked yet. */
 const troubleOf = (server: { reachable: boolean | null; authenticated: boolean | null }): string | undefined => {

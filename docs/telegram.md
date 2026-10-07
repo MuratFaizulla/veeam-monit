@@ -49,6 +49,7 @@ Telegram lets a bot edit and delete its message for about two days **from when i
 - **A deleted message or topic** is brought back by the bot itself: on the next cycle if its content changes, and no later than `TELEGRAM_LIVE_REFRESH_MIN` minutes (5 by default) otherwise. The 🚨 Alerts topic comes back with the next alert; the history of a deleted topic goes with it.
 - **A one-off Telegram failure** (429, 5xx, a dropped connection) is no reason to post a new message: the old one stays, the bot edits it again on the next cycle and logs `was not refreshed, kept for the next cycle`.
 - **A topic of several messages** (🗂, when its list does not fit in one) is numbered («· 1/3», «· 2/3»…). When one of its messages is posted again, the ones after it are posted again too, so the order in the topic does not turn upside down.
+- **💾 Repositories** opens with where space is running out («🔴 Репозитории: 1 почти заполнен, 1 заполняется»), then gives each repository one line, the fullest first: how full it is, a bar, and how much is free. 🔴 from 90% in use, 🟠 from 80%, 🟢 below; one Veeam cannot reach comes first, one it gives no figures for last.
 - **Auto-delete** in the group must be **longer than 36 hours**, or a live message disappears before it is replaced. Keep in mind that it deletes live messages and alerts alike, so the 🚨 Alerts topic becomes a sliding window.
 
 ## Several Veeam servers
@@ -57,6 +58,6 @@ Servers are listed in `VEEAM_SERVERS`, comma-separated, and share one account. A
 
 - **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files: ОШИБКА` (error). The daily digest comes for each server.
 - **The live topics, `/digest` and `/job`** show the selected server: the first in the list until somebody picks another with «🖥 Серверы» or `/servers`. The choice is shared by the whole group and survives a restart.
-- 🩺 is about every server: its first line counts the ones that are fine («🟡 4 из 5 серверов в порядке»), a server in trouble comes first with the reason in Veeam's or the network's words, the selected one is 🔵 and leads the servers that are fine, marked «показан в темах» (in trouble it stays 🔴, with the same words), and the IP addresses of all of them are listed together under the list.
+- 🩺 is about every server: its first line counts the ones that are fine («🟡 4 из 5 серверов в порядке»), a server in trouble comes first with the reason in Veeam's or the network's words, the selected one is 🔵 and leads the servers that are fine (in trouble it stays 🔴: trouble matters more), and the IP addresses of all of them are listed together under the list. The last line says when the message was written and how often the servers are checked.
 - **Load.** Every cycle asks each server for its availability, job states and repositories. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
 - **A new server** is only remembered on its first cycle: jobs that had already failed on it do not come as alerts. The same goes for a renamed server.

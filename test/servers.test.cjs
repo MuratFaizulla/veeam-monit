@@ -157,10 +157,12 @@ test('the live slots show the selected server, named on top, and the health list
   assert.ok(slots.length > 0);
   for (const slot of slots) assert.ok(slot.startsWith('🖥 <b>AST</b>\n\n'), slot);
   assert.ok(health.startsWith('🟢 <b>Оба сервера в порядке</b>\n\n'), health);
-  // The one shown is blue, a colour no state uses, and said in words too: ⚪
-  // beside the others used to read as "off".
-  assert.match(health, /^🔵 <b>AST<\/b> · 1 задание · <i>показан в темах<\/i>$/mu);
+  // The one shown is blue, a colour no state uses; ⚪ beside the others used
+  // to read as "off". One time at the foot, beside how often it is checked.
+  assert.match(health, /^🔵 <b>AST<\/b> · 1 задание$/mu);
   assert.match(health, /^🟢 <b>BAAS<\/b> · 1 задание$/mu);
+  assert.match(health, /\n\n<i>Обновлено [^<·]+ · проверка каждые 60 с<\/i>$/u);
+  assert.doesNotMatch(health, /Проверка:|часы/u);
 
   // The Evidence scan is paid for by the server shown, and only by it.
   assert.ok(w.veeamAst.paths().includes('/api/v1/restorePoints'));
@@ -232,7 +234,7 @@ test('a server in trouble is red in the health whichever is shown, and says what
   const health = healthOf(w);
   assert.ok(health.startsWith('🟡 <b>1 из 2 серверов в порядке</b>\n\n🔴 <b>BAAS</b> — не отвечает\n<i>'), health);
   assert.match(health, /ECONNREFUSED/u);
-  assert.match(health, /^🔵 <b>AST<\/b> · 1 задание · <i>показан в темах<\/i>$/mu);
+  assert.match(health, /^🔵 <b>AST<\/b> · 1 задание$/mu);
 });
 
 test('the health counts the servers that are fine, puts the ones in trouble first, and the shown one in blue', () => {
@@ -257,7 +259,7 @@ test('the health counts the servers that are fine, puts the ones in trouble firs
     '🔴 <b>veeam04</b> — вход не выполнен',
     `<i>${locked}</i>`,
     // The one shown leads the servers that are fine, wherever it is listed.
-    '🔵 <b>veeam02</b> · 1 задание · <i>показан в темах</i>',
+    '🔵 <b>veeam02</b> · 1 задание',
     '🟢 <b>veeam01</b> · 112 заданий',
     '⚪ <b>veeam05</b> — ещё не опрошен',
   ]);
@@ -266,7 +268,7 @@ test('the health counts the servers that are fine, puts the ones in trouble firs
   // Trouble matters more than which one is shown: the shown one in trouble stays red.
   assert.deepEqual(
     health([server('a'), server('b', { selected: true, reachable: false })]).split('\n\n')[1].split('\n'),
-    ['🔴 <b>b</b> — не отвечает · <i>показан в темах</i>', '🟢 <b>a</b> · 10 заданий'],
+    ['🔴 <b>b</b> — не отвечает', '🟢 <b>a</b> · 10 заданий'],
   );
 
   const headlineOf = (servers) => health(servers).split('\n')[0];
@@ -314,7 +316,7 @@ test('the menu under the input field turns into the servers, and a server\'s key
   const slots = edits.filter((text) => text !== health);
   assert.ok(slots.length > 0, 'the live slots were redrawn');
   for (const slot of slots) assert.ok(slot.startsWith('🖥 <b>BAAS</b>\n\n'), slot);
-  assert.match(health, /^🔵 <b>BAAS<\/b> · 2 задания · <i>показан в темах<\/i>$/mu, 'and 🩺 says which is shown');
+  assert.match(health, /^🔵 <b>BAAS<\/b> · 2 задания$/mu, 'and 🩺 says which is shown');
   assert.ok(w.veeamBaas.paths().includes('/api/v1/restorePoints'), 'and BAAS is scanned now');
 });
 

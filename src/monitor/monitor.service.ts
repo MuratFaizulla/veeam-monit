@@ -25,8 +25,6 @@ interface Watch {
   estate: ServerEstate;
   lastReachable?: boolean;
   lastAuthenticated?: boolean;
-  /** Veeam's own clock from the last successful reachability probe. */
-  lastServerTime?: string;
   lastCheckAt: string | null;
   reachable: boolean | null;
   authenticated: boolean | null;
@@ -371,8 +369,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     const { http } = watch.estate;
     const { reachable, serverTime, error } = await http.reachability();
     const detail = (reachable ? serverTime : error) ?? '';
-    if (reachable) watch.lastServerTime = serverTime;
-    else watch.lastError = detail;
+    if (!reachable) watch.lastError = detail;
     watch.reachable = reachable;
 
     // Starting up is not an event. It used to be announced every time, which
@@ -471,7 +468,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         authenticated: watch.authenticated,
         serverUrl: estate.baseUrl,
         serverAddress: estate.http.address,
-        serverTime: watch.lastServerTime,
         error: watch.lastError,
         trackedJobs: this.store.jobMemoryOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
