@@ -81,10 +81,10 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
 <sub>Rendered by the bot's own code from an invented estate: every job, machine and server name is made up.</sub>
 
 <p align="center">
-  <strong>Live topics: running now, protection, restore points</strong><br />
+  <strong>Live topics: running now, protection, repositories</strong><br />
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/live-dark.png" />
-    <img src="docs/assets/screenshots/live-light.png" width="900" alt="Three live topics: two jobs running with their progress, one job three days without a restore point, and the jobs that missed a backup or a scheduled Full" />
+    <img src="docs/assets/screenshots/live-light.png" width="900" alt="Three live topics: two jobs running with their progress, the jobs that need attention — one three days without a backup, one past a scheduled Full — and the repositories, the fullest in red" />
   </picture>
 </p>
 
