@@ -29,7 +29,6 @@ import {
 } from './performance';
 import { ProtectionSnapshot, assessProtection, renderProtection } from './protection';
 import { renderRepositories } from './repositories';
-import { JobDepth, RestorePointsSnapshot, renderRestorePoints } from './restore-points';
 import { LiveSlot } from './slots';
 
 /**
@@ -106,9 +105,8 @@ export class LiveSnapshotsService {
       { slot: 'repositories', content: renderRepositories(repositories, clock) },
       {
         slot: 'protection',
-        content: renderProtection(this.protectionState(jobs, standings, evidence), clock),
+        content: renderProtection(this.protectionState(jobs, standings, evidence, clock), clock),
       },
-      { slot: 'restorePoints', content: renderRestorePoints(this.depthState(standings, evidence), clock) },
     ];
 
     // Off by request until the chains have been gone through by hand; the slot
@@ -293,6 +291,7 @@ export class LiveSnapshotsService {
     jobs: Job[] | undefined,
     standings: Standings | undefined,
     evidence: Evidence,
+    clock: Clock,
   ): ProtectionSnapshot {
     const thresholds = {
       staleDays: this.config.protectionStaleDays,
@@ -312,59 +311,7 @@ export class LiveSnapshotsService {
       };
     }
 
-    return assessProtection({ standings, now: Date.now(), ...thresholds });
-  }
-
-  /**
-   * Where each job stands against its own schedule, from the same scan
-   * 🛡 Protection uses.
-   *
-   * Jobs with no restore point at all are counted but not listed: they have
-   * nothing to date, and Protection already names them.
-   */
-  private depthState(
-    standings: Standings | undefined,
-    evidence: Evidence,
-  ): RestorePointsSnapshot {
-    if (!standings || evidence.status === 'pending') {
-      return {
-        jobs: [],
-        without: [],
-        elsewhere: 0,
-        excludedDisabled: 0,
-        excludedUnscheduled: 0,
-        unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
-      };
-    }
-
-    const listed: JobDepth[] = [];
-    const without: string[] = [];
-    let elsewhere = 0;
-    // Which jobs are in scope, and how many were left out, is decided once and
-    // shared with 🛡 Protection; the two messages state the same numbers because
-    // they are the same numbers.
-    for (const job of standings.judged) {
-      if (!job.depth) {
-        if (job.byRuns) elsewhere += 1;
-        else without.push(job.name);
-        continue;
-      }
-      listed.push({
-        name: job.name,
-        ...job.depth,
-        intervalDays: job.cadenceDays,
-        retention: job.retention,
-        fulls: job.fulls,
-      });
-    }
-
-    return {
-      jobs: listed,
-      without,
-      elsewhere,
-      excludedDisabled: standings.excludedDisabled,
-      excludedUnscheduled: standings.excludedUnscheduled,
-    };
+    return assessProtection({ standings, now: clock.now.getTime(), timezone: clock.timezone, ...thresholds });
   }
 
   /** Backup chains left behind by jobs that no longer exist. */

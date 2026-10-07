@@ -35,9 +35,15 @@ export const LIVE_SLOTS = {
   performance: { fixedThread: 'performanceTopicId' },
   repositories: { fixedThread: 'repositoriesTopicId' },
   protection: {},
-  restorePoints: {},
   orphans: {},
 } as const satisfies Record<string, LiveSlotSpec>;
+
+/**
+ * Slots there used to be. Their messages are deleted from every chat, so a
+ * topic nobody writes to any more does not go on saying what it said last.
+ * 🗂 Restore points became part of 🛡 Protection on 7 October 2026.
+ */
+export const RETIRED_SLOTS = ['restorePoints'] as const;
 
 /** A topic that holds one always-current message instead of a stream of them. */
 export type LiveSlot = keyof typeof LIVE_SLOTS;

@@ -20,7 +20,7 @@ flowchart LR
     subgraph TG["Telegram · forum group"]
         direction TB
         A["🚨 Alerts · 🟢 Recovered"]
-        L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡 🗂"]
+        L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡"]
         G["General<br/>menu and commands"]
     end
 

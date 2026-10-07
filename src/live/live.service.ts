@@ -84,6 +84,26 @@ export class TelegramLiveService {
   }
 
   /**
+   * Deletes what a slot that no longer exists left in every chat: its message
+   * and its further pages. Nothing to do, and nothing asked of Telegram, once
+   * they are gone. Never throws, like `publish`.
+   */
+  async retire(slot: string): Promise<void> {
+    if (!this.transport.enabled) return;
+    for (const [chatId] of this.store.chats()) {
+      for (let index = 0; ; index += 1) {
+        const key = index === 0 ? slot : `${slot}#${index}`;
+        const ref = this.store.liveMessages.of(chatId, key);
+        if (!ref) break;
+        this.store.liveMessages.forget(chatId, key);
+        if (!(await this.remove(chatId, ref.messageId))) {
+          this.logger.warn(`Retired live "${slot}" left message ${ref.messageId} behind in chat ${chatId}: delete it by hand`);
+        }
+      }
+    }
+  }
+
+  /**
    * The store key for one page of a slot. Page 0 keeps the bare slot name so
    * that a slot which never grew past one message keeps the id it already has.
    */

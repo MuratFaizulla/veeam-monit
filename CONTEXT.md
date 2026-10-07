@@ -9,8 +9,8 @@ What one reading of the Veeam estate established: every restore point the server
 holds, every session that wrote one, and every job configuration saying whether
 a job was supposed to run at all.
 
-Three live slots — 🛡 Protection, 🗂 Restore points, 🧹 Orphaned backups — are
-three questions about one Evidence. Reading it costs around twenty requests and
+Two live slots — 🛡 Protection and 🧹 Orphaned backups — and /points are
+questions about one Evidence. Reading it costs around twenty requests and
 about forty seconds, so it happens on its own cadence
 (`TELEGRAM_PROTECTION_INTERVAL_MIN`) and the answer is kept until the next one.
 Only the selected server's Evidence is read. A server that is selected again is
@@ -133,7 +133,7 @@ starts at 23:40 is late rather than missed.
 
 Owned by `src/estate/full-schedule.ts`. Whether a job is behind, past a
 missed Full, too new to judge or fine is one verdict, `verdictOf` in
-`src/estate/point-verdict.ts`, judged against the clock when it is asked: 🗂
+`src/estate/point-verdict.ts`, judged against the clock when it is asked: 🛡
 lists by it, and /points answers about one job by it, so the two cannot
 disagree about the same job.
 
@@ -148,14 +148,18 @@ configured to start by hand. A job whose configuration could not be read is
 judged: an unknown schedule is treated as a real one, because the failure mode
 of the other choice is silently dropping a job from every check.
 
-Standings are worked out once per cycle and read by both 🛡 Protection and
-🗂 Restore points, so the two messages cannot disagree about which jobs are in
-scope or how many were left out.
+Standings are worked out once per cycle and read by 🛡 Protection and by
+/points, so the two cannot disagree about which jobs are in scope or how many
+were left out.
 
-A Standing deliberately says nothing about whether a job is *late*. The two
-slots ask different questions of the same Standing — "how many Runs has it
-skipped" and "is this past the deadline worth reporting" — and those are
-decisions about what to alarm on.
+A Standing deliberately says nothing about whether a job is *late*. That is
+🛡's to decide: past its deadline — the job's own interval times
+`TELEGRAM_PROTECTION_OVERDUE_FACTOR`, never less than
+`TELEGRAM_PROTECTION_STALE_DAYS` — or failing run after run, or past a
+scheduled Full. How many Runs it has skipped is said beside, not decided by.
+It used to be two topics: 🗂 Restore points listed a job by the Runs it had
+skipped and 🛡 by its deadline, and the two said it of the same job in
+different words. On 7 October 2026 🗂 became part of 🛡.
 
 Owned by `src/estate/job-standing.ts`.
 
@@ -190,12 +194,13 @@ it is given, like every other live slot.
 ## Live slot
 
 A topic holding exactly one message, edited in place rather than appended to.
-State, not events. 🗂 Restore points is the exception that may hold several,
+State, not events. 🛡 Protection is the exception that may hold several,
 numbered, when the list does not fit in Telegram's limit. It lists only the
-jobs that need somebody, a line each — what is wrong and the date to look up —
-and counts the rest, so that is a bad day rather than every day; listing all
-ninety took four messages. The chain, retention and totals it once also gave
-are on /points, per job. A page posted anew
+jobs that need somebody, two lines each — what is wrong, and under it the
+facts to check it by — and counts the rest, so that is a bad day rather than
+every day; listing all ninety took four messages. The chain, retention and
+totals are on /points, per job. A slot that no longer exists is **retired**:
+its messages are deleted from every chat, once (`RETIRED_SLOTS`). A page posted anew
 takes the pages after it along: each used to be replaced on its own clock, and
 the continuation sat above the page it continued.
 

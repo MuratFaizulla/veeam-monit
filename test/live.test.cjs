@@ -31,7 +31,7 @@ test('the live status is one message per topic, edited in place on later cycles'
 
   await w.monitor.check();
   const opening = w.api.sent();
-  assert.equal(opening.length, 7, 'one message per live slot');
+  assert.equal(opening.length, 6, 'one message per live slot');
   assert.ok(opening.some((m) => /всё работает/.test(m.text)));
   assert.ok(opening.some((m) => /не выполняется ни одно задание/.test(m.text)));
   assert.deepEqual(
@@ -43,7 +43,6 @@ test('the live status is one message per topic, edited in place on later cycles'
       '📈 Performance',
       '💾 Repositories',
       '🛡 Protection',
-      '🗂 Restore points',
     ],
   );
 
@@ -296,17 +295,17 @@ test('a slot too long for one message owns a second, and drops it when it shrink
   await w.monitor.check();
 
   w.api.reset();
-  await w.live.publish('restorePoints', ['страница один', 'страница два']);
+  await w.live.publish('protection', ['страница один', 'страница два']);
   assert.equal(w.api.sent().length, 1, 'the continuation is a message of its own');
   assert.equal(w.api.of('editMessageText').length, 1, 'the first page keeps its message');
 
   w.api.reset();
-  await w.live.publish('restorePoints', ['страница один, иначе', 'страница два, иначе']);
+  await w.live.publish('protection', ['страница один, иначе', 'страница два, иначе']);
   assert.equal(w.api.sent().length, 0, 'both pages are edited in place');
   assert.equal(w.api.of('editMessageText').length, 2);
 
   w.api.reset();
-  await w.live.publish('restorePoints', ['теперь всё помещается']);
+  await w.live.publish('protection', ['теперь всё помещается']);
   assert.equal(w.api.of('deleteMessage').length, 1, 'the page nothing fills is removed');
   assert.equal(w.api.sent().length, 0);
 });
@@ -319,12 +318,12 @@ test('a page posted anew takes the pages after it along, so the topic still read
     editMessageText: (payload) =>
       payload.message_id === lost ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
   });
-  await w.live.publish('restorePoints', ['страница 1', 'страница 2', 'страница 3']);
-  const second = w.store.liveMessages.of(CHAT, 'restorePoints#1').messageId;
-  lost = w.store.liveMessages.of(CHAT, 'restorePoints').messageId;
+  await w.live.publish('protection', ['страница 1', 'страница 2', 'страница 3']);
+  const second = w.store.liveMessages.of(CHAT, 'protection#1').messageId;
+  lost = w.store.liveMessages.of(CHAT, 'protection').messageId;
 
   w.api.reset();
-  await w.live.publish('restorePoints', ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе']);
+  await w.live.publish('protection', ['страница 1, иначе', 'страница 2, иначе', 'страница 3, иначе']);
 
   assert.deepEqual(
     w.api.sent().map((message) => message.text),
@@ -338,17 +337,17 @@ test('a page posted anew takes the pages after it along, so the topic still read
 
   // The rest is edited in place again, all three pages now on one clock.
   w.api.reset();
-  await w.live.publish('restorePoints', ['страница 1, снова', 'страница 2, снова', 'страница 3, снова']);
+  await w.live.publish('protection', ['страница 1, снова', 'страница 2, снова', 'страница 3, снова']);
   assert.equal(w.api.sent().length, 0);
   assert.equal(w.api.of('editMessageText').length, 3);
 });
 
 test('a page that only changed is edited in place and leaves the pages after it alone', async () => {
   const w = world({ TELEGRAM_LIVE: 'true' });
-  await w.live.publish('restorePoints', ['страница 1', 'страница 2']);
+  await w.live.publish('protection', ['страница 1', 'страница 2']);
 
   w.api.reset();
-  await w.live.publish('restorePoints', ['страница 1, иначе', 'страница 2']);
+  await w.live.publish('protection', ['страница 1, иначе', 'страница 2']);
   assert.equal(w.api.sent().length, 0);
   assert.deepEqual(w.api.of('deleteMessage'), []);
 });
@@ -357,7 +356,7 @@ test('the live message survives a restart instead of starting a second one', asy
   const first = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   await first.monitor.check();
   first.store.flush();
-  assert.equal(first.api.sent().length, 7);
+  assert.equal(first.api.sent().length, 6);
 
   const w = world(LIVE, {}, first.file);
   const veeam = veeamFake({
@@ -418,7 +417,7 @@ test('a moving server clock alone does not rewrite the health message', async ()
   const monitor = monitorOf(w, veeam, auth);
 
   await monitor.check();
-  assert.equal(w.api.sent().length, 7);
+  assert.equal(w.api.sent().length, 6);
 
   w.api.reset();
   await monitor.check();
@@ -640,9 +639,8 @@ test('a job with no restore point at all is critical, and says when it last ran'
   assert.equal(snapshot.risks[0].severity, 'critical');
 
   const { renderProtection } = require('../dist/live/protection');
-  const text = renderProtection(snapshot, { now: new Date(Date.UTC(2026, 8, 14, 12)), timezone: 'UTC' });
-  assert.match(text, /точек восстановления нет/);
-  assert.match(text, /последний запуск 12\.08/);
+  const text = renderProtection(snapshot, { now: new Date(Date.UTC(2026, 8, 14, 12)), timezone: 'UTC' }).join('\n');
+  assert.match(text, /— нет ни одной точки\n<i>последний запуск 12\.08/);
 });
 
 test('a weekly job is judged against its own rhythm, not against a flat threshold', async () => {
@@ -688,8 +686,8 @@ test('repeated failures are reported even while the restore point is still fresh
   assert.equal(snapshot.protectedJobs, 1, 'a failed attempt does not erase the fresh point');
 
   const { renderProtection } = require('../dist/live/protection');
-  const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' });
-  assert.match(text, /5 неудачных запусков подряд/);
+  const text = renderProtection(snapshot, { now: new Date(now), timezone: 'UTC' }).join('\n');
+  assert.match(text, /^🟠 <b>OPS_SMAX_SAM<\/b> — 5 неудачных запусков подряд\n<i>последний бэкап /mu);
 });
 
 test('one or two failures are not a streak', async () => {
@@ -719,21 +717,22 @@ test('the worst offenders come first, and an all-clear says so', async () => {
 
   const { renderProtection } = require('../dist/live/protection');
   const clear = renderProtection(
-    assess({ jobs: [{ id: '1', name: 'ok' }], pointsByJob: new Map([['1', points(now, 0.5, 1)]]) }),
+    assess({ jobs: [{ id: '1', name: 'ok' }, { id: '2', name: 'also ok' }], pointsByJob: new Map([['1', points(now, 0.5, 1)], ['2', points(now, 0.5, 1)]]) }),
     { now: new Date(now), timezone: 'UTC' },
-  );
-  assert.match(clear, /🟢 <b>Все задания защищены<\/b>/);
+  ).join('\n');
+  assert.match(clear, /^🟢 <b>Все 2 задания защищены<\/b>/);
 });
 
 test('an unread scan admits it instead of claiming everything is protected', async () => {
   const { renderProtection } = require('../dist/live/protection');
   const text = renderProtection(
-    { risks: [], totalJobs: 112, protectedJobs: 0, staleDays: 3, overdueFactor: 2.5, minStreak: 3,
+    { risks: [], totalJobs: 112, protectedJobs: 0, excludedDisabled: 0, excludedUnscheduled: 0, staleDays: 3, overdueFactor: 2.5, minStreak: 3,
       unavailable: 'Точки восстановления ещё не прочитаны.' },
     { now: new Date(), timezone: 'UTC' },
-  );
+  ).join('\n');
   assert.match(text, /Защищённость не проверена/);
-  assert.ok(!/Все задания защищены/.test(text));
+  assert.match(text, /не прочитаны/);
+  assert.ok(!/защищены/.test(text));
 });
 
 test('a disabled job is not owed a restore point', async () => {
@@ -760,8 +759,8 @@ test('a job that only runs by hand is not owed one either', async () => {
   assert.equal(snapshot.totalJobs, 0);
 
   const { renderProtection } = require('../dist/live/protection');
-  const text = renderProtection(snapshot, { now: new Date(), timezone: 'UTC' });
-  assert.match(text, /Не учитываются:.*1 без расписания/, 'what is outside the check is stated');
+  const text = renderProtection(snapshot, { now: new Date(), timezone: 'UTC' }).join('\n');
+  assert.match(text, /Не проверяются: 1 без расписания/, 'what is outside the check is stated');
 });
 
 test('a job whose schedule could not be read is still judged', async () => {
@@ -776,96 +775,102 @@ test('a job whose schedule could not be read is still judged', async () => {
 });
 
 /* ------------------------------------------------------------------ *
- * Restore point depth
+ * Protection, by the rhythm and the Fulls of each job
+ *
+ * What 🗂 Restore points said, said once in 🛡: a job behind its rhythm, past
+ * a scheduled Full, or with no point at all, a job to a pair of lines.
  * ------------------------------------------------------------------ */
 
 const DAY = 86400000;
 const NOW = Date.UTC(2026, 8, 15, 12);
 
-const depthPages = (over) => {
-  const { renderRestorePoints } = require('../dist/live/restore-points');
-  return renderRestorePoints(
-    {
-      jobs: [],
-      without: [],
-      elsewhere: 0,
-      excludedDisabled: 0,
-      excludedUnscheduled: 0,
-      ...over,
+/**
+ * The merged topic for jobs given as their points: `newest` and `runs` as the
+ * Evidence holds them, `intervalDays` their rhythm, `chain` and `fulls` what
+ * Veeam and the configuration said of their Fulls.
+ */
+const protectionPages = (over) => {
+  const { assessProtection, renderProtection } = require('../dist/live/protection');
+  const { jobs = [], excludedDisabled = 0, excludedUnscheduled = 0 } = over;
+  const judged = jobs.map((job, i) => ({
+    id: String(i),
+    name: job.name,
+    lastRun: job.lastRun,
+    runs: job.newest === undefined ? [] : Array.from({ length: job.runs ?? 1 }, (_, n) => job.newest - n * (job.intervalDays ?? 1) * DAY),
+    byRuns: false,
+    cadenceDays: job.intervalDays ?? null,
+    failures: job.failures ?? 0,
+    depth: job.newest === undefined ? undefined : {
+      runs: job.runs ?? 1, points: job.runs ?? 1, machines: 1,
+      oldest: job.oldest ?? job.newest, newest: job.newest, chain: job.chain, retained: [],
     },
-    { now: new Date(NOW), timezone: 'UTC' },
-  );
+    fulls: job.fulls,
+  }));
+  const snapshot = assessProtection({
+    standings: { judged, excludedDisabled, excludedUnscheduled },
+    now: NOW,
+    timezone: 'UTC',
+    staleDays: 3,
+    overdueFactor: 2.5,
+    minStreak: 3,
+  });
+  return renderProtection(snapshot, { now: new Date(NOW), timezone: 'UTC' });
 };
 
 /** The whole topic as one string, for assertions that do not care about pages. */
-const depth = (over) => depthPages(over).join('\n');
+const protectionText = (over) => protectionPages(over).join('\n');
 
-test('a row says what is wrong, and the moment to look up in Veeam', async () => {
-  const text = depth({
-    jobs: [
-      {
-        name: 'OPS_Call_Center',
-        runs: 7,
-        points: 7,
-        machines: 1,
-        intervalDays: 1,
-        oldest: NOW - 7 * DAY,
-        newest: Date.UTC(2026, 5, 17, 21, 32, 9),
-      },
-    ],
+test('a job says what is wrong first, and under it the moment to look up in Veeam', async () => {
+  const text = protectionText({
+    jobs: [{ name: 'OPS_Call_Center', runs: 7, intervalDays: 1, newest: Date.UTC(2026, 5, 17, 21, 32, 9) }],
   });
 
   // A date and a minute, because this is the line somebody reads before
   // opening Veeam; not "17 июня 2026 г. в 21:32:09" eighty-five times over.
-  assert.match(text, /^🔴 <b>OPS_Call_Center<\/b> — пропущено \d+ запусков · последний бэкап 17\.06 в 21:32$/mu);
+  assert.match(
+    text,
+    /^🔴 <b>OPS_Call_Center<\/b> — нет бэкапа 89 дней\n<i>последний 17\.06 в 21:32 · обычно раз в сутки · пропущено 88 запусков<\/i>$/mu,
+  );
 });
 
-test('nothing but what needs somebody: no definitions, no totals, no chain', async () => {
-  // On 6 October the topic gave each job three lines, then ten lines of totals
-  // and a paragraph of definitions, and opening it told nobody anything.
-  const text = depth({
-    jobs: [
-      { name: 'ESBTST', runs: 11, points: 43, machines: 4, intervalDays: 1, oldest: NOW - 10 * DAY,
-        newest: NOW - 3 * DAY, chain: { fulls: 2, lastFull: NOW - 4 * DAY, sinceFull: 3 },
-        retention: { quantity: 7, unit: 'days' } },
-    ],
+test('nothing but what needs somebody: no rule, no totals, no chain', async () => {
+  // On 6 October 🗂 gave each job three lines, then ten lines of totals and a
+  // paragraph of definitions, and 🛡 its rule in full; opening either told
+  // nobody anything.
+  const text = protectionText({
+    jobs: [{ name: 'ESBTST', runs: 11, intervalDays: 1, newest: NOW - 4 * DAY, chain: { fulls: 2, lastFull: NOW - 5 * DAY, sinceFull: 3 } }],
   });
 
-  assert.match(text, /^🔴 <b>ESBTST<\/b> — пропущено 2 запуска · последний бэкап 12\.09 в 12:00$/mu);
-  for (const gone of ['Точек в Veeam', 'Цепочка', 'инкр.', 'хранение', 'ВМ', 'Заданий:', 'Прежняя цепочка']) {
+  assert.match(text, /^🟠 <b>ESBTST<\/b> — нет бэкапа 4 дня$/mu);
+  for (const gone of ['Точек в Veeam', 'Цепочка', 'инкр.', 'хранение', 'Правило', 'Заданий:', 'С актуальной точкой']) {
     assert.ok(!text.includes(gone), `${gone}: ${text}`);
   }
 });
 
 test('the same staleness means opposite things at different cadences', async () => {
-  // Both went three days without a point. The nightly job has missed two
-  // backups; the weekly one is not due yet.
-  const text = depth({
+  // Both went four days without a point. The nightly job is past its
+  // deadline; the weekly one is not due yet.
+  const text = protectionText({
     jobs: [
-      { name: 'CUST_weekly', runs: 9, points: 9, machines: 1, intervalDays: 7,
-        oldest: NOW - 63 * DAY, newest: NOW - 3 * DAY },
-      { name: 'CUST_nightly', runs: 30, points: 30, machines: 1, intervalDays: 1,
-        oldest: NOW - 33 * DAY, newest: NOW - 3 * DAY },
+      { name: 'CUST_weekly', runs: 9, intervalDays: 7, newest: NOW - 4 * DAY },
+      { name: 'CUST_nightly', runs: 30, intervalDays: 1, newest: NOW - 4 * DAY },
     ],
   });
 
-  const lines = text.split('\n');
-  const nightly = lines.findIndex((l) => l.includes('CUST_nightly'));
-  assert.equal(lines[nightly - 1], '<b>Пропускают бэкапы</b> (1)');
-  assert.equal(lines[nightly], '🔴 <b>CUST_nightly</b> — пропущено 2 запуска · последний бэкап 12.09 в 12:00');
+  assert.match(text, /^🟠 <b>1 задание из 2 требует внимания<\/b>\n\n🟠 <b>CUST_nightly<\/b> — нет бэкапа 4 дня\n/u);
   assert.ok(!text.includes('CUST_weekly'), 'the weekly one is not due yet, and is only counted');
-  assert.match(text, /^🟢 Остальные 1 из 2 — в порядке$/mu);
+  assert.match(text, /^🟢 Остальные 1 — в порядке$/mu);
 });
 
 /** A job of 15 September that takes its Active Full on Saturdays, the last one on `lastFull`. */
 const saturdayJob = (name, lastFull, over = {}) => ({
-  name, runs: 8, points: 8, machines: 1, intervalDays: 1, oldest: lastFull, newest: NOW - 3_600_000,
+  name, runs: 8, intervalDays: 1, oldest: lastFull, newest: NOW - 3_600_000,
   chain: { fulls: 1, lastFull, sinceFull: 7 }, fulls: [{ kind: 'active', weekdays: [6] }], ...over,
 });
 
-test('a job whose scheduled Full did not happen is listed apart, the most days missed first', async () => {
+test('a job whose scheduled Full did not happen is said in yellow, the most days missed first', async () => {
   // Saturdays before 15 September: 29 August, 5 and 12 September.
-  const text = depth({
+  const text = protectionText({
     jobs: [
       saturdayJob('ON_TIME', Date.UTC(2026, 8, 12, 22)),
       saturdayJob('ONE_MISSED', Date.UTC(2026, 8, 5, 22)),
@@ -873,48 +878,44 @@ test('a job whose scheduled Full did not happen is listed apart, the most days m
     ],
   });
 
-  const lines = text.split('\n');
-  const heading = lines.indexOf('<b>Пропущен Full по расписанию</b> (2)');
-  assert.ok(heading >= 0, text);
-  assert.equal(lines[heading + 1], '🟡 <b>TWO_MISSED</b> — пропущены 05.09, 12.09 · последний Full 29.08');
-  assert.equal(lines[heading + 2], '🟡 <b>ONE_MISSED</b> — пропущен 12.09 · последний Full 05.09');
+  assert.match(
+    text,
+    /^🟡 <b>2 задания из 3 требуют внимания<\/b>\n\n🟡 <b>TWO_MISSED<\/b> — пропущены Full 05\.09, 12\.09\n<i>бэкапы идут · последний Full 29\.08<\/i>\n\n🟡 <b>ONE_MISSED<\/b> — пропущен Full 12\.09\n<i>бэкапы идут · последний Full 05\.09<\/i>\n/u,
+  );
   assert.ok(!text.includes('ON_TIME'), 'the one whose Full happened is on time, and only counted');
-  assert.match(text, /^🟢 Остальные 1 из 3 — в порядке$/mu);
+  assert.match(text, /^🟢 Остальные 1 — в порядке$/mu);
 });
 
 test('a long run of missed Fulls is counted, not listed', async () => {
-  const text = depth({ jobs: [saturdayJob('OPS_TelegramBot', Date.UTC(2026, 6, 25, 22))] });
-  assert.match(text, /^🟡 <b>OPS_TelegramBot<\/b> — пропущены 29\.08, 05\.09, 12\.09 и ещё 4 раньше · последний Full 25\.07$/mu);
+  const text = protectionText({ jobs: [saturdayJob('OPS_TelegramBot', Date.UTC(2026, 6, 25, 22))] });
+  assert.match(text, /^🟡 <b>OPS_TelegramBot<\/b> — пропущены Full 29\.08, 05\.09, 12\.09 и ещё 4 раньше$/mu);
 });
 
 test('a Full is owed only where Veeam typed the points and the configuration said when', async () => {
-  // Rhythms not yet known, so they are listed whatever their Fulls.
-  const text = depth({
+  const text = protectionText({
     jobs: [
-      saturdayJob('UNTYPED', Date.UTC(2026, 7, 1), { chain: undefined, intervalDays: null }),
-      saturdayJob('UNSAID', Date.UTC(2026, 7, 1), { fulls: undefined, intervalDays: null }),
-      saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [], intervalDays: null }),
+      saturdayJob('UNTYPED', Date.UTC(2026, 7, 1), { chain: undefined }),
+      saturdayJob('UNSAID', Date.UTC(2026, 7, 1), { fulls: undefined }),
+      saturdayJob('NONE_SET', Date.UTC(2026, 7, 1), { fulls: [] }),
     ],
   });
   assert.ok(!/Full/u.test(text), text);
-  assert.match(text, /^<b>Мало точек, чтобы судить<\/b> \(3\)$/mu);
+  assert.match(text, /^🟢 <b>Все 3 задания защищены<\/b>$/mu);
 });
 
-test('a job behind its schedule stays with the ones behind, its missed Full still said', async () => {
-  const text = depth({
+test('a job behind its schedule is said once, its missed Full with it', async () => {
+  const text = protectionText({
     jobs: [saturdayJob('BEHIND', Date.UTC(2026, 7, 29, 22), { newest: NOW - 4 * DAY })],
   });
-  const lines = text.split('\n');
-  const row = lines.findIndex((line) => line.includes('<b>BEHIND</b>'));
-  assert.equal(lines[row - 1], '<b>Пропускают бэкапы</b> (1)');
-  assert.equal(lines[row], '🔴 <b>BEHIND</b> — пропущено 3 запуска · последний бэкап 11.09 в 12:00 · не сделан Full 05.09, 12.09');
-  assert.ok(!text.includes('Пропущен Full по расписанию'), 'and only there');
+  assert.match(
+    text,
+    /^🟠 <b>BEHIND<\/b> — нет бэкапа 4 дня\n<i>последний 11\.09 в 12:00 · обычно раз в сутки · пропущено 3 запуска · не сделан Full 05\.09, 12\.09<\/i>$/mu,
+  );
+  assert.equal(text.match(/BEHIND/gu).length, 1, 'and only there');
 });
 
-test('the jobs on time are counted, not listed, and any of them can be asked about', async () => {
-  // Eight jobs needed somebody on 1 October, three messages down among
-  // eighty-two that did not.
-  const text = depth({
+test('the jobs that are fine are counted, not listed, and any of them can be asked about', async () => {
+  const text = protectionText({
     jobs: [
       saturdayJob('NEEDS_A_LOOK', Date.UTC(2026, 8, 5, 22)),
       ...['CUST_FINHUB', 'OPS_Exchange', 'OPS_Zabbix'].map((name) => saturdayJob(name, Date.UTC(2026, 8, 12, 22))),
@@ -923,88 +924,82 @@ test('the jobs on time are counted, not listed, and any of them can be asked abo
 
   assert.match(text, /<b>NEEDS_A_LOOK<\/b>/u);
   for (const name of ['CUST_FINHUB', 'OPS_Exchange', 'OPS_Zabbix']) assert.ok(!text.includes(name), name);
-  assert.match(text, /^🟢 Остальные 3 из 4 — в порядке\nПодробнее о задании: \/points имя$/mu);
+  assert.match(text, /^🟢 Остальные 3 — в порядке\nПодробнее о задании: \/points имя$/mu);
 });
 
 test('a day with nothing to look at says so in one line', async () => {
-  const pages = depthPages({
+  const pages = protectionPages({
     jobs: ['CUST_FINHUB', 'OPS_Exchange'].map((name) => saturdayJob(name, Date.UTC(2026, 8, 12, 22))),
   });
 
   assert.equal(pages.length, 1);
-  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n\n🟢 <b>Все 2 задания в порядке<\/b>\nПодробнее о задании: \/points имя\n\n<i>Обновлено /u);
+  assert.match(pages[0], /^🟢 <b>Все 2 задания защищены<\/b>\nПодробнее о задании: \/points имя\n\n<i>Обновлено /u);
 });
 
 test('a job whose cadence cannot be learned claims nothing about missed runs', async () => {
-  const text = depth({
-    jobs: [
-      { name: 'CUST_CHEMPLANT', runs: 1, points: 1, machines: 1, intervalDays: null,
-        newest: NOW - 40 * DAY },
-    ],
+  const text = protectionText({
+    jobs: [{ name: 'CUST_CHEMPLANT', runs: 1, intervalDays: null, newest: NOW - 40 * DAY }],
   });
 
-  assert.match(text, /^<b>Мало точек, чтобы судить<\/b> \(1\)\n⚪ <b>CUST_CHEMPLANT<\/b> — 1 точка · последний бэкап 06\.08 в 12:00$/mu);
+  assert.match(text, /^🔴 <b>CUST_CHEMPLANT<\/b> — нет бэкапа 40 дней\n<i>последний 06\.08 в 12:00<\/i>$/mu);
   assert.ok(!/пропущено? \d+ запуск/u.test(text), 'one point is not enough to know a rhythm');
 });
 
 test('a job with no point at all is named first, and the jobs left out are said to be', async () => {
-  const text = depth({
-    jobs: [{ name: 'has-some', runs: 5, points: 5, machines: 1, intervalDays: 1, newest: NOW - 3 * DAY }],
-    without: ['NEVER_RAN', 'ALSO_NONE'],
+  const text = protectionText({
+    jobs: [
+      { name: 'has-some', runs: 5, intervalDays: 1, newest: NOW - 4 * DAY },
+      { name: 'NEVER_RAN' },
+      { name: 'ALSO_NONE', lastRun: '2026-08-12T10:01:00Z' },
+    ],
     excludedUnscheduled: 31,
     excludedDisabled: 4,
-    elsewhere: 2,
   });
 
-  assert.match(text, /^🗂 <b>Точки восстановления<\/b>\n\n<b>Нет ни одной точки<\/b> \(2\)\n🔴 <b>ALSO_NONE<\/b>\n🔴 <b>NEVER_RAN<\/b>\n\n<b>Пропускают бэкапы<\/b> \(1\)\n🔴 <b>has-some<\/b>/u);
-  assert.match(text, /^<i>Не проверяются: 31 без расписания, 4 выключено, репликации и др\. — 2<\/i>$/mu);
+  assert.match(
+    text,
+    /^🔴 <b>3 задания из 3 требуют внимания<\/b>\n\n🔴 <b>ALSO_NONE<\/b> — нет ни одной точки\n<i>последний запуск 12\.08 в 10:01<\/i>\n\n🔴 <b>NEVER_RAN<\/b> — нет ни одной точки\n\n🟠 <b>has-some<\/b> — нет бэкапа 4 дня\n/u,
+  );
+  assert.match(text, /^<i>Не проверяются: 31 без расписания, 4 выключено<\/i>$/mu);
 });
 
 /**
- * A bad day: every nightly job two days or more without a point, job 000 the
+ * A bad day: every nightly job four days or more without a point, job 000 the
  * longest, as when a repository goes and takes the whole estate with it.
  */
 const estate = (size) =>
   Array.from({ length: size }, (_, i) => ({
     name: `OPS_JOB_${String(i).padStart(3, '0')}`,
     runs: 10,
-    points: 40,
-    machines: 4,
     intervalDays: 1,
-    oldest: NOW - 10 * DAY,
-    newest: NOW - (2 + (size - i) * 0.01) * DAY,
-    chain: { fulls: 2, lastFull: NOW - 4 * DAY, sinceFull: 3 },
-    retention: { quantity: 7, unit: 'days' },
+    newest: NOW - (4 + (size - i) * 0.001) * DAY,
+    chain: { fulls: 2, lastFull: NOW - 5 * DAY, sinceFull: 3 },
   }));
 
 test('a list too long for one message continues into further ones, numbered', async () => {
-  const pages = depthPages({ jobs: estate(150) });
+  const pages = protectionPages({ jobs: estate(150) });
 
   assert.ok(pages.length > 1, 'a hundred and fifty jobs behind do not fit in one message');
   for (const page of pages) {
     assert.ok(page.length <= 4096, `page is ${page.length} characters`);
   }
   pages.forEach((page, i) => {
-    assert.ok(page.startsWith(`🗂 <b>Точки восстановления</b> · ${i + 1}/${pages.length}\n\n<b>Пропускают бэкапы</b> (150)\n`), page.slice(0, 80));
+    assert.ok(page.startsWith(`🟠 <b>150 заданий из 150 требуют внимания</b> · ${i + 1}/${pages.length}\n\n`), page.slice(0, 80));
   });
   // The pointer belongs to the list, not to a page.
   assert.ok(!/\/points/.test(pages[0]));
   assert.match(pages.at(-1), /Подробнее о задании: \/points имя/);
-  assert.equal(
-    pages.join('\n').match(/OPS_JOB_/g).length,
-    150,
-    'every job appears exactly once across the pages',
-  );
+  assert.equal(pages.join('\n').match(/OPS_JOB_/g).length, 150, 'every job appears exactly once across the pages');
 });
 
 test('a list that fits in one message is not numbered', async () => {
-  const pages = depthPages({ jobs: estate(3) });
+  const pages = protectionPages({ jobs: estate(3) });
   assert.equal(pages.length, 1);
-  assert.match(pages[0], /^🗂 <b>Точки восстановления<\/b>\n/);
+  assert.match(pages[0], /^🟠 <b>3 задания из 3 требуют внимания<\/b>\n/);
 });
 
-test('the pages fill up, keeping the ones that are behind', async () => {
-  const pages = depthPages({ jobs: estate(400) });
+test('the pages fill up, keeping the ones furthest behind', async () => {
+  const pages = protectionPages({ jobs: estate(400) });
   const text = pages.join('\n');
 
   const hidden = /…и ещё (\d+) задани\S* — не поместились/.exec(text);
@@ -1013,16 +1008,32 @@ test('the pages fill up, keeping the ones that are behind', async () => {
   assert.match(pages[0], /OPS_JOB_000/, 'the one furthest behind is always shown');
 });
 
+test('the retired 🗂 topic loses its messages, once', async () => {
+  const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
+  // What the bot left in 🗂 before it was merged into 🛡: a list of two pages.
+  w.store.liveMessages.remember(CHAT, 'restorePoints', { messageId: 9001, hash: 'x', at: Date.now(), createdAt: Date.now() });
+  w.store.liveMessages.remember(CHAT, 'restorePoints#1', { messageId: 9002, hash: 'y', at: Date.now(), createdAt: Date.now() });
+
+  await w.monitor.check();
+  const deleted = w.api.of('deleteMessage').map((payload) => payload.message_id);
+  assert.ok(deleted.includes(9001) && deleted.includes(9002), `deleted: ${deleted}`);
+  assert.equal(w.store.liveMessages.of(CHAT, 'restorePoints'), undefined);
+  assert.ok(!w.api.of('createForumTopic').some((topic) => /Restore points/.test(topic.name)), 'and the topic is not made again');
+
+  w.api.reset();
+  await w.monitor.check();
+  assert.deepEqual(w.api.of('deleteMessage'), [], 'nothing is asked of Telegram once they are gone');
+});
 
 test('a point left behind by a failed run is not counted as a backup', async () => {
   const w = exchange({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' });
   await w.monitor.check();
 
-  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  const topic = w.api.sent().find((m) => /требу(?:ет|ют) внимания/.test(m.text));
   assert.ok(topic, 'the topic was published');
   // The run of 14 September errored out: its point is not the newest backup.
   assert.ok(!/14\.09/u.test(topic.text), topic.text);
-  assert.match(topic.text, /<b>OPS_Exchange<\/b> — 1 точка ·/u);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ дн/u);
 });
 
 test('a point finished by a successful retry counts, whatever id it carries', async () => {
@@ -1031,10 +1042,10 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   const w = exchange({ TELEGRAM_TIMEZONE: 'Asia/Qyzylorda' });
   await w.monitor.check();
 
-  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  const topic = w.api.sent().find((m) => /требу(?:ет|ют) внимания/.test(m.text));
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
-  assert.match(topic.text, /<b>OPS_Exchange<\/b> — 1 точка · последний бэкап 23\.08 в 01:31/u);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ дн\S+\n<i>последний 23\.08 в 01:31/u);
 });
 
 
@@ -1068,15 +1079,13 @@ test('a failed run\'s points count for the machines that got through it, not for
   await w.monitor.check();
 
   const texts = w.api.sent().map((message) => message.text);
-  const depth = texts.find((text) => /Точки восстановления/.test(text));
+  const protection = texts.find((text) => /защищен|требуют внимания/.test(text));
   // One night, and the two machines that got through it are backed up.
-  assert.match(depth, /<b>CORE_DBS03<\/b> — 1 точка ·/u, 'the machines that got through are backed up');
-  assert.ok(!/Нет ни одной точки/u.test(depth), depth);
+  assert.match(protection, /^🟢 <b>Задание защищено<\/b>/u, 'the machines that got through are backed up');
   const { machines, points } = w.evidence.evidence.depthByJob.get('1');
   assert.deepEqual({ machines, points }, { machines: 2, points: 2 }, 'and the one that failed is not');
   assert.equal(w.evidence.evidence.failedPoints, 1);
-  const protection = texts.find((text) => /Все задания защищены|Требуют внимания/.test(text));
-  assert.ok(!/точек восстановления нет/.test(protection), protection);
+  assert.ok(!/нет ни одной точки/.test(protection), protection);
 });
 
 test('a replica is judged by the runs that worked, its points being kept on the target', async () => {
@@ -1102,13 +1111,10 @@ test('a replica is judged by the runs that worked, its points being kept on the 
   await w.monitor.check();
 
   const texts = w.api.sent().map((message) => message.text);
-  const protection = texts.find((text) => /Требуют внимания/.test(text));
+  const protection = texts.find((text) => /требу(?:ет|ют) внимания/.test(text));
   assert.ok(!/REPL_OK/.test(protection), 'a replica replicating every night is protected');
-  assert.match(protection, /NTP\/DOM<\/b> — успешных запусков нет/u, 'what the failing one lacks is a run that worked');
-  assert.ok(!/точек восстановления нет/.test(protection), 'never "no points", which every replica would read');
-  const depth = texts.find((text) => /Точки восстановления|Точек восстановления нет/.test(text));
-  assert.match(depth, /Не проверяются: репликации и др\. — 2/u);
-  assert.ok(!/Нет ни одной точки/u.test(depth), 'never "no points", which every replica would read');
+  assert.match(protection, /NTP\/DOM<\/b> — нет успешных запусков\n<i>3 неудачных запуска подряд<\/i>/u, 'what the failing one lacks is a run that worked');
+  assert.ok(!/нет ни одной точки/.test(protection), 'never "no points", which every replica would read');
 });
 
 /* ------------------------------------------------------------------ *
@@ -1178,9 +1184,14 @@ test('the orphan list counts the points it could not show, not just the chains',
 });
 
 test('an unread scan says so rather than showing an empty estate', async () => {
-  const text = depth({ unavailable: 'Точки восстановления ещё не прочитаны.' });
+  const { renderProtection } = require('../dist/live/protection');
+  const [text] = renderProtection(
+    { risks: [], totalJobs: 0, protectedJobs: 0, excludedDisabled: 0, excludedUnscheduled: 0, staleDays: 3, overdueFactor: 2.5, minStreak: 3,
+      unavailable: 'Точки восстановления ещё не прочитаны.' },
+    { now: new Date(), timezone: 'UTC' },
+  );
   assert.match(text, /не прочитаны/);
-  assert.ok(!/Сначала те/.test(text));
+  assert.ok(!/Заданий, от которых ждут точек, нет/.test(text));
 });
 
 /* ------------------------------------------------------------------ *
@@ -1325,7 +1336,7 @@ test('a cycle Veeam did not answer says so in every slot instead of "nothing"', 
   });
   assert.deepEqual(
     pages.map((page) => page.slot),
-    ['health', 'running', 'schedule', 'performance', 'repositories', 'protection', 'restorePoints'],
+    ['health', 'running', 'schedule', 'performance', 'repositories', 'protection'],
   );
   assert.match(pageOf(pages, 'health'), /сервер недоступен/);
   assert.match(pageOf(pages, 'running'), /Сервер Veeam не отвечает/);

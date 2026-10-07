@@ -429,7 +429,6 @@ export const readConfig = (env: Environment): AppConfig =>
           performance: read.text('TELEGRAM_TOPIC_PERFORMANCE', '📈 Performance'),
           repositories: read.text('TELEGRAM_TOPIC_REPOSITORIES_LIVE', '💾 Repositories'),
           protection: read.text('TELEGRAM_TOPIC_PROTECTION', '🛡 Protection'),
-          restorePoints: read.text('TELEGRAM_TOPIC_RESTORE_POINTS', '🗂 Restore points'),
           orphans: read.text('TELEGRAM_TOPIC_ORPHANS', '🧹 Orphaned backups'),
         },
         performanceTopicId: read.integer('TELEGRAM_PERFORMANCE_TOPIC_ID', 0, { min: 0 }),

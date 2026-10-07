@@ -337,7 +337,6 @@ test('with nothing set, every setting has the default it has always had', () => 
         performance: '📈 Performance',
         repositories: '💾 Repositories',
         protection: '🛡 Protection',
-        restorePoints: '🗂 Restore points',
         orphans: '🧹 Orphaned backups',
       },
       performanceTopicId: 0,

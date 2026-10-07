@@ -141,8 +141,9 @@ export class JobQueryService {
    * One job's restore points, named approximately — /job's search, answered
    * from the Evidence rather than from the job's sessions.
    *
-   * Asked without a name, it offers the jobs 🗂 lists: the ones that need
-   * somebody, which is what "show me the points" most often means.
+   * Asked without a name, it offers the jobs whose points are behind their
+   * rhythm, past a scheduled Full or too new to judge, which is what "show me
+   * the points" most often means.
    */
   async describePoints(query: string): Promise<Answer> {
     const read = await this.jobsNow();
@@ -233,7 +234,7 @@ export class JobQueryService {
     }
   }
 
-  /** The jobs owed points whose verdict is anything but "on time", the way 🗂 orders them. */
+  /** The jobs owed points whose verdict is anything but "on time": behind first, then a Full missed, then too new to judge. */
   private needingAttention(jobs: Job[]): Job[] {
     const evidence = this.evidence.evidence;
     if (evidence.status !== 'ready') return [];

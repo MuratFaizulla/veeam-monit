@@ -322,7 +322,7 @@ test('with the 🧹 topic off, nothing points the reader at it', async () => {
   });
 
   await w.monitor.check();
-  const topic = w.api.sent().find((m) => /Точки восстановления/.test(m.text));
+  const topic = w.api.sent().find((m) => /требу(?:ет|ют) внимания|защищен/.test(m.text));
   assert.ok(!/🧹/u.test(topic.text), 'a pointer to a deleted topic is worse than no pointer');
   assert.ok(!/без заданий/u.test(topic.text));
   assert.ok(!w.api.sent().some((m) => /Бэкапы без заданий/.test(m.text)), 'and the slot is not published');
@@ -332,8 +332,8 @@ test('with the 🧹 topic off, nothing points the reader at it', async () => {
  * What a job is owed
  * ------------------------------------------------------------------ */
 
-test('both slots are told the same thing about which jobs are in scope', async () => {
-  // The invariant that used to be two copies of a predicate and a comment
+test('the jobs left out of the check are said, once', async () => {
+  // It used to be two copies of a predicate in two topics, and a comment
   // asking the next reader to keep the counts in the same order.
   const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [
     { id: '1', name: 'CUST_running', type: 'Backup', status: 'Stopped' },
@@ -351,11 +351,10 @@ test('both slots are told the same thing about which jobs are in scope', async (
 
   await w.monitor.check();
   const sent = w.api.sent();
-  const protection = sent.find((m) => /Защищ|Требуют внимания|защищены/.test(m.text));
-  const depth = sent.find((m) => /Точки восстановления|Точек восстановления/.test(m.text));
+  const protection = sent.find((m) => /требу(?:ет|ют) внимания|защищен/.test(m.text));
 
-  assert.match(protection.text, /Не учитываются:<\/b> 1 без расписания, 1 выключено/);
-  assert.match(depth.text, /Не проверяются: 1 без расписания, 1 выключено/);
+  assert.match(protection.text, /<i>Не проверяются: 1 без расписания, 1 выключено<\/i>/);
+  assert.ok(!sent.some((m) => /Точки восстановления/.test(m.text)), 'and there is no second topic to say it again');
 });
 
 test('a job is only excused on positive evidence, never on a gap', async () => {

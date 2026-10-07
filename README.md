@@ -56,8 +56,8 @@ Veeam can already email a report per job session, and its console shows every se
 
 - 🚨 **Alerts** for failed, warning and recovered jobs, listing the machines that did not make it and Veeam's reason for each.
 - 🔁 **Veeam's retries count as one run.** An alert says whether Veeam will try again and when, and the run is followed to its end in one more message rather than one per attempt.
-- 📌 **Eight live topics**: monitor health, running jobs, upcoming runs, speed, repositories, protection, restore points, and backups left behind by deleted jobs.
-- 🗂 **Restore points are judged per machine**, against each job's own rhythm and its Full schedule, not by a bare "Success".
+- 📌 **Seven live topics**: monitor health, running jobs, upcoming runs, speed, repositories, protection, and backups left behind by deleted jobs.
+- 🛡 **Protection is judged by restore points, per machine**, against each job's own rhythm and its Full schedule, not by a bare "Success".
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
 - 📅 **A job's last weeks at a glance**: a calendar of Fulls and increments, the size of a Full and of a typical increment, and what the job takes up on disk.
 - ⌨️ **Commands and a menu** under the input field: digest, a job's card, its restore points, an on-demand check.
@@ -70,7 +70,7 @@ Veeam can already email a report per job session, and its console shows every se
 flowchart LR
     V["Veeam Backup & Replication<br/>REST API :9419"] -- "HTTPS, read only<br/>every minute" --> B["Veeam Telegram Monitor<br/>one Docker container"]
     B -- "alerts" --> A["🚨 Alerts · 🟢 Recovered"]
-    B -- "edited in place" --> L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡 🗂"]
+    B -- "edited in place" --> L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡"]
     G["General<br/>menu and commands"] -- "/job · /points · /digest" --> B
 ```
 

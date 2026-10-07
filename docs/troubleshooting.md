@@ -73,4 +73,4 @@ A server outside the domain does not know a domain account at all: give it a loc
 
 **`/points` has no sizes**: Veeam did not give the job's backup files when asked. The rest of the answer stands, and the log says why: `Backup files could not be read: …`.
 
-**🛡 or 🗂 says the points have not been read yet**: the restore point scan runs once an hour, and on the server selected in the menu only. After the bot starts, or after another server is selected, the first scan takes up to a minute.
+**🛡 says the points have not been read yet**: the restore point scan runs once an hour, and on the server selected in the menu only. After the bot starts, or after another server is selected, the first scan takes up to a minute.

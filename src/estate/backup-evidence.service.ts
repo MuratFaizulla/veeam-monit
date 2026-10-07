@@ -10,8 +10,8 @@ import { SessionHistory } from './session-history';
 /**
  * What one reading of the estate established, kept between readings.
  *
- * Three live slots — 🛡 Protection, 🗂 Restore points and 🧹 Orphaned backups —
- * are three questions about one body of facts: every restore point Veeam holds,
+ * Two live slots — 🛡 Protection and 🧹 Orphaned backups — and /points are
+ * questions about one body of facts: every restore point Veeam holds,
  * every session that wrote one, and every job configuration that says whether a
  * job was supposed to run at all. Reading that costs around twenty requests and
  * half a minute, so it happens on its own slow cadence and the answer is kept.

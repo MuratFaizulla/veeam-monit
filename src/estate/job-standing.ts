@@ -13,15 +13,11 @@ import { isDisabled } from './job-state';
  * that they must agree lived in a comment asking the next reader to keep them
  * in the same order.
  *
- * This answers it once. Both slots read the result, so they cannot disagree
- * about which jobs are in scope or how many were left out.
+ * This answers it once. 🛡 and /points read the result, so they cannot
+ * disagree about which jobs are in scope or how many were left out.
  *
- * It deliberately does not decide whether a job is *late*. The two slots ask
- * different questions of the same standing — "how many runs has it skipped"
- * and "is this past the deadline worth reporting" — and collapsing those into
- * one rule would either drop the floor that stops an hourly job being reported
- * for a single miss, or move the alerting threshold. Both are decisions about
- * what to alarm on, not about what a job is owed.
+ * It deliberately does not decide whether a job is *late*: that is a decision
+ * about what to alarm on, 🛡's, not about what a job is owed.
  */
 
 /** Why a job owes nobody a restore point. */
