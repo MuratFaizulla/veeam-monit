@@ -228,11 +228,15 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
  * above a list in which another server could not sign in — and to say which
  * server was selected by colour, ⚪ for the others, which read as "off". Now
  * the first line counts the servers that are fine, the ones in trouble come
- * first with their reason, the selected one is named in words, and the
- * addresses a firewall rule is written for sit together under the list.
+ * first with their reason, and the addresses a firewall rule is written for
+ * sit together under the list. The selected one leads the servers that are
+ * fine, in blue: a colour no state uses, so the eye finds the server the
+ * topics show before reading a word.
  */
 const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], clock: Clock): string => {
-  const fine = servers.filter((server) => server.reachable === true && server.authenticated === true);
+  const fine = servers
+    .filter((server) => server.reachable === true && server.authenticated === true)
+    .sort((a, b) => Number(b.selected) - Number(a.selected));
   const unasked = servers.filter((server) => server.reachable === null);
   const troubled = servers.filter((server) => troubleOf(server) !== undefined);
 
@@ -247,7 +251,9 @@ const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], cl
   }
   for (const server of fine) {
     const jobs = server.jobs === undefined ? '' : ` · ${server.jobs} ${plural(server.jobs, 'задание', 'задания', 'заданий')}`;
-    lines.push(`🟢 ${serverName(server)}${jobs}${shownMark(server)}`);
+    // In trouble, the selected one keeps its red or yellow above: trouble
+    // matters more than which server is shown.
+    lines.push(`${server.selected ? '🔵' : '🟢'} ${serverName(server)}${jobs}${shownMark(server)}`);
   }
   for (const server of unasked) lines.push(`⚪ ${serverName(server)} — ещё не опрошен${shownMark(server)}`);
 
@@ -287,7 +293,7 @@ const countWords = (total: number, fine: number, troubled: number, unasked: numb
 
 const serverName = (server: LiveServerHealth): string => `<b>${escapeHtml(server.name)}</b>`;
 
-/** The selected server, said in words rather than by a colour that also means "off". */
+/** The selected server, said in words as well: blue says it only while the server is fine. */
 const shownMark = (server: LiveServerHealth): string => (server.selected ? ' · <i>показан в темах</i>' : '');
 
 /** What keeps a server from being watched, or nothing while it is watched or not asked yet. */
