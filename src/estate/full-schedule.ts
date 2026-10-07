@@ -103,6 +103,16 @@ export const missedFullDays = (
   return missed;
 };
 
+/**
+ * The Fulls owed on the calendar day `at` falls on in `timezone`: what a run
+ * that began then was set to take, Veeam taking it whatever the job's own
+ * schedule says.
+ */
+export const fullsOwedOn = (schedules: FullSchedule[], at: number, timezone: string): FullSchedule[] => {
+  const day = dayIn(at, timezone);
+  return schedules.filter((schedule) => isOwed(schedule, day));
+};
+
 /** Whether `schedule` owes a Full on `day`, a `Date.UTC` midnight. */
 const isOwed = (schedule: FullSchedule, day: number): boolean => {
   const date = new Date(day);

@@ -11,8 +11,13 @@ import { RepositoryCapacity } from '../estate/repository-capacity';
  * It used to give every repository a block of five lines and a rule between
  * blocks — thirty lines for four repositories, each saying "Доступен" — so the
  * one running out of space had to be found by reading. Now the first line
- * says where space is running out, each repository is one line, the fullest
- * first, and the percentages and bars stand in one column to compare by eye.
+ * says where space is running out, each repository is one line, and the
+ * percentages and bars stand in one column to compare by eye.
+ *
+ * The lines keep the order they come in, by name: BKP01, BKP02 and on, as the
+ * repositories are known. The fullest first put them in a different order
+ * every day, and the one somebody looks for was never where it was the day
+ * before; which of them need anybody, the first line has said already.
  */
 
 const BAR_WIDTH = 10;
@@ -23,15 +28,16 @@ const FULL_PERCENT = 90;
 
 type Fill = 'offline' | 'full' | 'filling' | 'fine' | 'unknown';
 
-/** The order the list runs in: what needs somebody first, what cannot be told last. */
-const RANK: Record<Fill, number> = { offline: 0, full: 1, filling: 2, fine: 3, unknown: 4 };
+/** Which are kept when they do not all fit: what needs somebody first, what is fine last. */
+const NEED: Record<Fill, number> = { offline: 0, full: 1, filling: 2, unknown: 3, fine: 4 };
 
 const ICON: Record<Fill, string> = { offline: '🔴', full: '🔴', filling: '🟠', fine: '🟢', unknown: '⚪' };
 
 const fillOf = (repository: RepositoryCapacity): Fill => {
   if (repository.isOnline === false) return 'offline';
-  const percent = repository.usedPercent;
-  if (percent === undefined) return 'unknown';
+  if (repository.usedPercent === undefined) return 'unknown';
+  // The figure the line shows: 79.5% in use reads "80%", and is not 🟢 beside it.
+  const percent = Math.round(repository.usedPercent);
   if (percent >= FULL_PERCENT) return 'full';
   return percent >= FILLING_PERCENT ? 'filling' : 'fine';
 };
@@ -44,18 +50,21 @@ export const renderRepositories = (
   if (!repositories) return ['⚠️ <b>Данные репозиториев временно недоступны</b>', '', footer].join('\n');
   if (!repositories.length) return ['⚪ <b>Репозитории не найдены</b>', '', footer].join('\n');
 
-  // Sorting is stable, so repositories as full as each other keep their
-  // name order, Default last.
-  const listed = repositories
-    .map((repository) => ({ repository, fill: fillOf(repository) }))
-    .sort((a, b) => RANK[a.fill] - RANK[b.fill] || (b.repository.usedPercent ?? 0) - (a.repository.usedPercent ?? 0));
+  const listed = repositories.map((repository) => ({ repository, fill: fillOf(repository) }));
   const headline = headlineOf(listed.map(({ fill }) => fill));
+  // When they do not all fit, the ones left out are the ones that are fine.
+  // Sorting is stable, so among those alike the first by name are kept.
+  const byNeed = [...listed].sort((a, b) => NEED[a.fill] - NEED[b.fill]);
 
   return truncate(
     fitted(listed.length, (shown) => {
+      const kept = new Set(byNeed.slice(0, shown));
+      const left = byNeed.slice(shown);
       const lines = [headline, ''];
-      for (const { repository, fill } of listed.slice(0, shown)) lines.push(lineOf(repository, fill));
-      if (shown < listed.length) lines.push(`…и ещё ${listed.length - shown}`);
+      for (const entry of listed) if (kept.has(entry)) lines.push(lineOf(entry.repository, entry.fill));
+      if (left.length) {
+        lines.push(`…и ещё ${left.length}${left.every(({ fill }) => fill === 'fine') ? ' в порядке' : ''}`);
+      }
       lines.push('', footer);
       return lines.join('\n');
     }),

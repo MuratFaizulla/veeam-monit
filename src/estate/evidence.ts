@@ -2,6 +2,7 @@ import { Job } from '../veeam/estate';
 import { VeeamBackup, VeeamJob, VeeamJobStorage, VeeamRestorePoint, VeeamSchedule, VeeamSession } from '../veeam/types';
 import { FullSchedule, fullSchedulesOf } from './full-schedule';
 import { Attempt, failureStreakOf, retryWindowOf, Run, runsOf } from './runs';
+import { CleanRun } from './usual-run';
 
 /**
  * What one reading of the estate establishes.
@@ -47,6 +48,12 @@ const SAME_RUN_MS = 2 * 3_600_000;
  */
 const RHYTHM_SAMPLES = 10;
 const RUNS_PER_JOB = RHYTHM_SAMPLES + 1;
+
+/**
+ * Clean runs kept per job: enough for ten of a daily job's weekly Fulls to be
+ * among them, which takes seventy nights.
+ */
+const CLEAN_RUNS_PER_JOB = 100;
 
 /** How far back a job can be restored, and how much it took to get there. */
 export interface RetainedHistory {
@@ -138,6 +145,11 @@ export interface ScannedEvidence {
   fullsByJob: ReadonlyMap<string, FullSchedule[]>;
   /** Each live job's backups, by id: where its files are asked for. */
   backupsByJob: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Each job's runs that went through at their first attempt, newest first:
+   * how long it takes when nothing goes wrong, which ▶️ says beside a run.
+   */
+  cleanRunsByJob: ReadonlyMap<string, readonly CleanRun[]>;
   depthByJob: Map<string, RetainedHistory>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
@@ -289,6 +301,7 @@ export const readingOf = (read: EstateRead): Reading => {
   const attempts = jobAttempts(sessions);
   const runsOfJob = jobRuns(attempts, schedulesByJob);
   const windowsOfJob = runWindows(runsOfJob);
+  const cleanRunsByJob = cleanRunsOf(runsOfJob);
   const resultOfSession = new Map(
     sessions
       .filter((session): session is VeeamSession & { id: string } => Boolean(session.id))
@@ -427,6 +440,7 @@ export const readingOf = (read: EstateRead): Reading => {
       retentionByJob,
       fullsByJob,
       backupsByJob,
+      cleanRunsByJob,
       depthByJob: new Map(
         [...depth].map(([jobId, seen]): [string, RetainedHistory] => [
           jobId,
@@ -535,6 +549,26 @@ const jobRuns = (
   schedules: ReadonlyMap<string, VeeamSchedule>,
 ): Map<string, Run<SessionAttempt>[]> =>
   new Map([...attempts].map(([jobId, list]) => [jobId, runsOf(list, retryWindowOf(schedules.get(jobId)))]));
+
+/**
+ * Each job's runs that went through at their first attempt, newest first. A
+ * run Veeam had to retry says how long the failure took, and the retry did
+ * only the machines that failed; the run still going has not taken anything yet.
+ */
+const cleanRunsOf = (runs: Map<string, Run<SessionAttempt>[]>): Map<string, CleanRun[]> =>
+  new Map(
+    [...runs].map(([jobId, list]): [string, CleanRun[]] => [
+      jobId,
+      list
+        .flatMap((run) => {
+          if (run.attempts.length !== 1 || (run.result !== 'success' && run.result !== 'warning')) return [];
+          const startedAt = Date.parse(run.attempts[0].startedAt ?? '');
+          const endedAt = Date.parse(run.attempts[0].endedAt ?? '');
+          return endedAt >= startedAt ? [{ startedAt, took: endedAt - startedAt }] : [];
+        })
+        .slice(0, CLEAN_RUNS_PER_JOB),
+    ]),
+  );
 
 /**
  * When each job's sessions were on the clock, oldest first.

@@ -2,6 +2,7 @@ import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
 import { dayKey, dayOf, duration, Clock, moment, plural, stampOf, timeOnly } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
 import { ScheduledRun } from '../estate/schedule-planner';
+import { longerThanUsual, UsualRun } from '../estate/usual-run';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
 export { dateOf, dayOf, Clock, everyLabel, momentOf, plural } from '../telegram/time';
@@ -146,11 +147,13 @@ export interface RunningJob {
    * again, and this list is the only place anyone would notice.
    */
   disabled?: boolean;
+  /** How long the runs like this one took, where the job's history says. */
+  usual?: UsualRun;
 }
 
 export interface LiveRunning {
+  /** In the order they are listed. */
   jobs: RunningJob[];
-  totalJobs: number;
   /** Only shown while nothing is running; the schedule slot owns the full list. */
   next?: ScheduledRun | null;
   /** Set when the figures could not be refreshed; says why, in Russian. */
@@ -326,9 +329,8 @@ export const renderRunning = (running: LiveRunning, clock: Clock): string => {
 
   if (running.jobs.length === 0) {
     lines.push(
-      '💤 <b>Сейчас не выполняется ни одно задание</b>',
+      '💤 <b>Сейчас ничего не идёт</b>',
       '',
-      `<b>Заданий всего:</b> ${running.totalJobs}`,
       // Only when nothing is running: then "what happens next" is the question
       // being asked here. Otherwise the schedule slot answers it, in full, and
       // repeating one line of it in two places invites the two to disagree.
@@ -339,27 +341,30 @@ export const renderRunning = (running: LiveRunning, clock: Clock): string => {
     return truncate(lines.join('\n'));
   }
 
-  const count = running.jobs.length;
+  const listed = running.jobs.map((job) => ({ job, late: isLate(job, clock) }));
+  const count = listed.length;
+  // When they do not all fit, the ones left out are ones going as usual.
+  const byNeed = [...listed].sort((a, b) => Number(b.late) - Number(a.late));
+  const headline = runningHeadline(count, listed.filter(({ late }) => late).length);
   return truncate(
     fitted(count, (shown) => {
-      const body: string[] = [
-        `▶️ <b>Сейчас ${plural(count, 'выполняется', 'выполняются', 'выполняются')}: ` +
-          `${count} ${plural(count, 'задание', 'задания', 'заданий')}</b>`,
-        '',
-      ];
-      for (const job of running.jobs.slice(0, shown)) body.push(...jobBlock(job, clock), '');
+      const kept = new Set(byNeed.slice(0, shown));
+      const body = [headline, ''];
+      for (const entry of listed) if (kept.has(entry)) body.push(...jobBlock(entry.job, entry.late, clock));
       const rest = count - shown;
-      if (rest > 0) {
-        body.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`, '');
-      }
-      body.push(
-        `<b>Заданий всего:</b> ${running.totalJobs}`,
-        '',
-        footerOf(clock),
-      );
+      if (rest > 0) body.push(`…и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}`);
+      body.push('', footerOf(clock));
       return body.join('\n');
     }),
   );
+};
+
+/** "Идут 5 заданий", and how many of them are going longer than usual. */
+const runningHeadline = (count: number, late: number): string => {
+  const going = `${plural(count, 'Идёт', 'Идут', 'Идут')} ${count} ${plural(count, 'задание', 'задания', 'заданий')}`;
+  if (late === 0) return `▶️ <b>${going}</b>`;
+  const which = late < count ? `${late}` : count === 1 ? '' : count === 2 ? 'оба' : 'все';
+  return `▶️ <b>${going}, ${which ? `${which} ` : ''}дольше обычного</b>`;
 };
 
 /* ------------------------------------------------------------------ *
@@ -416,26 +421,66 @@ export const renderSchedule = (schedule: LiveSchedule, clock: Clock): string => 
   );
 };
 
-const jobBlock = (job: RunningJob, clock: Clock): string[] => {
-  const head = job.percent === undefined
-    ? `<b>${escapeHtml(job.name)}</b>`
-    : `<b>${escapeHtml(job.name)}</b> — ${Math.round(job.percent)}%`;
+/**
+ * What is running, and how far it has got: "<b>OPS_FileServer</b> — 64%" over
+ * "██████░░░░ идёт 4 ч 17 мин · обычно ~5 ч · закончит ≈ в 04:30".
+ *
+ * The start is not said: it took a day besides its time to be read right — a
+ * job going since the 26th read "старт 23:11" — and how long it has been going
+ * says the same at a glance.
+ */
+const jobBlock = (job: RunningJob, late: boolean, clock: Clock): string[] => {
+  const head = [`<b>${escapeHtml(job.name)}</b>${job.percent === undefined ? '' : ` — ${Math.round(job.percent)}%`}`];
+  // A VM backup is what nearly every job is: only the others say what they are.
+  if (job.type && job.type.toLowerCase() !== 'backup') head.push(escapeHtml(jobTypeWord(job.type) ?? job.type));
+  if (job.usual?.full) head.push(job.usual.full);
+  if (job.disabled) head.push('⚠️ выключено в Veeam');
 
-  const details: string[] = [];
-  if (job.percent !== undefined) details.push(bar(job.percent));
-  if (job.startedAt) {
-    // The time alone only while it is today's: a job going since the 26th
-    // read "старт 23:11" and looked like it had started last night.
-    const today = dayKey(new Date(job.startedAt), clock) === dayKey(clock.now, clock);
-    details.push(`старт ${today ? timeOnly(job.startedAt, clock) : dayOf(job.startedAt, clock)}`);
-    const elapsed = clock.now.getTime() - Date.parse(job.startedAt);
-    if (Number.isFinite(elapsed) && elapsed > 0) details.push(`идёт ${duration(elapsed)}`);
-  }
-  if (job.type) details.push(escapeHtml(jobTypeWord(job.type) ?? job.type));
-  if (job.disabled) details.push('⚠️ выключено в Veeam');
-
-  return details.length ? [head, details.join(' · ')] : [head];
+  const elapsed = elapsedOf(job, clock);
+  const times = [elapsed === undefined ? '' : `идёт ${duration(elapsed)}`, ...paceOf(job, elapsed, late, clock)];
+  const details = [
+    // In monospace, so every job's bar is one width.
+    job.percent === undefined ? '' : `<code>${bar(job.percent)}</code>`,
+    times.filter(Boolean).join(' · '),
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return details ? [head.join(' · '), details] : [head.join(' · ')];
 };
+
+/** "обычно ~5 ч · закончит ≈ в 04:30" while a run is on time, and that it is late once it is. */
+const paceOf = (job: RunningJob, elapsed: number | undefined, late: boolean, clock: Clock): string[] => {
+  const usual = job.usual;
+  if (!usual || elapsed === undefined) return [];
+  if (late) return [`⚠️ дольше обычного (${about(usual.took)})`];
+  const said = `обычно ${about(usual.took)}`;
+  // Past the usual time and not late yet, there is no telling when it ends.
+  if (elapsed >= usual.took) return [said];
+  return [said, `закончит ≈ ${finishOf(clock.now.getTime() - elapsed + usual.took, clock)}`];
+};
+
+/** How long it has been going, when that is known. */
+const elapsedOf = (job: RunningJob, clock: Clock): number | undefined => {
+  const elapsed = clock.now.getTime() - Date.parse(job.startedAt ?? '');
+  return Number.isFinite(elapsed) && elapsed > 0 ? elapsed : undefined;
+};
+
+const isLate = (job: RunningJob, clock: Clock): boolean => {
+  const elapsed = elapsedOf(job, clock);
+  return job.usual !== undefined && elapsed !== undefined && longerThanUsual(job.usual, elapsed);
+};
+
+const MINUTE = 60_000;
+
+/** As roughly as a usual time is known: "~7 мин", "~25 мин", "~1 ч 40 мин", "~14 ч". */
+const about = (ms: number): string => {
+  const step = ms < 10 * MINUTE ? MINUTE : ms < 60 * MINUTE ? 5 * MINUTE : ms < 600 * MINUTE ? 10 * MINUTE : 60 * MINUTE;
+  return `~${duration(Math.max(MINUTE, Math.round(ms / step) * step))}`;
+};
+
+/** "в 04:30" today, "завтра в 04:30" or "09.10 в 04:30" after: rounded up to five minutes, as it is a guess. */
+const finishOf = (at: number, clock: Clock): string =>
+  dayOf(new Date(Math.ceil(at / (5 * MINUTE)) * 5 * MINUTE).toISOString(), clock).replace(/^сегодня /u, '');
 
 /**
  * A filled/empty block bar. Telegram has no progress widget, so this is it.
