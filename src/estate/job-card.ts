@@ -6,7 +6,7 @@ import { VeeamJob, VeeamJobStorage } from '../veeam/types';
 import { RetainedHistory, retentionFrom } from './evidence';
 import { describeFulls, fullSchedulesOf } from './full-schedule';
 import { iconOf, isBadResult } from './job-state';
-import { retentionWords } from './point-verdict';
+import { retentionWords } from './point-facts';
 import { runsOf } from './runs';
 import { RunSpeed, Stage } from './run-speed';
 import { describeRetry, describeSchedule } from './schedule-planner';

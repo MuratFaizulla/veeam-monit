@@ -131,11 +131,8 @@ Saturday), so a day without one is a Full that did not happen, not a schedule
 that never asked for it. A day counts twelve hours after it ends, so a Full that
 starts at 23:40 is late rather than missed.
 
-Owned by `src/estate/full-schedule.ts`. Whether a job is behind, past a
-missed Full, too new to judge or fine is one verdict, `verdictOf` in
-`src/estate/point-verdict.ts`, judged against the clock when it is asked: 🛡
-lists by it, and /points answers about one job by it, so the two cannot
-disagree about the same job.
+Owned by `src/estate/full-schedule.ts`. A missed Full is one of the things
+the **Verdict** can say of a job; see **Standing**.
 
 ## Standing
 
@@ -148,20 +145,29 @@ configured to start by hand. A job whose configuration could not be read is
 judged: an unknown schedule is treated as a real one, because the failure mode
 of the other choice is silently dropping a job from every check.
 
-Standings are worked out once per cycle and read by 🛡 Protection and by
-/points, so the two cannot disagree about which jobs are in scope or how many
-were left out.
+Standings are worked out from one Evidence by one rule — by 🛡 Protection
+once a cycle, and by /points when somebody asks — so the two cannot disagree
+about which jobs are in scope or how many were left out. /points used to work
+out its own excuse, a copy of the rule, twice.
 
-A Standing deliberately says nothing about whether a job is *late*. That is
-🛡's to decide: past its deadline — the job's own interval times
-`TELEGRAM_PROTECTION_OVERDUE_FACTOR`, never less than
-`TELEGRAM_PROTECTION_STALE_DAYS` — or failing run after run, or past a
-scheduled Full. How many Runs it has skipped is said beside, not decided by.
+The **Verdict** is whether a job needs somebody, judged against the clock
+when it is asked: no point at all; none for longer than its deadline — the
+job's own interval times `TELEGRAM_PROTECTION_OVERDUE_FACTOR`, never less
+than `TELEGRAM_PROTECTION_STALE_DAYS`; failing run after run; or past a
+scheduled Full. Anything else is fine. How many Runs it has skipped is said
+beside, not decided by: one late night wakes nobody. 🛡 lists every job by it,
+and /points opens with it in the same words — without a name, /points offers
+the jobs 🛡 lists, in 🛡's order.
+
 It used to be two topics: 🗂 Restore points listed a job by the Runs it had
 skipped and 🛡 by its deadline, and the two said it of the same job in
-different words. On 7 October 2026 🗂 became part of 🛡.
+different words. On 7 October 2026 🗂 became part of 🛡, and for the rest of
+that day /points still judged by 🗂's rule: a nightly job two days without a
+point was fine in 🛡 and "behind" in /points. The Verdict has lived with the
+Standing since, where both read it.
 
-Owned by `src/estate/job-standing.ts`.
+Owned by `src/estate/job-standing.ts`; the facts of a job's points, and the
+words they are said in, by `src/estate/point-facts.ts`.
 
 ## Cadence
 

@@ -1,36 +1,31 @@
 import { escapeHtml } from '../telegram/format';
 import { Clock, dateOf, everyLabel, momentOf } from '../telegram/time';
 import { chainWords, sizeWords } from '../telegram/words';
-import { describeFulls, fullKindOf } from './full-schedule';
+import { describeFulls } from './full-schedule';
+import { Excuse, Verdict, verdictWords } from './job-standing';
+import { everyRunFull, JobPoints, retentionWords } from './point-facts';
 import { calendarOf, MARKS } from './points-calendar';
 import { PointSizes } from './points-sizes';
-import {
-  everyRunFull,
-  JobPoints,
-  missedRunsWords,
-  owedDaysWords,
-  retentionWords,
-  verdictIcon,
-  verdictOf,
-} from './point-verdict';
 
 /**
  * One job's restore points, answered for: what /points says.
  *
- * 🗂 lists only the jobs that need somebody and counts the rest, so the
+ * 🛡 lists only the jobs that need somebody and counts the rest, so the
  * question it leaves is "and this one?". The Job card answers it about runs;
  * this answers it about points — how far back each machine reaches, the chain
- * being written, the Fulls it is set to take and the ones it did not — by the
- * same verdict 🗂 uses, from the Evidence already read. Asking costs the
- * request that finds the job and one for each of its backups' files, which
- * say what its Fulls and increments take up.
+ * being written, the Fulls it is set to take and the ones it did not — opening
+ * with what 🛡 says of the job, in 🛡's words, from the Evidence already read.
+ * Asking costs the request that finds the job and one for each of its backups'
+ * files, which say what its Fulls and increments take up.
  */
 
 /** What is known of one job's points. */
 export interface PointsCard {
   name: string;
   /** Why the job owes nobody a point, when it does not. */
-  excused?: 'disabled' | 'unscheduled';
+  excused?: Excuse;
+  /** Where it stands by 🛡's verdict; absent when it is excused. */
+  verdict?: Verdict;
   /** Its points; absent when it has none in the list the scan reads. */
   points?: JobPoints;
   /** What they take up; absent when its backup files could not be read. */
@@ -40,9 +35,6 @@ export interface PointsCard {
   /** Why there is no Evidence to answer from yet. */
   unavailable?: string;
 }
-
-/** Missed days spelled out before the earlier ones are only counted. */
-const DAYS_SHOWN = 10;
 
 export const renderPointsCard = (card: PointsCard, clock: Clock): string => {
   const lines = [`🗂 <b>${escapeHtml(card.name)}</b> · точки восстановления`, ''];
@@ -54,20 +46,19 @@ export const renderPointsCard = (card: PointsCard, clock: Clock): string => {
     lines.push('⚪ <b>Запускается только вручную</b> — по расписанию точек от него не ждут.');
   }
 
+  // A job nobody expects points from is not judged against a rhythm it no longer keeps.
+  if (!card.excused && card.verdict) lines.push(...verdictLines(card.verdict, clock));
+
   const points = card.points;
   if (!points) {
+    // Said beside the verdict by its runs: "no points at all" is what a
+    // replica read as while it was replicating every night.
     if (card.elsewhere) {
-      // Said instead of "no points at all", which is what a replica read as
-      // while it was replicating every night.
-      lines.push('Точки заданий этого типа Veeam хранит отдельно; защищённость видна по успешным запускам — /job.');
-    } else if (!card.excused) {
-      lines.push('🔴 <b>Точек восстановления нет</b>');
+      lines.push('', 'Точки заданий этого типа Veeam хранит отдельно, поэтому о нём судят по успешным запускам — подробнее в /job.');
     }
     return lines.join('\n');
   }
 
-  // A job nobody expects points from is not judged against a rhythm it no longer keeps.
-  if (!card.excused) lines.push(...verdictLines(points, clock));
   lines.push(...calendarLines(points, clock));
   lines.push('', ...factLines(points, clock), ...sizeLines(card.sizes, clock));
   lines.push(
@@ -78,25 +69,11 @@ export const renderPointsCard = (card: PointsCard, clock: Clock): string => {
   return lines.join('\n');
 };
 
-/** Where the job stands, in the words and marks 🗂 uses for it. */
-const verdictLines = (points: JobPoints, clock: Clock): string[] => {
-  const verdict = verdictOf(points, clock);
-  const lines: string[] = [];
-  if (verdict.standing === 'behind' && verdict.missed !== null) {
-    lines.push(`${verdictIcon(verdict)} <b>Отстаёт от своего расписания:</b> ${missedRunsWords(verdict.missed)}`);
-  }
-  if (verdict.owed.length > 0) {
-    const days = owedDaysWords(verdict.owed, clock.now.getTime(), DAYS_SHOWN);
-    lines.push(`🟡 <b>Пропущен ${fullKindOf(points.fulls ?? [])}:</b> ${days}`);
-  }
-  if (verdict.standing === 'unknown') {
-    lines.push('⚪ <b>Ритм ещё не ясен</b> — точек слишком мало, чтобы судить о пропусках.');
-  }
-  if (verdict.standing === 'onTime') {
-    const fullsKnown = points.chain !== undefined && (points.fulls?.length ?? 0) > 0;
-    lines.push(`🟢 <b>По расписанию</b>${fullsKnown ? ', Full проходят вовремя' : ''}`);
-  }
-  return lines;
+/** Where the job stands, as 🛡 says it: what is wrong, or that nothing is, and the facts under it. */
+const verdictLines = (verdict: Verdict, clock: Clock): string[] => {
+  const { icon, problem, facts } = verdictWords(verdict, clock);
+  const line = `${icon} <b>${problem.charAt(0).toUpperCase()}${problem.slice(1)}</b>`;
+  return facts.length > 0 ? [line, `<i>${facts.join(' · ')}</i>`] : [line];
 };
 
 /** The days of the last weeks, a Full, an increment or nothing each, and what the marks mean. */

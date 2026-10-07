@@ -604,7 +604,7 @@ const standings = (jobs, pointsByJob, streakByJob, now) => {
 };
 
 const assess = (overrides) => {
-  const { assessProtection } = require('../dist/live/protection');
+  const { assessProtection } = require('../dist/estate/job-standing');
   const now = Date.UTC(2026, 8, 14, 12, 0, 0);
   const { jobs = [], pointsByJob = new Map(), streakByJob = new Map(), ...thresholds } = overrides;
   return assessProtection({
@@ -790,7 +790,8 @@ const NOW = Date.UTC(2026, 8, 15, 12);
  * Veeam and the configuration said of their Fulls.
  */
 const protectionPages = (over) => {
-  const { assessProtection, renderProtection } = require('../dist/live/protection');
+  const { assessProtection } = require('../dist/estate/job-standing');
+  const { renderProtection } = require('../dist/live/protection');
   const { jobs = [], excludedDisabled = 0, excludedUnscheduled = 0 } = over;
   const judged = jobs.map((job, i) => ({
     id: String(i),

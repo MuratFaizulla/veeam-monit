@@ -1021,7 +1021,7 @@ test('a job that disappeared between the message and the press says so', async (
 });
 
 /* ------------------------------------------------------------------ *
- * /points: one job's restore points, by the verdict 🗂 uses
+ * /points: one job's restore points, by the verdict 🛡 lists it by
  * ------------------------------------------------------------------ */
 
 const POINTS_NOW = { now: new Date('2026-10-01T10:23:00+05:00'), timezone: 'Asia/Qyzylorda' };
@@ -1037,13 +1037,35 @@ const telegramBot = (over = {}) => ({
   ...over,
 });
 
-const pointsCard = (card) => require('../dist/estate/points-card').renderPointsCard(card, POINTS_NOW);
+/** 🛡's thresholds as configured by default. */
+const POINTS_RULE = { staleDays: 3, overdueFactor: 2.5, minStreak: 3 };
+
+/** A /points card as the answer builds it: the job's points, and the verdict 🛡 gives it. */
+const pointsCard = (card) => {
+  const { verdictOf } = require('../dist/estate/job-standing');
+  const { points, failures = 0 } = card;
+  // The Standing /points gathers, from points given as the Evidence holds them.
+  const standing = {
+    id: '1',
+    name: card.name,
+    lastRun: card.lastRun,
+    runs: points?.newest === undefined ? [] : [points.newest],
+    byRuns: Boolean(card.elsewhere),
+    cadenceDays: points?.intervalDays ?? null,
+    failures,
+    depth: points,
+    retention: points?.retention,
+    fulls: points?.fulls,
+  };
+  const verdict = card.excused || card.unavailable ? undefined : verdictOf(standing, POINTS_NOW, POINTS_RULE);
+  return require('../dist/estate/points-card').renderPointsCard({ ...card, verdict }, POINTS_NOW);
+};
 
 test('/points says where one job stands, how far back it reaches and the Fulls it went without', () => {
   const text = pointsCard({ name: 'OPS_TelegramBot', points: telegramBot() });
 
   assert.match(text, /^🗂 <b>OPS_TelegramBot<\/b> · точки восстановления$/mu);
-  assert.match(text, /^🟡 <b>Пропущен Active Full:<\/b> 12\.09, 19\.09, 26\.09$/mu);
+  assert.match(text, /^🟡 <b>Пропущены Full 12\.09, 19\.09, 26\.09<\/b>\n<i>бэкапы идут · последний Full 05\.09<\/i>$/mu);
   assert.match(text, /^<b>Точек на ВМ:<\/b> 17 · <b>ВМ:<\/b> 1 · <b>в Veeam всего:<\/b> 17$/mu);
   assert.match(text, /^<b>Самая ранняя:<\/b> 05\.09 в 21:43$/mu);
   assert.match(text, /^<b>Самая новая:<\/b> вчера в 21:43$/mu);
@@ -1053,31 +1075,52 @@ test('/points says where one job stands, how far back it reaches and the Fulls i
   assert.match(text, /^<b>Ритм:<\/b> раз в сутки$/mu);
 });
 
-test('/points says a job is behind, on time, or too new to judge, as 🗂 would', () => {
-  const behind = pointsCard({ name: 'J', points: telegramBot({ newest: local('2026-09-27T21:43:00') }) });
-  assert.match(behind, /^🔴 <b>Отстаёт от своего расписания:<\/b> пропущено 2 запуска$/mu);
-  assert.match(behind, /^🟡 <b>Пропущен Active Full:<\/b>/mu, 'and the Full it went without, too');
+test('/points opens with what 🛡 says of the job, in the words 🛡 says it', () => {
+  const late = pointsCard({ name: 'J', points: telegramBot({ newest: local('2026-09-27T21:43:00') }) });
+  assert.match(
+    late,
+    /^🟠 <b>Нет бэкапа 3 дня<\/b>\n<i>последний 27\.09 в 21:43 · обычно раз в сутки · пропущено 2 запуска · не сделан Full 12\.09, 19\.09, 26\.09<\/i>$/mu,
+  );
+
+  const failing = pointsCard({ name: 'J', failures: 4, points: telegramBot({ fulls: undefined }) });
+  assert.match(failing, /^🟠 <b>4 неудачных запуска подряд<\/b>\n<i>последний бэкап вчера в 21:43 · обычно раз в сутки<\/i>$/mu);
 
   const onTime = pointsCard({
     name: 'J',
     points: telegramBot({ chain: { fulls: 2, lastFull: local('2026-09-26T22:00:00'), sinceFull: 4 } }),
   });
-  assert.match(onTime, /^🟢 <b>По расписанию<\/b>, Full проходят вовремя$/mu);
+  assert.match(onTime, /^🟢 <b>В порядке<\/b>\n<i>Full вовремя<\/i>$/mu);
   assert.match(onTime, /^<b>Цепочка:<\/b> Full 26\.09 \+ 4 инкр\. · цепочек в хранении: 2$/mu);
 
   const fresh = pointsCard({ name: 'J', points: telegramBot({ intervalDays: null, fulls: undefined }) });
-  assert.match(fresh, /^⚪ <b>Ритм ещё не ясен<\/b>/mu);
+  assert.match(fresh, /^🟢 <b>В порядке<\/b>\n<i>ритм ещё не ясен<\/i>$/mu);
   assert.ok(!/Full по расписанию/u.test(fresh), 'nothing said about Fulls nobody configured');
+});
+
+test('/points calls a nightly job two days without a point fine, as 🛡 does, and says the run it skipped', () => {
+  // 🗂's verdict, which /points kept after 🗂 became part of 🛡, called this
+  // job behind; 🛡 counted it among the fine ones.
+  const text = pointsCard({
+    name: 'J',
+    points: telegramBot({
+      newest: local('2026-09-29T08:00:00'),
+      chain: { fulls: 2, lastFull: local('2026-09-26T22:00:00'), sinceFull: 3 },
+    }),
+  });
+  assert.match(text, /^🟢 <b>В порядке<\/b>\n<i>пропущен 1 запуск · Full вовремя<\/i>$/mu);
+  assert.ok(!/Отстаёт/u.test(text), text);
 });
 
 test('/points does not judge a job nobody expects points from, and says why there are none', () => {
   const off = pointsCard({ name: 'J', excused: 'disabled', points: telegramBot() });
   assert.match(off, /^⚪ <b>Выключено в Veeam<\/b>/mu);
-  assert.ok(!/Пропущен|По расписанию|Отстаёт/u.test(off), off);
+  assert.ok(!/В порядке|Нет бэкапа|Пропущен/u.test(off), off);
   assert.match(off, /<b>Точек на ВМ:<\/b> 17/u, 'what it kept is still shown');
 
-  assert.match(pointsCard({ name: 'J' }), /🔴 <b>Точек восстановления нет<\/b>/u);
-  assert.match(pointsCard({ name: 'J', elsewhere: true }), /хранит отдельно/u);
+  assert.match(pointsCard({ name: 'J' }), /^🔴 <b>Нет ни одной точки<\/b>$/mu);
+  const replica = pointsCard({ name: 'J', elsewhere: true });
+  assert.match(replica, /^🔴 <b>Нет успешных запусков<\/b>$/mu, 'judged by its runs, as 🛡 judges it');
+  assert.match(replica, /хранит отдельно/u);
   assert.match(pointsCard({ name: 'J', unavailable: 'Точки ещё не прочитаны.' }), /Точки ещё не прочитаны\./u);
 });
 

@@ -18,7 +18,8 @@ import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
 import { FailedObject, JobCard, JobSession, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 import { RetainedRun } from './evidence';
-import { jobPointsOf, verdictOf } from './point-verdict';
+import { assessProtection, excuseFor, standingOf, standingsOf, thresholdsOf, verdictOf } from './job-standing';
+import { pointsOf } from './point-facts';
 import { PointsCard, renderPointsCard } from './points-card';
 import { PointSizes, sizesOf } from './points-sizes';
 
@@ -160,7 +161,7 @@ export class JobQueryService {
           '',
           needing.length > 0
             ? 'Или выберите из тех, которым нужно внимание:'
-            : 'Сейчас все задания по расписанию.',
+            : 'Сейчас все задания в порядке.',
         ].join('\n'),
         jobs: needing.map(({ id, name }) => ({ id, name })),
         about: 'points',
@@ -204,13 +205,17 @@ export class JobQueryService {
     const evidence = this.evidence.evidence;
     let card: PointsCard;
     if (evidence.status === 'ready') {
-      const points = jobPointsOf(evidence, job.id);
+      const standing = standingOf(job, evidence);
+      const excused = excuseFor(job, evidence) ?? undefined;
+      const points = pointsOf(standing);
       card = {
         name: job.name,
-        excused: isDisabled(job) ? 'disabled' : evidence.unscheduled.has(job.id) ? 'unscheduled' : undefined,
+        excused,
+        // By the verdict 🛡 lists the job by, so the two cannot disagree about it.
+        verdict: excused ? undefined : verdictOf(standing, this.clock(), thresholdsOf(this.config)),
         points,
         sizes: points ? await this.sizesOf(evidence.backupsByJob.get(job.id) ?? [], points.retained ?? []) : undefined,
-        elsewhere: evidence.provenByRuns.has(job.id),
+        elsewhere: standing.byRuns,
       };
     } else {
       card = { name: job.name, unavailable: evidence.reason };
@@ -234,21 +239,18 @@ export class JobQueryService {
     }
   }
 
-  /** The jobs owed points whose verdict is anything but "on time": behind first, then a Full missed, then too new to judge. */
-  private needingAttention(jobs: Job[]): Job[] {
+  /** The jobs 🛡 lists, in its order: the worst first. */
+  private needingAttention(jobs: Job[]): Array<Pick<Job, 'id' | 'name'>> {
     const evidence = this.evidence.evidence;
     if (evidence.status !== 'ready') return [];
     const clock = this.clock();
-    const order = ['behind', 'fullMissed', 'unknown'];
-    return jobs
-      .filter((job) => !isDisabled(job) && !evidence.unscheduled.has(job.id))
-      .flatMap((job) => {
-        const points = jobPointsOf(evidence, job.id);
-        const standing = points ? verdictOf(points, clock).standing : undefined;
-        return standing && standing !== 'onTime' ? [{ job, rank: order.indexOf(standing) }] : [];
-      })
-      .sort((a, b) => a.rank - b.rank || a.job.name.localeCompare(b.job.name))
-      .map(({ job }) => job);
+    const { risks } = assessProtection({
+      standings: standingsOf(jobs, evidence),
+      now: clock.now.getTime(),
+      timezone: clock.timezone,
+      ...thresholdsOf(this.config),
+    });
+    return risks.map(({ id, name }) => ({ id, name }));
   }
 
 

@@ -12,7 +12,7 @@
 | `/check` | Poll Veeam now, unless a cycle is already running. At most once every 30 seconds. |
 | `/digest` | A summary of all jobs and a list of the ones with problems. Jobs disabled in Veeam are counted on a line of their own. |
 | `/job part of a name` | A job's card: last result, runs, schedule, settings, restore points, which machines failed, and ⚡ the speed of the last run: how much was read and in how long, the bottleneck (Source, Proxy, Network, Target) and what it means, the disk transport mode (NBD, HotAdd), the proxies, the repository gateway and the machines that took longest. |
-| `/points part of a name` | A job's restore points: whether it keeps to its schedule, a calendar of the last weeks (█ Full, ▒ increment, · no point), how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention, the size of a Full and of a typical increment, and how much it all takes up on disk. Without a name: buttons for the jobs that need attention. |
+| `/points part of a name` | A job's restore points: first what 🛡 says of the job, in the same words («🟢 В порядке», or what is wrong and the facts under it), then a calendar of the last weeks (█ Full, ▒ increment, · no point), how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention, the size of a Full and of a typical increment, and how much it all takes up on disk. Without a name: buttons for the jobs 🛡 lists, the worst first. |
 | `/topics` | The forum topics the bot knows. |
 | `/clear` | Clears General: deletes everything said there in the last 48 hours and posts a fresh menu. Leaves the topics alone. |
 | `/help` | Help. |
@@ -29,7 +29,7 @@ The keys are labelled in Russian; the English meaning is in brackets.
 | 📊 Сводка (Digest) | The same as `/digest` |
 | 🔄 Проверить (Check) | The same as `/check` |
 | 📦 Задание (Job) | The same as `/job` without a name: buttons for the jobs that are not fine right now |
-| 🗂 Точки (Points) | The same as `/points` without a name: buttons for the jobs that need attention |
+| 🗂 Точки (Points) | The same as `/points` without a name: buttons for the jobs 🛡 lists |
 | 🩺 Статус (Status) | The same as `/status` |
 | 📑 Темы (Topics) | The same as `/topics` |
 | 🧹 Очистить (Clear) | First asks «Очистить General?» (clear General?); the «🧹 Да, очистить» (yes, clear) button under the question does the clearing. A typed `/clear` clears at once |

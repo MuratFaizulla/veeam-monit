@@ -162,9 +162,3 @@ export const describeFulls = (schedules: FullSchedule[]): string => {
     })
     .join(', ');
 };
-
-/** "Active Full", "Synthetic Full", or "Full" when a job takes both. */
-export const fullKindOf = (schedules: FullSchedule[]): string => {
-  const kinds = new Set(schedules.map((schedule) => schedule.kind));
-  return kinds.size === 1 ? KIND[[...kinds][0]] : 'Full';
-};

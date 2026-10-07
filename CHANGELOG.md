@@ -8,7 +8,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Added
 
-- `/points part of a name`: one job's restore points as 🗂 sees them: whether it keeps to its schedule, how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention. Without a name it offers the jobs that need attention. Under the answer are «🔄 Обновить» (refresh) and «📋 Карточка» (card); under the `/job` card, «🗂 Точки» (points).
+- `/points part of a name`: one job's restore points. It opens with what 🛡 says of the job, in 🛡's words: «🟢 В порядке» (fine), or what is wrong and the facts under it («🟠 Нет бэкапа 3 дня», no backup for 3 days); a skipped run is said beside («пропущен 1 запуск»), not counted against the job. Then how many moments each machine can be rolled back to, the current chain, the scheduled Active Full and the dates missed, retention. Without a name it offers the jobs 🛡 lists, the worst first. Under the answer are «🔄 Обновить» (refresh) and «📋 Карточка» (card); under the `/job` card, «🗂 Точки» (points).
 - In `/points`, a day-by-day calendar of the last five weeks: █ Full, ▒ increment, · no point. Gaps and Active Full days show at a glance.
 - In `/points`, how much the points weigh: «Full 03.10: 856 ГБ данных → 523 ГБ на диске» (856 GB of data, 523 GB on disk), a typical increment and its share of a Full, and how much the job takes up on disk in all. If a new Full is still being written, it says so. Sizes are read from the backup files when asked; the hourly scan does no extra work.
 - An account of its own for a Veeam server outside the domain: `VEEAM_MONITOR_USERNAME_<NAME>` and `VEEAM_MONITOR_PASSWORD_<NAME>`. The other servers use the shared one, as before.

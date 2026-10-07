@@ -6,7 +6,7 @@ import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamServer } from '../veeam/servers';
 import { VeeamSession } from '../veeam/types';
 import { Evidence } from '../estate/evidence';
-import { Standings, standingsOf } from '../estate/job-standing';
+import { ProtectionSnapshot, Standings, assessProtection, standingsOf, thresholdsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
 import { RepositoryCapacity } from '../estate/repository-capacity';
 import { ScheduledRun, todayRuns } from '../estate/schedule-planner';
@@ -27,7 +27,7 @@ import {
   aggregatePerformance,
   renderPerformance,
 } from './performance';
-import { ProtectionSnapshot, assessProtection, renderProtection } from './protection';
+import { renderProtection } from './protection';
 import { renderRepositories } from './repositories';
 import { LiveSlot } from './slots';
 
@@ -293,12 +293,6 @@ export class LiveSnapshotsService {
     evidence: Evidence,
     clock: Clock,
   ): ProtectionSnapshot {
-    const thresholds = {
-      staleDays: this.config.protectionStaleDays,
-      overdueFactor: this.config.protectionOverdueFactor,
-      minStreak: this.config.protectionFailureStreak,
-    };
-
     if (!standings) {
       return {
         risks: [],
@@ -306,12 +300,16 @@ export class LiveSnapshotsService {
         protectedJobs: 0,
         excludedDisabled: 0,
         excludedUnscheduled: 0,
-        ...thresholds,
         unavailable: evidence.status === 'pending' ? evidence.reason : NOT_ANSWERED,
       };
     }
 
-    return assessProtection({ standings, now: clock.now.getTime(), timezone: clock.timezone, ...thresholds });
+    return assessProtection({
+      standings,
+      now: clock.now.getTime(),
+      timezone: clock.timezone,
+      ...thresholdsOf(this.config),
+    });
   }
 
   /** Backup chains left behind by jobs that no longer exist. */
