@@ -57,6 +57,6 @@ Servers are listed in `VEEAM_SERVERS`, comma-separated, and share one account. A
 
 - **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files: ОШИБКА` (error). The daily digest comes for each server.
 - **The live topics, `/digest` and `/job`** show the selected server: the first in the list until somebody picks another with «🖥 Серверы» or `/servers`. The choice is shared by the whole group and survives a restart.
-- 🩺 lists every server with its IP: the selected one 🟢, the others ⚪, one that is down 🔴 with the reason.
+- 🩺 is about every server: its first line counts the ones that are fine («🟡 4 из 5 серверов в порядке»), a server in trouble comes first with the reason in Veeam's or the network's words, the selected one is marked «показан в темах», and the IP addresses of all of them are listed together under the list.
 - **Load.** Every cycle asks each server for its availability, job states and repositories. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
 - **A new server** is only remembered on its first cycle: jobs that had already failed on it do not come as alerts. The same goes for a renamed server.

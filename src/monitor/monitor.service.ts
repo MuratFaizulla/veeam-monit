@@ -475,12 +475,14 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         error: watch.lastError,
         trackedJobs: this.store.jobMemoryOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
-        servers: this.servers().map(({ name, selected, reachable, authenticated, address }) => ({
+        servers: this.servers().map(({ name, selected, reachable, authenticated, address, jobs, lastError }) => ({
           name,
           selected,
           reachable,
           authenticated,
           address,
+          jobs: jobs?.total,
+          error: lastError,
         })),
       },
     });

@@ -130,6 +130,10 @@ export interface LiveServerHealth {
   authenticated: boolean | null;
   /** Its IP address, once a connection has resolved it. */
   address?: string;
+  /** How many jobs it has, once its job list has been read. */
+  jobs?: number;
+  /** Why it is not watched, in Veeam's or the network's words, when it is not. */
+  error?: string | null;
 }
 
 export interface RunningJob {
@@ -168,6 +172,7 @@ export interface LiveSchedule {
  * ------------------------------------------------------------------ */
 
 export const renderHealth = (health: LiveHealth, clock: Clock): string => {
+  if (health.servers && health.servers.length > 1) return renderServersHealth(health, health.servers, clock);
   const lines: string[] = [];
 
   if (!health.reachable) {
@@ -202,24 +207,6 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
     lines.push('', `<b>Причина:</b> ${escapeHtml(health.error)}`);
   }
 
-  // Every server, not only the one shown: this is the slot that answers "is
-  // the monitor watching everything", and a server that fell over while
-  // another was selected is the one somebody needs to see here.
-  if (health.servers && health.servers.length > 1) {
-    lines.push('', '<b>Серверы:</b>');
-    for (const server of health.servers) {
-      const name = server.selected ? `<b>${escapeHtml(server.name)}</b>` : escapeHtml(server.name);
-      const where =
-        server.address && server.address !== server.name ? ` · <code>${escapeHtml(server.address)}</code>` : '';
-      // Which server is shown is said by colour, 🟢 against ⚪ — unless a
-      // server is in trouble, which matters more than which one is shown and
-      // is said in red, and in words, since red now covers more than one thing.
-      const trouble = troubleOf(server);
-      const icon = trouble ? '🔴' : server.selected ? '🟢' : '⚪';
-      lines.push(`${icon} ${name}${where}${trouble ? ` — ${trouble}` : ''}`);
-    }
-  }
-
   lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
 
   // Veeam's own clock belongs on the volatile line: it moves every poll, and a
@@ -233,6 +220,75 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
 
   return truncate(lines.join('\n'));
 };
+
+/**
+ * 🩺 when there are several servers: is every one of them watched?
+ *
+ * It used to open with the selected server alone — "🟢 Veeam — всё работает"
+ * above a list in which another server could not sign in — and to say which
+ * server was selected by colour, ⚪ for the others, which read as "off". Now
+ * the first line counts the servers that are fine, the ones in trouble come
+ * first with their reason, the selected one is named in words, and the
+ * addresses a firewall rule is written for sit together under the list.
+ */
+const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], clock: Clock): string => {
+  const fine = servers.filter((server) => server.reachable === true && server.authenticated === true);
+  const unasked = servers.filter((server) => server.reachable === null);
+  const troubled = servers.filter((server) => troubleOf(server) !== undefined);
+
+  const counted = countWords(servers.length, fine.length, troubled.length, unasked.length);
+  const lines = [`${healthIcon(fine.length, troubled.length)} <b>${counted}</b>`, ''];
+  for (const server of troubled) {
+    // Red where the monitor is shut out; a server with no account configured
+    // was left unwatched on purpose, or by an oversight, and is yellow.
+    const icon = server.reachable === false || server.authenticated === false ? '🔴' : '🟡';
+    lines.push(`${icon} ${serverName(server)} — ${troubleOf(server)}${shownMark(server)}`);
+    if (server.error) lines.push(`<i>${escapeHtml(server.error)}</i>`);
+  }
+  for (const server of fine) {
+    const jobs = server.jobs === undefined ? '' : ` · ${server.jobs} ${plural(server.jobs, 'задание', 'задания', 'заданий')}`;
+    lines.push(`🟢 ${serverName(server)}${jobs}${shownMark(server)}`);
+  }
+  for (const server of unasked) lines.push(`⚪ ${serverName(server)} — ещё не опрошен${shownMark(server)}`);
+
+  const addressed = servers.filter((server) => server.address && server.address !== server.name);
+  if (addressed.length) {
+    lines.push('', '<b>Адреса:</b>');
+    for (const server of addressed) {
+      lines.push(`${escapeHtml(server.name)} — <code>${escapeHtml(server.address ?? '')}</code>`);
+    }
+  }
+
+  lines.push('', `<b>Проверка:</b> каждые ${Math.round(health.intervalMs / 1000)} с`);
+  const shown = servers.find((server) => server.selected);
+  const serverClock =
+    shown && health.reachable && health.serverTime
+      ? ` · часы ${escapeHtml(shown.name)} ${escapeHtml(moment(health.serverTime, clock))}`
+      : '';
+  lines.push(footerOf(clock, serverClock));
+  return truncate(lines.join('\n'));
+};
+
+const healthIcon = (fine: number, troubled: number): string => {
+  if (troubled === 0) return fine > 0 ? '🟢' : '⚪';
+  return fine > 0 ? '🟡' : '🔴';
+};
+
+/** "Все 5 серверов в порядке", "Оба сервера в порядке", "4 из 5 серверов в порядке". */
+const countWords = (total: number, fine: number, troubled: number, unasked: number): string => {
+  if (fine === total) {
+    if (total === 2) return 'Оба сервера в порядке';
+    return `Все ${total} ${plural(total, 'сервер', 'сервера', 'серверов')} в порядке`;
+  }
+  const counted = `${fine} из ${total} ${plural(total, 'сервера', 'серверов', 'серверов')} в порядке`;
+  if (troubled > 0 || unasked === 0) return counted;
+  return `${counted}, ${unasked} ещё не ${unasked === 1 ? 'опрошен' : 'опрошены'}`;
+};
+
+const serverName = (server: LiveServerHealth): string => `<b>${escapeHtml(server.name)}</b>`;
+
+/** The selected server, said in words rather than by a colour that also means "off". */
+const shownMark = (server: LiveServerHealth): string => (server.selected ? ' · <i>показан в темах</i>' : '');
 
 /** What keeps a server from being watched, or nothing while it is watched or not asked yet. */
 const troubleOf = (server: { reachable: boolean | null; authenticated: boolean | null }): string | undefined => {

@@ -103,6 +103,9 @@ const settled = async (w) => {
 
 const texts = (w) => w.api.sent().map((message) => message.text);
 
+/** 🩺, which opens with how many of the servers are fine. */
+const healthOf = (w) => texts(w).find((slot) => /^\S+ <b>(Оба|Все|\d+ из \d+) сервер/u.test(slot));
+
 test('every server is watched, and an alert says which server it is about', async () => {
   const w = twoServers({
     ast: [job('a1', 'SQL Daily', 'Success')],
@@ -147,13 +150,16 @@ test('the live slots show the selected server, named on top, and the health list
 
   await w.monitor.check();
 
-  const slots = texts(w);
+  // The health is about every server and names each itself; a name on top
+  // would say it is about the selected one only.
+  const health = healthOf(w);
+  const slots = texts(w).filter((slot) => slot !== health);
   assert.ok(slots.length > 0);
   for (const slot of slots) assert.ok(slot.startsWith('🖥 <b>AST</b>\n\n'), slot);
-  const health = slots.find((slot) => /Серверы:/.test(slot));
-  assert.match(health, /🟢 <b>AST<\/b>\n/, 'выбранный — зелёным');
-  assert.match(health, /⚪ BAAS\n/, 'остальные — серым');
-  assert.doesNotMatch(health, /показан здесь/);
+  assert.ok(health.startsWith('🟢 <b>Оба сервера в порядке</b>\n\n'), health);
+  // Which one is shown is said in words: ⚪ beside the others read as "off".
+  assert.match(health, /^🟢 <b>AST<\/b> · 1 задание · <i>показан в темах<\/i>$/mu);
+  assert.match(health, /^🟢 <b>BAAS<\/b> · 1 задание$/mu);
 
   // The Evidence scan is paid for by the server shown, and only by it.
   assert.ok(w.veeamAst.paths().includes('/api/v1/restorePoints'));
@@ -193,7 +199,7 @@ test('a server selected again has its restore points read at once, unless they w
   }
 });
 
-test('the health gives every server\'s IP address beside its name', async () => {
+test('the health gives every server\'s IP address, together under the list', async () => {
   const w = twoServers({
     env: { TELEGRAM_LIVE: 'true' },
     ast: [job('a1', 'SQL Daily', 'Success')],
@@ -205,10 +211,10 @@ test('the health gives every server\'s IP address beside its name', async () => 
 
   await w.monitor.check();
 
-  const health = texts(w).find((slot) => /Серверы:/.test(slot));
-  assert.match(health, /<b>Сервер:<\/b> <code>https:\/\/ast\.example:9419<\/code>\n<b>IP:<\/b> <code>192\.0\.2\.162<\/code>/);
-  assert.match(health, /🟢 <b>AST<\/b> · <code>192\.0\.2\.162<\/code>\n/);
-  assert.match(health, /⚪ BAAS · <code>198\.51\.100\.123<\/code>\n/);
+  // What a network engineer is asked to open, all in one place.
+  const health = healthOf(w);
+  assert.match(health, /\n\n<b>Адреса:<\/b>\nAST — <code>192\.0\.2\.162<\/code>\nBAAS — <code>198\.51\.100\.123<\/code>\n\n/);
+  assert.doesNotMatch(health, /<b>Сервер:<\/b>/, 'one list for every server, not the selected one apart');
 });
 
 test('a server in trouble is red in the health whichever is shown, and says what the trouble is', async () => {
@@ -220,11 +226,50 @@ test('a server in trouble is red in the health whichever is shown, and says what
 
   await w.monitor.check();
 
-  // Grey would read as "fine, just not shown"; the one that fell over while
-  // another was selected is the one somebody needs to see here.
-  const health = texts(w).find((slot) => /Серверы:/.test(slot));
-  assert.match(health, /🟢 <b>AST<\/b>\n/);
-  assert.match(health, /🔴 BAAS — не отвечает\n/);
+  // The one that fell over while another was selected is the one somebody
+  // needs to see here: first, and with Veeam's or the network's own words.
+  const health = healthOf(w);
+  assert.ok(health.startsWith('🟡 <b>1 из 2 серверов в порядке</b>\n\n🔴 <b>BAAS</b> — не отвечает\n<i>'), health);
+  assert.match(health, /ECONNREFUSED/u);
+  assert.match(health, /^🟢 <b>AST<\/b> · 1 задание · <i>показан в темах<\/i>$/mu);
+});
+
+test('the health counts the servers that are fine, and puts the ones in trouble first, saying why', () => {
+  const { renderHealth } = require('../dist/live/format');
+  const clock = { now: new Date('2026-10-06T03:47:00+05:00'), timezone: 'Asia/Qyzylorda' };
+  const server = (name, over = {}) => ({ name, selected: false, reachable: true, authenticated: true, jobs: 10, ...over });
+  const health = (servers) => renderHealth({
+    reachable: true, authenticated: true, serverUrl: 'https://veeam01.example.com:9419',
+    trackedJobs: 112, intervalMs: 60_000, servers,
+  }, clock);
+
+  const locked = 'Your account has been locked out for 00:30:00 due to repeated failed log-in attempts. Следующая попытка входа — через 31 мин.';
+  const text = health([
+    server('veeam01', { selected: true, jobs: 112, address: '192.0.2.10' }),
+    server('veeam02', { jobs: 1 }),
+    server('veeam04', { authenticated: false, error: locked, address: '198.51.100.20' }),
+    server('veeam05', { reachable: null, authenticated: null, jobs: undefined }),
+  ]);
+  const [headline, list, addresses] = text.split('\n\n');
+  assert.equal(headline, '🟡 <b>2 из 4 серверов в порядке</b>');
+  assert.deepEqual(list.split('\n'), [
+    '🔴 <b>veeam04</b> — вход не выполнен',
+    `<i>${locked}</i>`,
+    '🟢 <b>veeam01</b> · 112 заданий · <i>показан в темах</i>',
+    '🟢 <b>veeam02</b> · 1 задание',
+    '⚪ <b>veeam05</b> — ещё не опрошен',
+  ]);
+  assert.equal(addresses, '<b>Адреса:</b>\nveeam01 — <code>192.0.2.10</code>\nveeam04 — <code>198.51.100.20</code>');
+
+  const headlineOf = (servers) => health(servers).split('\n')[0];
+  assert.equal(headlineOf([server('a'), server('b'), server('c')]), '🟢 <b>Все 3 сервера в порядке</b>');
+  assert.equal(headlineOf([server('a'), server('b')]), '🟢 <b>Оба сервера в порядке</b>');
+  assert.equal(
+    headlineOf([server('a'), server('b', { reachable: null, authenticated: null })]),
+    '🟢 <b>1 из 2 серверов в порядке, 1 ещё не опрошен</b>',
+  );
+  assert.equal(headlineOf([server('a', { reachable: false }), server('b', { reachable: false })]), '🔴 <b>0 из 2 серверов в порядке</b>');
+  assert.ok(!/Адреса/u.test(health([server('a'), server('b')])), 'no addresses resolved, no list of them');
 });
 
 test('the menu under the input field turns into the servers, and a server\'s key switches the slots to it', async () => {
@@ -256,9 +301,12 @@ test('the menu under the input field turns into the servers, and a server\'s key
   assert.equal(switched.reply_parameters.message_id, baas.id);
   assert.equal(w.store.selectedServer(), 'baas');
 
-  const slots = w.api.of('editMessageText');
+  const edits = w.api.of('editMessageText').map((edit) => edit.text);
+  const health = edits.filter((text) => /^\S+ <b>(Оба|Все|\d+ из \d+) сервер/u.test(text)).at(-1);
+  const slots = edits.filter((text) => text !== health);
   assert.ok(slots.length > 0, 'the live slots were redrawn');
-  for (const slot of slots) assert.ok(slot.text.startsWith('🖥 <b>BAAS</b>\n\n'), slot.text);
+  for (const slot of slots) assert.ok(slot.startsWith('🖥 <b>BAAS</b>\n\n'), slot);
+  assert.match(health, /^🟢 <b>BAAS<\/b> · 2 задания · <i>показан в темах<\/i>$/mu, 'and 🩺 says which is shown');
   assert.ok(w.veeamBaas.paths().includes('/api/v1/restorePoints'), 'and BAAS is scanned now');
 });
 

@@ -120,7 +120,12 @@ export class LiveSnapshotsService {
     const name = cycle.server.name;
     return pages.map(({ slot, content }) => ({
       slot,
-      content: Array.isArray(content) ? content.map((page) => headed(name, page)) : headed(name, content),
+      // 🩺 is about every server and names each itself; the name of one on
+      // top would say it is about that one only.
+      content:
+        slot === 'health' ? content
+        : Array.isArray(content) ? content.map((page) => headed(name, page))
+        : headed(name, content),
     }));
   }
 
