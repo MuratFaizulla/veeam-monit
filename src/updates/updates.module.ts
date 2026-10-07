@@ -3,6 +3,7 @@ import { MonitorModule } from '../monitor/monitor.module';
 import { TelegramAdminGuard, TelegramEnabledGuard, TelegramWebhookGuard } from './access.guard';
 import { TelegramChatAccess } from './chat-access';
 import { TelegramCommandsService } from './commands.service';
+import { TelegramGeneral } from './general';
 import { TelegramController } from './telegram.controller';
 import { TelegramModule } from '../telegram/telegram.module';
 import { TelegramUpdatesService } from './updates.service';
@@ -18,7 +19,8 @@ import { TelegramUpdatesService } from './updates.service';
  *
  * Inside, hearing and interpreting are two providers: `TelegramUpdatesService`
  * is how an Update arrives, `TelegramCommandsService` what it means. Only the
- * second asks the monitor.
+ * second asks the monitor. What is said in General, the menu kept there and
+ * /clear are `TelegramGeneral`'s, which both use.
  */
 @Module({
   imports: [TelegramModule, MonitorModule],
@@ -26,6 +28,7 @@ import { TelegramUpdatesService } from './updates.service';
   providers: [
     TelegramUpdatesService,
     TelegramCommandsService,
+    TelegramGeneral,
     TelegramChatAccess,
     TelegramAdminGuard,
     TelegramWebhookGuard,

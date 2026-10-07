@@ -12,6 +12,7 @@ const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
 const { TelegramUpdatesService } = require('../dist/updates/updates.service');
 const { TelegramCommandsService } = require('../dist/updates/commands.service');
+const { TelegramGeneral } = require('../dist/updates/general');
 const { TelegramChatAccess } = require('../dist/updates/chat-access');
 const { announcement, probe } = require('../dist/updates/manual-event');
 const {
@@ -126,25 +127,27 @@ function world(env = {}, handlers = {}, stateFile) {
   // The second adapter of the Monitor seam (src/monitor/monitor.ts), for tests
   // with no Veeam: it says it ran and reports nothing. monitorWorld swaps in
   // the real one below.
-  const { commands, updates } = ear({ config, transport, topics, store }, idleMonitor());
+  const { commands, updates, general } = ear({ config, transport, topics, store }, idleMonitor());
   const live = new TelegramLiveService(config, transport, topics, store);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
   return {
-    file, app, config, store, api, transport, topics, routing, service, commands, updates, live, telegram,
+    file, app, config, store, api, transport, topics, routing, service, commands, updates, general, live, telegram,
   };
 }
 
 /**
- * Intake and the commands it hands Updates to, asking `monitor`. Tests reach
+ * Intake and the commands it hands Updates to, asking `monitor`, and General,
+ * which both use. Tests reach
  * both through `updates.handleUpdate`, as Telegram does; `commands` is there
  * for a test of interpretation with no intake at all.
  */
 function ear(w, monitor) {
-  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor);
+  const general = new TelegramGeneral(w.transport, w.store);
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor, general);
   const access = new TelegramChatAccess(w.config, w.transport);
-  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands, access);
-  return { commands, updates };
+  const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands, access, general);
+  return { commands, updates, general };
 }
 
 /** A Monitor with nothing behind it. Kept in step with MonitorService by a test. */
@@ -276,8 +279,8 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   const evidence = evidenceOf(w, veeam, auth);
   const monitor = monitorOf(w, veeam, auth, evidence);
   // The real monitor, so /check in these tests drives a real cycle.
-  const { commands, updates } = ear(w, monitor);
-  return { ...w, commands, updates, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
+  const { commands, updates, general } = ear(w, monitor);
+  return { ...w, commands, updates, general, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });
@@ -340,7 +343,7 @@ module.exports = {
   CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, monitorWorld, job, exchange,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
-  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramChatAccess,
+  TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramGeneral, TelegramChatAccess,
   TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf, jobReadsOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,

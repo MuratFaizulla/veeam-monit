@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { TelegramChatAccess } from './chat-access';
+import { TelegramGeneral } from './general';
 import { BOT_COMMANDS } from './commands';
 import { TelegramCommandsService } from './commands.service';
 import { TelegramStateStore } from '../telegram/state.store';
@@ -42,6 +43,7 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     private readonly store: TelegramStateStore,
     private readonly commands: TelegramCommandsService,
     private readonly access: TelegramChatAccess,
+    private readonly general: TelegramGeneral,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -53,11 +55,11 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
     await Promise.all(this.store.chats().map(([id]) => this.refreshChat(id)));
     await this.publishCommands();
-    await this.commands.keepMenu();
+    await this.general.keepMenu();
     // Looked at again as often as a live slot's heartbeat, so a menu deleted
     // by hand is back within the same few minutes as a deleted live message.
     clearInterval(this.menuTimer);
-    this.menuTimer = setInterval(() => void this.commands.keepMenu(), this.config.liveRefreshMs);
+    this.menuTimer = setInterval(() => void this.general.keepMenu(), this.config.liveRefreshMs);
     this.menuTimer.unref?.();
 
     if (this.config.webhookUrl) {

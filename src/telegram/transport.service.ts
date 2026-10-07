@@ -178,6 +178,21 @@ export class TelegramTransportService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Deletes one message, and says whether it is gone — gone already counts:
+   * deleted by somebody, or with its topic, is what was wanted. False is an
+   * answer, not a failure: older than Telegram lets a bot delete, not the
+   * bot's to delete, or the call itself failed. Never throws.
+   */
+  async deleteMessage(chatId: string, messageId: number): Promise<boolean> {
+    try {
+      await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+      return true;
+    } catch (error) {
+      return error instanceof TelegramApiError && error.isMessageGone;
+    }
+  }
+
   private queueFor(chatId: string): ChatQueue {
     let queue = this.queues.get(chatId);
     if (!queue) {

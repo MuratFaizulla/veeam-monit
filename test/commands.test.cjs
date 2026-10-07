@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CHAT, world, idleMonitor, TelegramCommandsService, TelegramUpdatesService, TelegramChatAccess,
+  CHAT, world, idleMonitor, TelegramCommandsService, TelegramGeneral, TelegramUpdatesService, TelegramChatAccess,
 } = require('./world.cjs');
 const { COMMANDS, BOT_COMMANDS } = require('../dist/updates/commands');
 
@@ -122,7 +122,7 @@ test('a command is answered with no polling loop or webhook anywhere near it', a
   // all. When interpretation lived in the class that owns the polling loop, a
   // test that started that class on a world like this never finished.
   const w = world();
-  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor());
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor(), new TelegramGeneral(w.transport, w.store));
 
   await commands.answer({
     update_id: 1,
@@ -313,4 +313,27 @@ test('every Telegram endpoint carries a key guard: the webhook Telegram\'s, the 
     const expected = name === 'webhook' ? TelegramWebhookGuard : TelegramAdminGuard;
     assert.ok(guards.includes(expected), `${name} is guarded by ${expected.name}`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * General: what was said there, the menu kept there, and taking it back
+ * ------------------------------------------------------------------ */
+
+test('General takes back what was heard and said in it, and counts what would not go', async () => {
+  const refused = { ok: false, error_code: 400, description: "Bad Request: message can't be deleted for everyone" };
+  const w = world({}, {
+    // One message the bot may not delete fails the whole batch, and the rest
+    // go one at a time.
+    deleteMessages: () => refused,
+    deleteMessage: (payload) => (payload.message_id === 12 ? refused : undefined),
+  });
+  const chat = { id: Number(CHAT), type: 'supergroup' };
+  w.general.heard({ message_id: 11, chat });
+  w.general.heard({ message_id: 12, chat });
+  const answer = await w.general.say({ chatId: CHAT }, { lines: ['ответ'] });
+
+  // 11 is the "/clear" itself: taken back, not counted.
+  assert.deepEqual(await w.general.clear({ chatId: CHAT }, 11), { removed: 1, stuck: 1 });
+  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id).sort((a, b) => a - b), [11, 12, answer]);
+  assert.equal(await w.general.clear({ chatId: CHAT }), 'nothing', 'what was tried is not tried again');
 });

@@ -299,6 +299,12 @@ so a stranger who pressed Start was sent every alert from then on. Owned by
 
 Intake is owned by `src/updates/updates.service.ts`; commands and Buttons by
 `src/updates/commands.service.ts`, declared in `src/updates/commands.ts`.
+**General** — what was said there, the **Menu** kept under its input field,
+and `/clear` taking it back — is `src/updates/general.ts`, which both use.
+It used to be lodged in the commands module: a timer keeping the menu, in a
+module that said nothing in it had a lifecycle, and a deletion protocol of
+its own beside the live module's copy. Deleting one message, gone already
+counting as gone, is the transport's (`deleteMessage`), for both.
 
 ## Attempt
 
@@ -666,9 +672,9 @@ and "/status" with nothing after them.
 It exists because the Bot API offers no way to clear a chat: a bot can delete a
 message only by id, cannot enumerate history, and loses the right after 48
 hours. The set it can ever remove is therefore exactly the set it wrote down as
-it went. Three places write: the commands module for what is said in General
-and what it answers there, and the notifier for an event that landed in
-General. An alert in its topic and a **Live slot** message are never written,
+it went. Two places write: **General** (`src/updates/general.ts`) for what
+is said there and what the commands answer, and the notifier for an event
+that landed in General. An alert in its topic and a **Live slot** message are never written,
 so they are out of reach rather than excluded by a rule somebody has to
 remember.
 

@@ -128,7 +128,7 @@ export class TelegramLiveService {
       const ref = this.store.liveMessages.of(chatId, key);
       if (!ref) return left;
       this.store.liveMessages.forget(chatId, key);
-      if (!(await this.remove(chatId, ref.messageId))) left.push(ref.messageId);
+      if (!(await this.transport.deleteMessage(chatId, ref.messageId))) left.push(ref.messageId);
     }
   }
 
@@ -159,7 +159,7 @@ export class TelegramLiveService {
     const previous = held && !repost && !this.expired(held) ? held : undefined;
     if (held && !previous) {
       this.store.liveMessages.forget(chatId, key);
-      await this.remove(chatId, held.messageId);
+      await this.transport.deleteMessage(chatId, held.messageId);
     }
 
     // Unchanged content is not rewritten, or a bot that is merely alive would
@@ -200,7 +200,7 @@ export class TelegramLiveService {
       // chat for good, and only a person can clear it. Said out loud rather
       // than swallowed, because the alternative is somebody reading a stale
       // status for weeks and nobody knowing why it is there.
-      if (!(await this.remove(chatId, current.messageId))) {
+      if (!(await this.transport.deleteMessage(chatId, current.messageId))) {
         this.logger.warn(
           `Live "${slot}" left message ${current.messageId} behind in chat ${chatId}: ` +
             'Telegram refused both the edit and the deletion, so it must be removed by hand',
@@ -286,21 +286,6 @@ export class TelegramLiveService {
     const configured = fixedThread ? this.config[fixedThread] : 0;
     const thread = configured > 0 ? configured : remembered ?? 0;
     return this.topics.send(chat, this.config.liveTopics[slot], text, thread);
-  }
-
-  /**
-   * Best effort: an orphaned status message is noise, not a failure. True when
-   * the message is no longer in the chat — including when it was already gone,
-   * deleted by somebody or together with its topic, which is what was wanted.
-   */
-  private async remove(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
-      return true;
-    } catch (error) {
-      /* older than Telegram lets a bot delete, or the call itself failed */
-      return error instanceof TelegramApiError && error.isMessageGone;
-    }
   }
 
   /**

@@ -4,23 +4,15 @@ import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
 import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
-import { escapeHtml, truncate } from '../telegram/format';
+import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
-import {
-  isMenu,
-  isSelective,
-  mainMenu,
-  MENU_SIGNATURE,
-  MENU_TEXT,
-  menuPressed,
-  Pressed,
-  serverMenu,
-} from './menu';
+import { mainMenu, MENU_TEXT, menuPressed, Pressed, serverMenu } from './menu';
 import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
-import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
+import { TelegramTransportService } from '../telegram/transport.service';
 import { Access } from './chat-access';
+import { TelegramGeneral } from './general';
 import {
   TelegramCallbackQuery,
   TelegramChat,
@@ -44,9 +36,6 @@ const READ_COOLDOWN_KEY = 'command:read';
 /** What somebody setting the bot up types to learn the chat's id. */
 const SETUP_WORDS = ['/chatid', '/start', '/status'];
 
-/** Telegram takes at most 100 message ids in one deleteMessages call. */
-const DELETE_BATCH = 100;
-
 type ButtonRow = Array<[string, Action]>;
 
 /** Offered under a list of jobs, so the way back is never retyping a command. */
@@ -62,7 +51,8 @@ const REFRESH_SUMMARY_BUTTON: ButtonRow = [['🔄 Обновить', { kind: 'su
  * webhook, the long-polling loop, the startup calls. With both in one class, a
  * test of a command had to construct the class that owns the polling loop, and
  * one that started it on a polling world hung the whole test run. Nothing here
- * has a lifecycle: construct it and hand it Updates.
+ * has a lifecycle: construct it and hand it Updates. What is said in General,
+ * the menu kept there and `/clear` are General's (`./general`).
  *
  * `answer` is the interface. The `Answers` methods are public only because
  * the declaration in `./commands` dispatches to them.
@@ -78,6 +68,7 @@ export class TelegramCommandsService implements Answers {
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
     @Inject(MONITOR) private readonly monitor: Monitor,
+    private readonly general: TelegramGeneral,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -102,7 +93,7 @@ export class TelegramCommandsService implements Answers {
   private async untilConfigured(message: TelegramMessage | undefined): Promise<void> {
     const word = message?.text?.trim().split(/\s/)[0].toLowerCase().split('@')[0];
     if (!message || !word || !SETUP_WORDS.includes(word)) return;
-    await this.send(this.whereAnswered({ chat: message.chat, argument: '' }), {
+    await this.general.say(this.whereAnswered({ chat: message.chat, argument: '' }), {
       lines: [
         '🤖 <b>Бот ещё не настроен</b>',
         '',
@@ -114,12 +105,7 @@ export class TelegramCommandsService implements Answers {
 
   private async typed(message: TelegramMessage): Promise<void> {
     if (!this.isGeneral(message.chat, message)) return;
-    const chatId = String(message.chat.id);
-    // Everything said in General, by anybody, so /clear can take it back: the
-    // commands people type, the keys they press, and whatever else. Only the
-    // bot's answers were written down once, and "/clear" left a column of
-    // "/digest" and "/status" with nothing after them.
-    if (this.store.isConfigured(chatId)) this.store.answerLog.remember(chatId, message.message_id);
+    this.general.heard(message);
     const text = message.text?.trim() ?? '';
 
     // A key of the menu under the input field arrives as its label, as if it
@@ -127,7 +113,7 @@ export class TelegramCommandsService implements Answers {
     const key = menuPressed(text, this.monitor.servers());
     if (key) {
       const asked: Asked = { chat: message.chat, argument: '', messageId: message.message_id };
-      await this.send(this.whereAnswered(asked), await this.keyed(key, asked), message.message_id);
+      await this.general.say(this.whereAnswered(asked), await this.keyed(key, asked), message.message_id);
       return;
     }
 
@@ -145,7 +131,7 @@ export class TelegramCommandsService implements Answers {
       argument: gap === -1 ? '' : text.slice(gap + 1).trim(),
       messageId: message.message_id,
     };
-    await this.send(this.whereAnswered(asked), await command.answer(this, asked), message.message_id);
+    await this.general.say(this.whereAnswered(asked), await command.answer(this, asked), message.message_id);
   }
 
   /** A key of the menu: one that stands for a command, the way back, or a server's. */
@@ -190,7 +176,7 @@ export class TelegramCommandsService implements Answers {
 
     const asked: Asked = { chat: message.chat, argument: '' };
     const answer = await this.act(action, asked);
-    if (answer) await this.send(this.whereAnswered(asked), answer);
+    if (answer) await this.general.say(this.whereAnswered(asked), answer);
   }
 
   /**
@@ -241,49 +227,6 @@ export class TelegramCommandsService implements Answers {
   /** `/menu` — the menu under the input field, for everybody in the chat. */
   menu(): Reply {
     return { lines: MENU_TEXT, markup: mainMenu() };
-  }
-
-  /**
-   * Keeps the menu under the input field of every chat, and is called on
-   * start and then every few minutes.
-   *
-   * In a group nobody presses Start: the bot was added once, by one person, and
-   * a menu that waited to be asked for would never be seen. The keyboard lives
-   * as long as the message that put it there, and that message used to be
-   * posted once and forgotten — so deleting it, by hand or with the topic it
-   * was answered in, took the menu away for good. The message is remembered
-   * now and looked at, and posted again only when Telegram says it is gone or
-   * the layout changed; a restart, or a failed look, says nothing.
-   */
-  async keepMenu(): Promise<void> {
-    for (const [chatId] of this.store.chats()) {
-      const held = this.store.menuOf(chatId);
-      const current = held?.signature === MENU_SIGNATURE ? held.messageId : undefined;
-      if (current !== undefined && (await this.present(chatId, current))) continue;
-      const posted = await this.send({ chatId }, this.menu());
-      // A menu of an older layout is replaced, not left beside the new one.
-      if (posted !== undefined && held?.messageId !== undefined && held.messageId !== current) {
-        await this.removeOne(chatId, held.messageId);
-      }
-    }
-  }
-
-  /**
-   * Whether Telegram still holds this message, asked without changing it.
-   *
-   * An empty markup edit is refused for a message that is there — "not
-   * modified", or "can't be edited" for one that carries the menu — and
-   * answered "not found" for one that is gone. Anything else says nothing
-   * about the message and is read as "still there": the cost of that mistake
-   * is one late repost, and the cost of the other is a second menu.
-   */
-  private async present(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.transport.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId });
-      return true;
-    } catch (error) {
-      return !(error instanceof TelegramApiError && error.isMessageGone);
-    }
   }
 
   /**
@@ -356,34 +299,6 @@ export class TelegramCommandsService implements Answers {
   }
 
   /**
-   * `asked` is the message being answered. A menu for one person must reply to
-   * it, which is how Telegram knows whose keyboard to change.
-   */
-  private async send(destination: TelegramDestination, answer: Reply, asked?: number): Promise<number | undefined> {
-    try {
-      // Cut to Telegram's limit rather than rejected by it: a job card is
-      // bounded, but a forum with a hundred topics is not.
-      const messageId = await this.transport.sendMessage(
-        destination,
-        truncate(answer.lines.join('\n')),
-        answer.markup,
-        isSelective(answer.markup) ? asked : undefined,
-      );
-      // Every answer, the ones carrying the menu too: /clear ends by putting
-      // the menu back, so taking an old one away no longer takes the keyboard.
-      this.store.answerLog.remember(destination.chatId, messageId, destination.threadId);
-      // The newest menu for everybody is the one kept under the input field.
-      if (isMenu(answer.markup) && !isSelective(answer.markup) && this.store.isConfigured(destination.chatId)) {
-        this.store.rememberMenu(destination.chatId, MENU_SIGNATURE, messageId);
-      }
-      return messageId;
-    } catch (error) {
-      this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
-      return undefined;
-    }
-  }
-
-  /**
    * `/clear` — empty General of everything said there, and put the menu back.
    *
    * Not the whole chat: the Bot API has no such thing. A bot may delete a
@@ -399,14 +314,9 @@ export class TelegramCommandsService implements Answers {
    * what went, and the keyboard lives as long as the message that put it there.
    */
   async clear(asked: Asked): Promise<Reply> {
-    const where = this.whereAnswered(asked);
     // The "/clear" itself goes too, but is not counted as work done.
-    const ids = this.store.answerLog.inTopic(where.chatId, where.threadId).filter((id) => id !== asked.messageId);
-    if (asked.messageId !== undefined) {
-      await this.removeOne(where.chatId, asked.messageId);
-      this.store.answerLog.forget(where.chatId, [asked.messageId]);
-    }
-    if (ids.length === 0) {
+    const cleared = await this.general.clear(this.whereAnswered(asked), asked.messageId);
+    if (cleared === 'nothing') {
       return {
         lines: [
           '🧹 <b>Нечего убирать</b>',
@@ -418,9 +328,7 @@ export class TelegramCommandsService implements Answers {
       };
     }
 
-    const removed = await this.removeAll(where.chatId, ids);
-    this.store.answerLog.forget(where.chatId, ids);
-    const stuck = ids.length - removed;
+    const { removed, stuck } = cleared;
     return {
       lines: [
         `🧹 <b>Убрано ${removed} ${plural(removed, 'сообщение', 'сообщения', 'сообщений')}</b>`,
@@ -432,36 +340,6 @@ export class TelegramCommandsService implements Answers {
       ],
       markup: mainMenu(),
     };
-  }
-
-  /** Deletes in batches, falling back to one at a time. Returns how many went. */
-  private async removeAll(chatId: string, ids: number[]): Promise<number> {
-    let removed = 0;
-    for (let from = 0; from < ids.length; from += DELETE_BATCH) {
-      const batch = ids.slice(from, from + DELETE_BATCH);
-      try {
-        await this.transport.call('deleteMessages', { chat_id: chatId, message_ids: batch });
-        removed += batch.length;
-      } catch {
-        // One undeletable message — too old, or already gone — fails the whole
-        // batch, so the rest is retried individually rather than abandoned.
-        for (const messageId of batch) {
-          if (await this.removeOne(chatId, messageId)) removed += 1;
-        }
-      }
-    }
-    return removed;
-  }
-
-  /** True when the message is gone, including gone already. False is an answer, not a failure. */
-  private async removeOne(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
-      return true;
-    } catch (error) {
-      /* too old, or the bot may not delete other people's messages here */
-      return error instanceof TelegramApiError && error.isMessageGone;
-    }
   }
 
   /** Best effort: an unacknowledged press only ever leaves a spinner behind. */

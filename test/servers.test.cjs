@@ -469,21 +469,21 @@ test('the menu comes back by itself when its message is deleted, and only then',
   });
   const menus = () => w.api.sent().filter((message) => message.reply_markup?.keyboard);
 
-  await w.commands.keepMenu();
+  await w.general.keepMenu();
   assert.equal(menus().length, 1, 'posted when the chat has none');
   const first = w.store.menuOf(CHAT).messageId;
 
   for (const state of ['there', 'flaky']) {
     answer = state;
     w.api.reset();
-    await w.commands.keepMenu();
+    await w.general.keepMenu();
     assert.deepEqual(menus(), [], `${state}: left alone`);
     assert.equal(w.store.menuOf(CHAT).messageId, first);
   }
 
   answer = 'gone';
   w.api.reset();
-  await w.commands.keepMenu();
+  await w.general.keepMenu();
   assert.equal(menus().length, 1, 'deleted: posted again');
   assert.equal(menus()[0].reply_markup.selective, undefined, 'for everybody');
   assert.notEqual(w.store.menuOf(CHAT).messageId, first);
