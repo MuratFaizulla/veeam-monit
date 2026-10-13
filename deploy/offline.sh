@@ -38,7 +38,21 @@ if find "$work/app/node_modules" -name '*.node' | grep -q .; then
   exit 1
 fi
 cp deploy/Dockerfile.bundle "$work/app/Dockerfile"
-tar -czf "$work/app.tgz" -C "$work/app" Dockerfile package.json dist node_modules
+
+# The system packages the bot needs beyond Node.js, which the server cannot
+# fetch either: the browser that prints /repos. The base remembers in a label
+# what it was given, so they are fetched here and shipped once, not with every
+# version. ALPINE_MIRROR picks a faster mirror than the default.
+packages='chromium-headless-shell'
+held=$(ssh "$target" "docker image inspect -f '{{index .Config.Labels \"veeam-monit.packages\"}}' veeam-telegram-monitor:base 2>/dev/null" </dev/null || true)
+if [ "$held" != "$packages" ]; then
+  release=$(ssh "$target" 'docker run --rm --entrypoint cat veeam-telegram-monitor:local /etc/alpine-release' </dev/null)
+  installed=$(ssh "$target" 'docker run --rm --entrypoint apk veeam-telegram-monitor:local info' </dev/null | tr '\n' ' ')
+  echo "Fetching $packages for Alpine $release, once"
+  ALPINE_RELEASE="v${release%.*}" ALPINE_HAVE="$installed" node deploy/alpine-packages.cjs "$work/app/apk" $packages
+  echo "$packages" >"$work/app/apk/PACKAGES"
+fi
+tar -czf "$work/app.tgz" -C "$work/app" Dockerfile package.json dist node_modules $([ -d "$work/app/apk" ] && echo apk)
 
 echo "Shipping $rev to $target:$remote"
 # The code too, so the server's checkout says what runs there.
@@ -71,6 +85,17 @@ if ! docker image inspect veeam-telegram-monitor:base >/dev/null 2>&1; then
 fi
 
 tar -xzf "$bundle" -C "$build"
+
+# System packages shipped with this version go into the base, once. apk
+# checks each one's signature against the keys the image already holds.
+if [ -d "$build/apk" ]; then
+  printf 'FROM veeam-telegram-monitor:base\nUSER root\nCOPY *.apk /tmp/apk/\nRUN apk add --no-network --no-cache /tmp/apk/*.apk && rm -rf /tmp/apk\nUSER node\nLABEL veeam-monit.packages="%s"\n' \
+    "$(cat "$build/apk/PACKAGES")" >"$build/apk/Dockerfile"
+  docker tag veeam-telegram-monitor:base "veeam-telegram-monitor:base-before-$rev"
+  docker build -q -t veeam-telegram-monitor:base "$build/apk" >/dev/null
+  rm -rf "$build/apk"
+fi
+
 docker tag veeam-telegram-monitor:local "veeam-telegram-monitor:before-$rev"
 docker build -q -t veeam-telegram-monitor:local "$build" >/dev/null
 

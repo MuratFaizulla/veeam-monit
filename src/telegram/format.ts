@@ -46,13 +46,16 @@ export const renderEvent = (event: NotificationEvent): string => {
  * Cuts an over-long message at the last newline that still fits, so a trimmed
  * message never ends inside an HTML tag Telegram would then refuse to parse.
  */
-export const truncate = (text: string): string => {
-  if (text.length <= MAX_LENGTH) return text;
+export const truncate = (text: string, limit = MAX_LENGTH): string => {
+  if (text.length <= limit) return text;
   const suffix = '\n…';
-  const head = text.slice(0, MAX_LENGTH - suffix.length);
+  const head = text.slice(0, limit - suffix.length);
   const cut = head.lastIndexOf('\n');
-  return `${cut > MAX_LENGTH / 2 ? head.slice(0, cut) : head}${suffix}`;
+  return `${cut > limit / 2 ? head.slice(0, cut) : head}${suffix}`;
 };
+
+/** A file's caption is capped at 1024 characters, a quarter of a message. */
+export const CAPTION_LENGTH = 1024;
 
 /** Telegram forum topic names are capped at 128 characters. */
 export const topicName = (name: string): string => name.trim().slice(0, 128) || 'Veeam';

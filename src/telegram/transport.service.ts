@@ -66,9 +66,18 @@ export class TelegramApiError extends Error {
   }
 }
 
+/** A file to send, by name and contents. */
+export interface TelegramFile {
+  filename: string;
+  content: Buffer;
+}
+
 interface QueuedMessage {
   destination: TelegramDestination;
+  /** The message, or the caption of `document`. */
   text: string;
+  /** Sent as a file, `text` under it, rather than as a message. */
+  document?: TelegramFile;
   /** Buttons to hang under it, when the message is an answer worth acting on. */
   markup?: TelegramMarkup;
   /** The message this one answers, shown as a reply. */
@@ -150,7 +159,7 @@ export class TelegramTransportService implements OnModuleDestroy {
   async call<T>(method: string, payload: Record<string, unknown> = {}): Promise<T> {
     if (this.transport) return this.unwrap(method, await this.transport<T>(method, payload));
     if (!this.client) throw new Error('Telegram is not configured');
-    const response = await this.client.post<TelegramApiResponse<T>>(`/${method}`, payload);
+    const response = await this.client.post<TelegramApiResponse<T>>(`/${method}`, carriesFile(payload) ? formOf(payload) : payload);
     return this.unwrap(method, response.data);
   }
 
@@ -160,6 +169,30 @@ export class TelegramTransportService implements OnModuleDestroy {
     text: string,
     markup?: TelegramMarkup,
     replyTo?: number,
+  ): Promise<number> {
+    return this.enqueue(destination, text, undefined, markup, replyTo);
+  }
+
+  /**
+   * Queues a file, `caption` under it, behind the chat's messages and spaced
+   * like them; resolves with its message_id once Telegram took it.
+   */
+  sendDocument(
+    destination: TelegramDestination,
+    document: TelegramFile,
+    caption: string,
+    markup?: TelegramMarkup,
+    replyTo?: number,
+  ): Promise<number> {
+    return this.enqueue(destination, caption, document, markup, replyTo);
+  }
+
+  private enqueue(
+    destination: TelegramDestination,
+    text: string,
+    document: TelegramFile | undefined,
+    markup: TelegramMarkup | undefined,
+    replyTo: number | undefined,
   ): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       if (!this.enabled) {
@@ -173,7 +206,7 @@ export class TelegramTransportService implements OnModuleDestroy {
         queue.items.shift()?.reject(new Error('Telegram queue overflow'));
         this.dropped += 1;
       }
-      queue.items.push({ destination, text, markup, replyTo, attempts: 0, resolve, reject });
+      queue.items.push({ destination, text, document, markup, replyTo, attempts: 0, resolve, reject });
       void this.drain(destination.chatId);
     });
   }
@@ -212,19 +245,20 @@ export class TelegramTransportService implements OnModuleDestroy {
         if (wait > 0) await this.sleep(wait);
         const item = queue.items[0];
         try {
-          const message = await this.call<{ message_id: number }>('sendMessage', {
+          const common = {
             chat_id: item.destination.chatId,
             message_thread_id: item.destination.threadId,
-            text: item.text,
             parse_mode: 'HTML',
-            disable_web_page_preview: true,
             reply_markup: item.markup,
             // Sent anyway if the message it answers is gone by then.
             reply_parameters:
               item.replyTo === undefined
                 ? undefined
                 : { message_id: item.replyTo, allow_sending_without_reply: true },
-          });
+          };
+          const message = item.document
+            ? await this.call<{ message_id: number }>('sendDocument', { ...common, caption: item.text, document: item.document })
+            : await this.call<{ message_id: number }>('sendMessage', { ...common, text: item.text, disable_web_page_preview: true });
           queue.items.shift();
           queue.nextAt = Date.now() + this.config.sendIntervalMs;
           item.resolve(message.message_id);
@@ -292,3 +326,23 @@ export class TelegramTransportService implements OnModuleDestroy {
     });
   }
 }
+
+const isFile = (value: unknown): value is TelegramFile =>
+  typeof value === 'object' && value !== null && Buffer.isBuffer((value as TelegramFile).content);
+
+const carriesFile = (payload: Record<string, unknown>): boolean => Object.values(payload).some(isFile);
+
+/**
+ * A call that uploads a file goes as multipart form data, the only way the
+ * Bot API takes one: the file as a part of its own, every object field as
+ * JSON, everything else as text.
+ */
+const formOf = (payload: Record<string, unknown>): FormData => {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined) continue;
+    if (isFile(value)) form.append(key, new Blob([value.content]), value.filename);
+    else form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+  }
+  return form;
+};

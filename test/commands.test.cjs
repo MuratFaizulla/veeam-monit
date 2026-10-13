@@ -43,7 +43,7 @@ test('every declared command is in the menu and has a paragraph in /help', async
 
   assert.deepEqual(
     BOT_COMMANDS.map((entry) => entry.command),
-    ['status', 'menu', 'servers', 'digest', 'job', 'points', 'check', 'topics', 'clear', 'help'],
+    ['status', 'menu', 'servers', 'digest', 'job', 'points', 'repos', 'check', 'topics', 'clear', 'help'],
   );
   for (const { name } of COMMANDS) {
     assert.ok(BOT_COMMANDS.some((entry) => entry.command === name), `/${name} в меню`);
@@ -97,7 +97,8 @@ test('everything the menu offers is answered, and so are the hidden spellings', 
   for (const { command } of BOT_COMMANDS) {
     const w = world();
     await typed(w, `/${command}`);
-    assert.equal(w.api.sent().length, 1, `/${command} отвечен`);
+    // /repos answers with a file.
+    assert.equal(w.api.sent().length + w.api.of('sendDocument').length, 1, `/${command} отвечен`);
   }
 
   // Not in the menu, never in /help: /start is what Telegram sends on "Start",

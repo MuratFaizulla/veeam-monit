@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { truncate } from '../telegram/format';
+import { CAPTION_LENGTH, truncate } from '../telegram/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramDestination, TelegramMessage } from '../telegram/types';
@@ -55,12 +55,11 @@ export class TelegramGeneral {
     try {
       // Cut to Telegram's limit rather than rejected by it: a job card is
       // bounded, but a forum with a hundred topics is not.
-      const messageId = await this.transport.sendMessage(
-        destination,
-        truncate(reply.lines.join('\n')),
-        reply.markup,
-        isSelective(reply.markup) ? replyTo : undefined,
-      );
+      const text = reply.lines.join('\n');
+      const answering = isSelective(reply.markup) ? replyTo : undefined;
+      const messageId = reply.document
+        ? await this.transport.sendDocument(destination, reply.document, truncate(text, CAPTION_LENGTH), reply.markup, answering)
+        : await this.transport.sendMessage(destination, truncate(text), reply.markup, answering);
       // Every answer, the ones carrying the menu too: /clear ends by putting
       // the menu back, so taking an old one away no longer takes the keyboard.
       this.store.answerLog.remember(destination.chatId, messageId, destination.threadId);

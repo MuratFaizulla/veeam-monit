@@ -1,5 +1,6 @@
 import { escapeHtml } from '../telegram/format';
 import { Action, mainKeyboard } from './keyboard';
+import { TelegramFile } from '../telegram/transport.service';
 import { TelegramBotCommand, TelegramChat, TelegramMarkup } from '../telegram/types';
 
 /**
@@ -28,6 +29,8 @@ export interface Reply {
   lines: readonly string[];
   /** Buttons under the message, or the menu under the input field. */
   markup?: TelegramMarkup;
+  /** A file the answer is; `lines` are its caption. */
+  document?: TelegramFile;
 }
 
 /** The question a command or a Button put. */
@@ -53,6 +56,7 @@ export interface Answers {
   summary(): Promise<Reply>;
   job(name: string): Promise<Reply>;
   points(name: string): Promise<Reply>;
+  repositories(asked: Asked): Promise<Reply>;
   knownTopics(asked: Asked): Reply;
   clear(asked: Asked): Promise<Reply>;
 }
@@ -156,6 +160,17 @@ const DECLARED = [
       'Имя — как для <code>/job</code>: <code>/points exchange</code>. Без имени — те, кому нужно внимание.',
     ],
     answer: (answers, asked) => answers.points(asked.argument),
+  },
+  {
+    name: 'repos',
+    argument: '<имя>',
+    menu: 'Отчёт по репозиториям в PDF: /repos или /repos имя',
+    help: [
+      'отчёт по репозиториям всех серверов в PDF: место, кто пишет и когда,',
+      'нагрузка по часам, бэкапы без задачи, что сделать и куда ставить новую задачу.',
+      'С именем — один репозиторий: <code>/repos bkp03</code>. Первый раз собирается пару минут.',
+    ],
+    answer: (answers, asked) => answers.repositories(asked),
   },
   {
     name: 'check',

@@ -348,5 +348,10 @@ test('with nothing set, every setting has the default it has always had', () => 
       liveRefreshMs: 5 * 60_000,
       timezone: '',
     },
+    report: {
+      browser: '/usr/bin/chromium-headless-shell',
+      sites: [],
+      days: 14,
+    },
   });
 });

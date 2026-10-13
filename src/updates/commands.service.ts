@@ -288,6 +288,26 @@ export class TelegramCommandsService implements Answers {
     return this.reading(() => this.monitor.describePoints(name), SUMMARY_BUTTON);
   }
 
+  /**
+   * `/repos` — the Repository report as a PDF. A reading of every server takes
+   * a minute or two; while it does, the chat shows the bot sending a file, so
+   * the wait does not look like a bot that ignored the question.
+   */
+  async repositories(asked: Asked): Promise<Reply> {
+    const chatId = String(asked.chat.id);
+    const sending = () =>
+      void this.transport.call('sendChatAction', { chat_id: chatId, action: 'upload_document' }).catch(() => undefined);
+    sending();
+    // Telegram shows an action for five seconds.
+    const timer = setInterval(sending, 4_500);
+    timer.unref();
+    try {
+      return await this.reading(() => this.monitor.repositoryReport(asked.argument));
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
   knownTopics(asked: Asked): Reply {
     const known = this.topics.list(String(asked.chat.id));
     const lines = ['<b>Известные топики</b>'];
@@ -430,6 +450,8 @@ export class TelegramCommandsService implements Answers {
    */
   private offered(answer: Answer, tail: ButtonRow): Reply {
     const lines = [answer.text];
+    // A file is its own next step: nothing to press under it.
+    if (answer.document) return { lines, document: answer.document };
     const points = answer.about === 'points';
     if (answer.jobId) {
       const markup = points ? pointsKeyboard(answer.jobId, answer.server) : cardKeyboard(answer.jobId, answer.server);

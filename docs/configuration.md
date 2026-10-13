@@ -47,6 +47,14 @@ Every setting is made in `.env`; the full list with comments is in [.env.example
 | `TELEGRAM_DIGEST_HOUR` | `-1` | Hour of the daily digest; `-1` means none. `/digest` always works. |
 | `TELEGRAM_LIVE_REFRESH_MIN` | `5` | A live message is rewritten at least this often, even with nothing new: a frozen «Обновлено» ("updated") time means the monitor has stopped. The menu is checked as often. |
 
+## Repository report
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `REPORT_SITES` | none | Sites the report groups the repositories by, in the order shown: `Main,Branch=BR*\|DR*`. A site lists the patterns of its repository names (case-insensitive, `*` for anything); one site may list none and takes every repository the others do not. «Where to put a new job» is said per site. |
+| `REPORT_DAYS` | `14` | Days of sessions the report covers, from 1 to 60. |
+| `REPORT_BROWSER` | `/usr/bin/chromium-headless-shell` | The headless Chromium that prints the PDF. The image carries it; outside the image, point it at a Chromium, Chrome or Edge. |
+
 ## Live topics, topic names, files
 
 | Variable | Default | Purpose |

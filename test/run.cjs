@@ -10,6 +10,7 @@ require('./live-repositories.test.cjs');
 require('./veeam.test.cjs');
 require('./reader.test.cjs');
 require('./runs.test.cjs');
+require('./repository-report.test.cjs');
 require('./topics.test.cjs');
 require('./alerts.test.cjs');
 require('./config.test.cjs');

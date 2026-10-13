@@ -30,6 +30,7 @@ const { VeeamInventoryService } = require('../dist/veeam/inventory.service');
 const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
 const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
+const { RepositoryReports } = require('../dist/estate/repository-reports');
 
 const CHAT = '-1001234567890';
 /** The key of the one server a world has: named after its host, https://localhost:9419. */
@@ -85,7 +86,7 @@ function fakeBotApi(handlers = {}) {
     if (method === 'createForumTopic') {
       return { ok: true, result: { message_thread_id: (thread += 1), name: payload.name } };
     }
-    if (method === 'sendMessage') return { ok: true, result: { message_id: (message += 1) } };
+    if (method === 'sendMessage' || method === 'sendDocument') return { ok: true, result: { message_id: (message += 1) } };
     return { ok: true, result: true };
   };
   return {
@@ -163,6 +164,7 @@ function idleMonitor() {
     describeJobById: async (id, server) => ({ text: `карточка ${id}`, jobId: id, server }),
     describePoints: async (query) => ({ text: `точки ${query}`, about: 'points' }),
     describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
+    repositoryReport: async (query) => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
       trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
@@ -256,10 +258,26 @@ function jobReadsOf({ sessions = [], machines = {}, configuration } = {}) {
   return reads;
 }
 
+/**
+ * What prints the Repository report in a world: no browser, every page kept to
+ * be looked at, and a PDF that is the length of the page.
+ */
+function printerOf() {
+  const printer = {
+    pages: [],
+    async print(html) {
+      printer.pages.push(html);
+      return Buffer.from(`%PDF-${html.length}`);
+    },
+  };
+  return printer;
+}
+
 /** A monitor watching several servers, the first of them selected until one is chosen. */
-function monitorOfServers(w, servers) {
+function monitorOfServers(w, servers, printer = printerOf()) {
+  const reports = new RepositoryReports(w.config, { all: servers }, printer);
   return new MonitorService(
-    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config),
+    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports,
   );
 }
 
@@ -344,7 +362,7 @@ module.exports = {
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramGeneral, TelegramChatAccess,
-  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf, jobReadsOf,
+  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf, jobReadsOf, printerOf, RepositoryReports,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

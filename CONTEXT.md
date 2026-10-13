@@ -197,6 +197,36 @@ zero.
 Owned by `src/estate/repository-capacity.ts`. The 💾 slot renders what
 it is given, like every other live slot.
 
+## Repository report
+
+Every repository of every server, as one PDF `/repos` sends: how full it is,
+what writes to it and when, how many jobs write at once hour by hour, what is
+wrong and what to do, and where a new job fits.
+
+A repository here is the **folder**, not Veeam's object. One share attached to
+four servers is four repositories to Veeam and one disk to everybody else, so
+the attachments are grouped by the folder they point at, whatever address
+reaches it — and two attachments of one folder on one server, or one named
+after a share it does not point at, are said as settings that do not add up.
+A chain whose job is on another server is not an orphan; one no job on any
+server owns is, and its size is told in disk terms: an array that
+deduplicates holds more file bytes than it has disk.
+
+Errors are counted by **Runs**, the same rule as everywhere else; the hour by
+hour load counts attempts, because every attempt writes. A job **hangs** when
+it has been running more than six hours and three times its usual length.
+Moving a start is proposed only where the job's whole usual run stays inside
+the backup window, 18:00–07:00.
+
+Read on demand only — a few hundred requests across every server, whichever
+is selected — one reading at a time, kept for half an hour. A server that
+stops answering keeps what it said before it stopped. Printed by a headless
+Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
+
+What it says is `src/estate/repository-report.ts`, pure; reading and
+answering, `src/estate/repository-reports.ts`; the page,
+`src/estate/repository-report-page.ts`; printing, `src/estate/report-printer.ts`.
+
 ## Live slot
 
 A topic holding exactly one message, edited in place rather than appended to.

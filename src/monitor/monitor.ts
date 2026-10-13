@@ -75,6 +75,11 @@ export interface Monitor {
   describePoints(query: string): Promise<Answer>;
   /** A job's restore points for a Button that addressed it, as for `describeJobById`. */
   describePointsById(id: string, server?: string): Promise<Answer>;
+  /**
+   * The Repository report of every server as a PDF: every repository, or the
+   * ones `query` names. Read on demand and kept for half an hour.
+   */
+  repositoryReport(query: string): Promise<Answer>;
 }
 
 /** Nest's handle for `Monitor`: an interface leaves nothing at runtime to inject by. */

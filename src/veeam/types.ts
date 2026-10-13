@@ -130,6 +130,10 @@ export interface VeeamBackup {
   name?: string;
   jobId?: string;
   creationTime?: string;
+  /** The repository its files are on. */
+  repositoryId?: string;
+  /** `VMware`, `CloudDirector`, … — what kind of machines it holds. */
+  platformName?: string;
 }
 
 /**
@@ -266,6 +270,11 @@ export interface VeeamJob {
    * for 108 of its 111 jobs. Absent on the job types that have no storage.
    */
   storage?: VeeamJobStorage;
+  /**
+   * A replica's settings, on a job read by id: the repository its metadata is
+   * written to is the only one a replica job names.
+   */
+  jobSettings?: { metadataRepositoryId?: string };
   virtualMachines?: {
     includes?: VeeamJobObject[];
     excludes?: { vms?: VeeamJobObject[] };
@@ -288,6 +297,8 @@ export interface VeeamNamedResource {
 export interface VeeamRepositoryState {
   id?: string;
   name?: string;
+  /** `Smb`, `Nfs`, `WinLocal`, … */
+  type?: string;
   hostName?: string;
   path?: string;
   capacityGB?: number;

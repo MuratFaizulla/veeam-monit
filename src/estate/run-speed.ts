@@ -151,7 +151,8 @@ export const speedOf = (run: RunRecord): RunSpeed | undefined => {
   };
 };
 
-const loadOf = (log: string[]): Load | undefined => {
+/** How busy each stage was, from the titles of a session's log; the Repository report reads it too. */
+export const loadOf = (log: string[]): Load | undefined => {
   // The last one written: a session that was retried within itself says it again at the end.
   const match = [...log].reverse().map((line) => LOAD.exec(line)).find(Boolean);
   if (!match) return undefined;

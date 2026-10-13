@@ -936,7 +936,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'servers', 'status', 'topics'],
+    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'repos', 'servers', 'status', 'topics'],
   );
 });
 

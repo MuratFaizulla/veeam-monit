@@ -26,7 +26,11 @@ FROM node:22-alpine
 # The bot writes Russian dates in a named zone (TELEGRAM_TIMEZONE), and the
 # container's own clock is read whenever that is empty. Both need the zone
 # database, which the base image does not carry.
-RUN apk add --no-cache tzdata
+#
+# The headless Chromium prints the Repository report to PDF (/repos). It is
+# most of the image's size, and the one way to lay a report out in HTML and
+# CSS and get exactly that on paper.
+RUN apk add --no-cache tzdata chromium-headless-shell
 
 ENV NODE_ENV=production
 WORKDIR /app

@@ -15,4 +15,12 @@ export interface Answer {
    * job it was labelled with.
    */
   server?: string;
+  /** A file the answer is, with `text` as its caption: the Repository report's PDF. */
+  document?: AnswerDocument;
+}
+
+/** A file sent as an answer. */
+export interface AnswerDocument {
+  filename: string;
+  content: Buffer;
 }

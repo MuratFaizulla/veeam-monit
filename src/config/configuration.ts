@@ -114,7 +114,51 @@ export interface AppConfig {
     /** IANA zone used to render times for humans. Empty means the server's own. */
     timezone: string;
   };
+  /** The Repository report `/repos` sends. */
+  report: {
+    /**
+     * The headless Chromium the report is printed with. The image carries
+     * one; empty, or a path where there is none, and `/repos` says the PDF
+     * cannot be made instead of sending it.
+     */
+    browser: string;
+    /** What the repositories are grouped by, in the order the report shows them. */
+    sites: ReportSite[];
+    /** Days of sessions the report covers. */
+    days: number;
+  };
 }
+
+/**
+ * A site of the Repository report: the repositories whose names match one of
+ * its patterns. One site may have none, and takes every repository the
+ * others do not.
+ */
+export interface ReportSite {
+  name: string;
+  /** Case-insensitive, `*` for any run of characters. */
+  patterns: string[];
+}
+
+/**
+ * `REPORT_SITES`: comma-separated sites in the order shown, each a name, or a
+ * name and its patterns: `Main,Branch=BR*|DR*`.
+ */
+const sitesOf = (entries: string[], refuse: (message: string) => void): ReportSite[] => {
+  const sites = entries.map((entry) => {
+    const equals = entry.indexOf('=');
+    if (equals === -1) return { name: entry.trim(), patterns: [] };
+    return {
+      name: entry.slice(0, equals).trim(),
+      patterns: entry.slice(equals + 1).split('|').map((pattern) => pattern.trim()).filter(Boolean),
+    };
+  });
+  if (sites.filter((site) => !site.patterns.length).length > 1) {
+    refuse('REPORT_SITES may leave the patterns out of one site only: it takes every repository the others do not');
+  }
+  if (new Set(sites.map((site) => site.name.toLowerCase())).size < sites.length) refuse('REPORT_SITES names one site twice');
+  return sites;
+};
 
 /** One Veeam server, as configured. */
 export interface VeeamEndpoint {
@@ -174,6 +218,8 @@ const certificateIn = (file: string): PinnedCertificate | string => {
 const MINUTE = 60_000;
 
 const DEFAULT_VEEAM_URL = 'https://localhost:9419';
+
+const DEFAULT_BROWSER = '/usr/bin/chromium-headless-shell';
 
 /**
  * A Button carries the key and a job's 36-character id in Telegram's 64 bytes
@@ -439,6 +485,12 @@ export const readConfig = (env: Environment): AppConfig =>
         protectionFailureStreak: read.integer('TELEGRAM_PROTECTION_FAILURE_STREAK', 3, { min: 1 }),
         liveRefreshMs: read.integer('TELEGRAM_LIVE_REFRESH_MIN', 5, { min: 1 }) * MINUTE,
         timezone: read.text('TELEGRAM_TIMEZONE', '', { valid: isTimeZone, must: 'be a valid IANA time zone' }),
+      },
+      report: {
+        // Where Alpine's chromium-headless-shell puts it, in the image.
+        browser: read.text('REPORT_BROWSER', DEFAULT_BROWSER),
+        sites: sitesOf(read.list('REPORT_SITES', /^[^=]+(=[^=]+)?$/, 'site names, each with =patterns or without'), refuse),
+        days: read.integer('REPORT_DAYS', 14, { min: 1, max: 60 }),
       },
     };
   });
