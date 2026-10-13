@@ -40,10 +40,23 @@ const untar = (archive) => {
   return files;
 };
 
-const fetched = async (url) => {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${url}: ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+/**
+ * One file, asked again when the network drops it: a hundred and seventy
+ * downloads in a row are where a connection gets reset once.
+ */
+const fetched = async (url, attempts = 4) => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      const reason = error.cause?.code ?? error.message;
+      if (attempt === attempts) throw new Error(`${url}: ${reason}`);
+      console.error(`${url}: ${reason}, again`);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+  }
 };
 
 /** Every package of one repository of the release: name, version, size, what it needs and provides. */
