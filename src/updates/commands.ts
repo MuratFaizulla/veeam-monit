@@ -31,6 +31,12 @@ export interface Reply {
   markup?: TelegramMarkup;
   /** A file the answer is; `lines` are its caption. */
   document?: TelegramFile;
+  /**
+   * The Reply this one says is coming — a report that takes a minute or two
+   * to read and print. Made after this one is said, without holding up
+   * the next Update: they are answered one at a time.
+   */
+  later?: () => Promise<Reply>;
 }
 
 /** The question a command or a Button put. */
@@ -56,7 +62,7 @@ export interface Answers {
   summary(): Promise<Reply>;
   job(name: string): Promise<Reply>;
   points(name: string): Promise<Reply>;
-  repositories(asked: Asked): Promise<Reply>;
+  repositories(asked: Asked): Reply;
   knownTopics(asked: Asked): Reply;
   clear(asked: Asked): Promise<Reply>;
 }

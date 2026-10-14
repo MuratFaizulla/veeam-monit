@@ -41,12 +41,24 @@ const FLAGS = [
 @Injectable()
 export class ReportPrinter {
   private readonly browser: string;
+  /** The print before this one, done or not. */
+  private turn: Promise<unknown> = Promise.resolve();
 
   constructor(config: ConfigService) {
     this.browser = config.getOrThrow<AppConfig['report']>('report').browser;
   }
 
-  async print(html: string): Promise<Buffer> {
+  /**
+   * One browser at a time: a few hundred megabytes each, in a container of a
+   * gigabyte, and three people pressing a repository each in the same minute.
+   */
+  print(html: string): Promise<Buffer> {
+    const printed = this.turn.then(() => this.printed(html));
+    this.turn = printed.catch(() => undefined);
+    return printed;
+  }
+
+  private async printed(html: string): Promise<Buffer> {
     if (!this.browser) throw new Error('REPORT_BROWSER не задан — PDF собрать нечем.');
     try {
       await access(this.browser);

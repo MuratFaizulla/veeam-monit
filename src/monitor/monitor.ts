@@ -1,7 +1,9 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
 import { Answer } from '../estate/answer';
+import { ReportAhead, ReportChoice } from '../estate/repository-reports';
 
 export type { Answer } from '../estate/answer';
+export type { ReportAhead, ReportChoice } from '../estate/repository-reports';
 
 /** The Selected server's side of the monitor, with what it delivered overall. */
 export interface MonitorHealth {
@@ -80,6 +82,13 @@ export interface Monitor {
    * ones `query` names. Read on demand and kept for half an hour.
    */
   repositoryReport(query: string): Promise<Answer>;
+  /** The repositories the report can be asked for, in its order, as the cycles last saw them. */
+  repositoryChoices(): ReportChoice[];
+  /**
+   * What `repositoryReport(query)` will come to, known before it is read: a
+   * name that matches nothing, or whether it takes seconds or minutes.
+   */
+  repositoryReportAhead(query: string): ReportAhead;
 }
 
 /** Nest's handle for `Monitor`: an interface leaves nothing at runtime to inject by. */

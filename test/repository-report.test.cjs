@@ -326,20 +326,49 @@ const typed = (w, text) => w.updates.handleUpdate({
   message: { message_id: 50, message_thread_id: 1, is_topic_message: true, text, chat: FORUM },
 });
 
-const reposWorld = (env = {}) => {
-  const w = world({ REPORT_SITES: 'Main', ...env });
-  const { veeam, asked } = veeamServer();
-  const printer = printerOf();
-  const monitor = monitorOfServers(w, [serverOf(w, veeam)], printer);
-  const { updates } = ear(w, monitor);
-  return { ...w, updates, printer, asked };
+/** A key of the menu under the input field: its label arrives as a message of its own. */
+let keyId = 700;
+const keyed = async (w, label) => {
+  keyId += 1;
+  await w.updates.handleUpdate({
+    update_id: Math.floor(Math.random() * 1e6),
+    message: { message_id: keyId, message_thread_id: 1, is_topic_message: true, text: label, chat: FORUM },
+  });
+  return keyId;
 };
 
-test('/repos answers in General with the report as a PDF, and says so while it is read', async () => {
+const labels = (markup) => markup.keyboard.map((row) => row.map((key) => key.text));
+
+/** What the cycle needs on top of what the report reads. */
+const CYCLE = {
+  '/api/v1/jobs/states': { data: [] },
+  '/api/v1/restorePoints': { data: [] },
+};
+
+const reposWorld = (env = {}, routes = {}) => {
+  const w = world({ REPORT_SITES: 'Main', ...env });
+  const { veeam, asked } = veeamServer(Date.now(), { ...CYCLE, ...routes });
+  const printer = printerOf();
+  const monitor = monitorOfServers(w, [serverOf(w, veeam)], printer);
+  const { updates, commands } = ear(w, monitor);
+  return { ...w, updates, commands, monitor, printer, asked };
+};
+
+/** A command typed, and whatever it said was coming. */
+const answered = async (w, text) => {
+  await typed(w, text);
+  await w.commands.settled();
+};
+
+test('/repos says at once that the report is coming, then sends it as a PDF, showing it is being sent meanwhile', async () => {
   const w = reposWorld();
 
-  await typed(w, '/repos');
+  await answered(w, '/repos');
 
+  const [note] = w.api.sent();
+  assert.match(note.text, /^⏳ <b>Готовлю отчёт по всем репозиториям<\/b>\n\nСобираю данные со всех серверов Veeam — это 1–2 минуты\./);
+  const order = w.api.calls.map((call) => call.method);
+  assert.ok(order.indexOf('sendMessage') < order.indexOf('sendDocument'), 'сначала «готовлю», потом файл');
   assert.ok(w.api.of('sendChatAction').some((call) => call.action === 'upload_document'), 'видно, что бот отправляет файл');
   const [sent] = w.api.of('sendDocument');
   assert.ok(sent, 'отчёт отправлен файлом');
@@ -351,33 +380,103 @@ test('/repos answers in General with the report as a PDF, and says so while it i
   assert.match(w.printer.pages[0], /Состояние репозиториев/);
 });
 
-test('/repos with a name sends that repository alone; a name that matches none lists the names there are', async () => {
+test('while the report is read the bot answers everything else, and the PDF comes when it is ready', async () => {
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  const w = reposWorld({}, { '/api/v1/backups': async () => (await held, { data: [] }) });
+
+  await typed(w, '/repos');
+  await typed(w, '/menu');
+
+  assert.match(w.api.sent().at(-1).text, /Меню Veeam Monitor/, 'другая команда отвечена, пока отчёт читается');
+  assert.equal(w.api.of('sendDocument').length, 0);
+  release();
+  await w.commands.settled();
+  assert.equal(w.api.of('sendDocument').length, 1);
+});
+
+test('the 📄 key offers every repository by site, and a repository\'s key sends that one', async () => {
+  const w = reposWorld({ REPORT_SITES: 'Main,Branch=BR*' }, {
+    '/api/v1/backupInfrastructure/repositories/states': { data: [
+      repository('r1', 'NAS01_BKP01', '\\\\192.0.2.10\\NAS01_BKP01'),
+      repository('r2', 'BR_BACKUP', '\\\\198.51.100.7\\BR_BACKUP', { capacityTB: 40, freeTB: 30 }),
+    ] },
+  });
+
+  // Before the first cycle there is nothing to list but the whole report.
+  await keyed(w, '📄 Отчёт');
+  assert.match(w.api.sent().at(-1).text, /Список репозиториев появится после первой проверки/);
+
+  await w.monitor.check();
+  w.api.reset();
+  const pressed = await keyed(w, '📄 Отчёт');
+  const menu = w.api.sent().at(-1);
+  assert.equal(menu.text, [
+    '📄 <b>Отчёт по репозиториям</b>',
+    '',
+    '<b>Main</b>',
+    '🗄 BKP01 — свободно 40%',
+    '',
+    '<b>Branch</b>',
+    '🗄 BR — свободно 75%',
+    '',
+    'Выберите репозиторий кнопкой под полем ввода или «📚 Все репозитории».',
+    'PDF собирается 1–2 минуты, повторный в течение получаса — за секунды.',
+  ].join('\n'));
+  assert.deepEqual(labels(menu.reply_markup), [['📚 Все репозитории'], ['🗄 BKP01'], ['🗄 BR'], ['⬅️ На главную']]);
+  // Only for whoever pressed it, as the server menu is.
+  assert.equal(menu.reply_markup.selective, true);
+  assert.equal(menu.reply_parameters.message_id, pressed);
+
+  w.api.reset();
+  const chosen = await keyed(w, '🗄 BKP01');
+  const note = w.api.sent().at(-1);
+  assert.match(note.text, /^⏳ <b>Готовлю отчёт: BKP01<\/b>/);
+  assert.deepEqual(labels(note.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт'], 'и главное меню вернулось');
+  assert.equal(note.reply_parameters.message_id, chosen);
+  await w.commands.settled();
+  assert.match(w.api.of('sendDocument')[0].document.filename, /^Репозиторий BKP01 /);
+});
+
+test('a name that matches no repository is said at once, with the names there are, and nothing is read', async () => {
+  const w = reposWorld();
+  await w.monitor.check();
+  const reads = w.asked.length;
+  w.api.reset();
+
+  await answered(w, '/repos nothing');
+
+  assert.equal(w.api.sent().length, 1);
+  assert.match(w.api.sent()[0].text, /Репозитория «nothing» нет[\s\S]*Есть: BKP01\./);
+  assert.equal(w.api.of('sendDocument').length, 0);
+  assert.equal(w.asked.length, reads, 'Veeam ни о чём не спрошен');
+});
+
+test('/repos with a name sends that repository alone', async () => {
   const w = reposWorld();
 
-  await typed(w, '/repos bkp01');
+  await answered(w, '/repos bkp01');
+
+  // Before the first cycle has seen the repositories, the name as typed.
+  assert.match(w.api.sent()[0].text, /^⏳ <b>Готовлю отчёт: bkp01<\/b>/);
   const [one] = w.api.of('sendDocument');
   assert.match(one.document.filename, /^Репозиторий BKP01 /);
   assert.match(one.caption, /<b>BKP01<\/b> — /);
   assert.doesNotMatch(w.printer.pages[0], /Состояние репозиториев<\/h1>/);
-
-  w.api.reset();
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  w.store.cooldowns.clear('command:read');
-  await typed(w, '/repos nothing');
-  assert.equal(w.api.of('sendDocument').length, 0);
-  assert.match(w.api.sent().pop().text, /Репозитория «nothing» нет[\s\S]*Есть: BKP01\./);
 });
 
-test('a second /repos within half an hour draws the same reading instead of asking Veeam again', async () => {
+test('a second /repos within half an hour is a matter of seconds, and asks Veeam nothing', async () => {
   const w = reposWorld();
 
-  await typed(w, '/repos');
+  await answered(w, '/repos');
   const reads = w.asked.length;
   w.store.cooldowns.clear('command:read');
-  await typed(w, '/repos bkp01');
+  w.api.reset();
+  await answered(w, '/repos bkp01');
 
+  assert.match(w.api.sent()[0].text, /Данные собраны недавно — PDF будет через несколько секунд\./);
   assert.equal(w.asked.length, reads);
-  assert.equal(w.api.of('sendDocument').length, 2);
+  assert.equal(w.api.of('sendDocument').length, 1);
 });
 
 test('without a browser the report says it cannot be printed rather than staying silent', async () => {
@@ -386,15 +485,37 @@ test('without a browser the report says it cannot be printed rather than staying
   const { ReportPrinter } = require('../dist/estate/report-printer');
   const { configService } = require('./world.cjs');
   const monitor = monitorOfServers(w, [serverOf(w, veeam)], new ReportPrinter(configService(w.app)));
-  const { updates } = ear(w, monitor);
+  const { updates, commands } = ear(w, monitor);
 
   await updates.handleUpdate({
     update_id: 1,
     message: { message_id: 50, message_thread_id: 1, is_topic_message: true, text: '/repos', chat: FORUM },
   });
+  await commands.settled();
 
   assert.equal(w.api.of('sendDocument').length, 0);
   assert.match(w.api.sent().pop().text, /Не удалось ответить[\s\S]*Нет браузера для PDF: \/nowhere\/chrome-headless-shell/);
+});
+
+test('one report is printed at a time, and one that fails does not hold up the next', async () => {
+  const { ReportPrinter } = require('../dist/estate/report-printer');
+  const { configService } = require('./world.cjs');
+  const printer = new ReportPrinter(configService(appConfig({ REPORT_BROWSER: '/nowhere/chrome-headless-shell' })));
+  let printing = 0;
+  let most = 0;
+  printer.printed = async (html) => {
+    printing += 1;
+    most = Math.max(most, printing);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    printing -= 1;
+    if (html === 'broken') throw new Error('Браузер не напечатал PDF');
+    return Buffer.from(html);
+  };
+
+  const prints = ['a', 'broken', 'c'].map((html) => printer.print(html).then(String, (error) => error.message));
+
+  assert.deepEqual(await Promise.all(prints), ['a', 'Браузер не напечатал PDF', 'c']);
+  assert.equal(most, 1);
 });
 
 /* ------------------------------------------------------------------ *

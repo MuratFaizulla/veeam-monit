@@ -219,7 +219,10 @@ Moving a start is proposed only where the job's whole usual run stays inside
 the backup window, 18:00–07:00.
 
 Read on demand only — a few hundred requests across every server, whichever
-is selected — one reading at a time, kept for half an hour. A server that
+is selected — one reading at a time, kept for half an hour. What it will be
+about is said before it is read: the cycle reads every repository each minute
+for its free space, which is enough to list them in the menu and to refuse a
+name that matches none, so only the report itself waits. A server that
 stops answering keeps what it said before it stopped. Printed by a headless
 Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
 

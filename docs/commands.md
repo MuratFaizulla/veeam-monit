@@ -20,7 +20,7 @@
 
 In a forum group the commands work only in **General**; the bot ignores them in other topics. `/digest` and `/job` read Veeam when asked. `/points` reads the list of jobs and the job's backup files when asked (one request per backup), and takes the points from the last scan (hourly). For ⚡, `/job` reads the log of the last run and the logs of up to 30 of its slowest machines, five at a time; when there were more, the card says how many machines it judges by.
 
-`/repos` reads every server, whichever is selected — a share is attached to several of them: the repositories, every job's configuration, the sessions of the last `REPORT_DAYS` days, the log of each job's two newest finished runs, what is running, and the files of every backup. That is a few hundred requests, six at a time per server, and a minute or two; meanwhile the chat shows the bot sending a file. The reading is kept for 30 minutes, so `/repos bkp03` after `/repos` asks Veeam nothing. A server that does not answer is said on the cover, and its repositories show their space and nothing else. The PDF is printed by the headless Chromium in the image (`REPORT_BROWSER`).
+`/repos` reads every server, whichever is selected — a share is attached to several of them: the repositories, every job's configuration, the sessions of the last `REPORT_DAYS` days, the log of each job's two newest finished runs, what is running, and the files of every backup. That is a few hundred requests, six at a time per server, and a minute or two. So the bot first says at once that the report is coming and how long it takes («⏳ Готовлю отчёт: BKP03 … это 1–2 минуты»: preparing the report, a minute or two), then sends the PDF when it is ready; meanwhile the chat shows the bot sending a file, and the bot answers other commands. A name that matches no repository is answered at once, with the names there are. The reading is kept for 30 minutes, so `/repos bkp03` after `/repos` asks Veeam nothing and takes seconds. One PDF is printed at a time. A server that does not answer is said on the cover, and its repositories show their space and nothing else. The PDF is printed by the headless Chromium in the image (`REPORT_BROWSER`).
 
 ## The menu under the input field
 
@@ -29,6 +29,7 @@ The keys are labelled in Russian; the English meaning is in brackets.
 | Key | What it does |
 | --- | --- |
 | 🖥 Серверы (Servers) | The list of servers; the keyboard turns into the server buttons and «⬅️ На главную» (back to the main menu). Pressing one selects that server. |
+| 📄 Отчёт (Report) | The repositories by site, with their free space; the keyboard turns into «📚 Все репозитории» (every repository), a «🗄 BKP03» button per repository and «⬅️ На главную». Pressing one is `/repos` for it, or for all; the main menu comes back. The list is what the last minute's check read, so it opens at once |
 | 📊 Сводка (Digest) | The same as `/digest` |
 | 🔄 Проверить (Check) | The same as `/check` |
 | 📦 Задание (Job) | The same as `/job` without a name: buttons for the jobs that are not fine right now |
@@ -38,7 +39,7 @@ The keys are labelled in Russian; the English meaning is in brackets.
 | 🧹 Очистить (Clear) | First asks «Очистить General?» (clear General?); the «🧹 Да, очистить» (yes, clear) button under the question does the clearing. A typed `/clear` clears at once |
 | 🤖 Помощь (Help) | The same as `/help` |
 
-The menu lives in the «Меню Veeam Monitor» message in General. The bot checks it every `TELEGRAM_LIVE_REFRESH_MIN` minutes and posts it again if it was deleted. The server menu changes the keyboard only for the person who pressed. The bot sees a pressed key because it is an administrator of the group; otherwise privacy mode has to be turned off in BotFather.
+The menu lives in the «Меню Veeam Monitor» message in General. The bot checks it every `TELEGRAM_LIVE_REFRESH_MIN` minutes and posts it again if it was deleted. The server menu and the report menu change the keyboard only for the person who pressed. The bot sees a pressed key because it is an administrator of the group; otherwise privacy mode has to be turned off in BotFather.
 
 ## What `/clear` does
 

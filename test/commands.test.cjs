@@ -97,8 +97,10 @@ test('everything the menu offers is answered, and so are the hidden spellings', 
   for (const { command } of BOT_COMMANDS) {
     const w = world();
     await typed(w, `/${command}`);
-    // /repos answers with a file.
-    assert.equal(w.api.sent().length + w.api.of('sendDocument').length, 1, `/${command} отвечен`);
+    await w.commands.settled();
+    // /repos says the file is coming, then sends it.
+    assert.equal(w.api.sent().length, 1, `/${command} отвечен`);
+    assert.equal(w.api.of('sendDocument').length, command === 'repos' ? 1 : 0, `/${command} и файл`);
   }
 
   // Not in the menu, never in /help: /start is what Telegram sends on "Start",

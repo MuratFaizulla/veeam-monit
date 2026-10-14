@@ -2,11 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
-import { VeeamSession } from '../veeam/types';
+import { VeeamRepositoryState, VeeamSession } from '../veeam/types';
 import { Answer } from './answer';
 import { ReportPrinter } from './report-printer';
 import { reportPage, stampOf } from './repository-report-page';
-import { RepositoryReading, ReportJob, reportOf, repositoriesNamed, ServerReading, tb } from './repository-report';
+import { RepositoryReading, RepositoryReport, ReportJob, reportOf, repositoriesNamed, ServerReading, tb } from './repository-report';
 import { loadOf } from './run-speed';
 import { ServerEstates } from './server-estates';
 import { escapeHtml } from '../telegram/format';
@@ -21,6 +21,25 @@ const FRESH_MS = 30 * 60_000;
 const POOL = 6;
 /** A job's newest finished attempts whose logs say how busy each stage was. */
 const LOAD_ATTEMPTS = 2;
+
+/** A repository as the report's menu offers it. */
+export interface ReportChoice {
+  /** "BKP03": what its key says and `/repos` is asked with. */
+  short: string;
+  site: string;
+  /** Undefined when Veeam gives no capacity. */
+  freePercent?: number;
+}
+
+/** What a report asked for now comes to, said before it is read. */
+export type ReportAhead =
+  /** Nothing by that name among the repositories there are: said at once, not in two minutes. */
+  | { kind: 'none'; answer: Answer }
+  /**
+   * Being read and printed. `names` are the repositories it is about, empty
+   * for every one; `ready` when a kept reading makes it seconds, not minutes.
+   */
+  | { kind: 'coming'; names: string[]; ready: boolean };
 
 /**
  * The Repository report, read and printed when somebody asks for it.
@@ -39,6 +58,8 @@ export class RepositoryReports {
   private readonly timezone: string;
   private kept?: RepositoryReading;
   private reading?: Promise<RepositoryReading>;
+  /** Each server's repositories as its cycle last read them. */
+  private readonly seen = new Map<string, VeeamRepositoryState[]>();
 
   constructor(
     config: ConfigService,
@@ -58,15 +79,7 @@ export class RepositoryReports {
     const report = reportOf(await this.read(), this.config.sites, this.timezone);
     const asked = query.trim();
     const chosen = repositoriesNamed(report, asked);
-    if (asked && !chosen.length) {
-      return {
-        text: [
-          `🔍 <b>Репозитория «${escapeHtml(asked)}» нет</b>`,
-          '',
-          `Есть: ${report.repositories.map((repository) => escapeHtml(repository.short)).join(', ')}.`,
-        ].join('\n'),
-      };
-    }
+    if (asked && !chosen.length) return noSuch(asked, report);
     const content = await this.printer.print(reportPage(report, asked ? chosen : undefined, this.timezone));
     const stamp = stampOf(report.at, this.timezone);
     if (asked) {
@@ -95,9 +108,54 @@ export class RepositoryReports {
     };
   }
 
+  /**
+   * The repositories a cycle has just read on `server`. The cycle reads them
+   * every minute for their free space anyway, so the menu lists them, and a
+   * name is checked, without asking Veeam again.
+   */
+  saw(server: string, repositories: VeeamRepositoryState[]): void {
+    this.seen.set(server, repositories);
+  }
+
+  /** Every repository there is, in the report's order. */
+  choices(): ReportChoice[] {
+    return this.known().repositories.map(({ short, site, capacityGB, freePercent }) => ({
+      short,
+      site,
+      ...(capacityGB ? { freePercent } : {}),
+    }));
+  }
+
+  /** What `answer(query)` will come to, known now: a name that matches nothing, or how long it takes. */
+  ahead(query: string): ReportAhead {
+    const asked = query.trim();
+    const known = this.known();
+    const chosen = repositoriesNamed(known, asked);
+    // Nothing seen yet, the minute after a start, is no reason to refuse a name.
+    if (asked && !chosen.length && known.repositories.length) return { kind: 'none', answer: noSuch(asked, known) };
+    return { kind: 'coming', names: asked ? chosen.map((repository) => repository.short) : [], ready: Boolean(this.fresh()) };
+  }
+
+  /**
+   * The repositories alone, without a job: enough to name and order them.
+   * As each server's cycle last read them, or else as the last reading did.
+   */
+  private known(): RepositoryReport {
+    const servers = this.estates.all.flatMap((estate): ServerReading[] => {
+      const repositories = this.seen.get(estate.name) ?? this.kept?.servers.find((server) => server.server === estate.name)?.repositories;
+      return repositories ? [{ server: estate.name, repositories, jobs: [], attempts: [], loads: [], working: [], backups: [] }] : [];
+    });
+    return reportOf({ at: Date.now(), days: this.config.days, servers }, this.config.sites, this.timezone);
+  }
+
+  private fresh(): RepositoryReading | undefined {
+    return this.kept && Date.now() - this.kept.at < FRESH_MS ? this.kept : undefined;
+  }
+
   /** The kept reading while it is fresh; else a new one, shared by everybody who asks meanwhile. */
   private async read(): Promise<RepositoryReading> {
-    if (this.kept && Date.now() - this.kept.at < FRESH_MS) return this.kept;
+    const fresh = this.fresh();
+    if (fresh) return fresh;
     if (!this.reading) {
       this.reading = (async () => {
         const since = new Date(Date.now() - this.config.days * 86_400_000);
@@ -192,6 +250,15 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
   }
   return reading;
 };
+
+/** A name that matches no repository, answered with the names there are. */
+const noSuch = (asked: string, report: RepositoryReport): Answer => ({
+  text: [
+    `🔍 <b>Репозитория «${escapeHtml(asked)}» нет</b>`,
+    '',
+    `Есть: ${report.repositories.map((repository) => escapeHtml(repository.short)).join(', ')}.`,
+  ].join('\n'),
+});
 
 /** When a session ended; a session still going has none, or Veeam's year-1900 placeholder. */
 const endOf = (session: VeeamSession): string | undefined =>

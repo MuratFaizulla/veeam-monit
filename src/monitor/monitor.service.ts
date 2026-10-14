@@ -14,7 +14,7 @@ import { JobAlerts } from './job-alerts';
 import { ServerWatch } from './server-watch';
 import { escapeHtml, renderEvent } from '../telegram/format';
 import { Answer } from '../estate/answer';
-import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
+import { Monitor, MonitorHealth, ReportAhead, ReportChoice, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
 
@@ -252,6 +252,14 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     return this.reports.answer(query);
   }
 
+  repositoryChoices(): ReportChoice[] {
+    return this.reports.choices();
+  }
+
+  repositoryReportAhead(query: string): ReportAhead {
+    return this.reports.ahead(query);
+  }
+
   /* ---------------------------------------------------------------- *
    * Servers
    * ---------------------------------------------------------------- */
@@ -418,7 +426,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   private async checkRepositories(watch: Watch): Promise<RepositoryCapacity[]> {
     let repositories: RepositoryCapacity[];
     try {
-      repositories = capacities(await watch.estate.reader.repositoryStates());
+      const states = await watch.estate.reader.repositoryStates();
+      // The report's menu lists them from here rather than asking again.
+      this.reports.saw(watch.estate.name, states);
+      repositories = capacities(states);
     } catch (error) {
       this.logger.warn(
         `Repository capacity check skipped on ${watch.estate.name}: ${(error as Error).message}`,

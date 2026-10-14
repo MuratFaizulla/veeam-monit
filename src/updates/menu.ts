@@ -22,6 +22,8 @@ import type { CommandName } from './commands';
  */
 const KEYS = {
   servers: { label: '🖥 Серверы', does: 'выбрать сервер, который показывают живые темы' },
+  // Asks which repository first: the whole report is thirty pages.
+  repos: { label: '📄 Отчёт', does: 'PDF по репозиториям: все или один на выбор' },
   digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
   // Asked with no name, as these are, both offer the jobs that need somebody.
@@ -37,7 +39,7 @@ const KEYS = {
  * The keys, a row each. `/menu` alone has none: the keyboard is the menu.
  */
 const ROWS: readonly (readonly MenuCommand[])[] = [
-  ['servers'],
+  ['servers', 'repos'],
   ['digest', 'check'],
   ['job', 'points'],
   ['status', 'topics'],
@@ -47,10 +49,18 @@ const ROWS: readonly (readonly MenuCommand[])[] = [
 /** The name of a command a key of the main menu stands for. */
 export type MenuCommand = keyof typeof KEYS;
 
-/** Back from the server menu. */
+/** Back from the server menu and the report menu. */
 const HOME = '⬅️ На главную';
 /** Marks the Selected server in the server menu. */
 const SELECTED = '✅ ';
+/** The report menu's key for the whole report. */
+export const EVERY_REPOSITORY = '📚 Все репозитории';
+/**
+ * Begins the key of one repository. It is what tells the key from anything
+ * else said in the chat, so a repository is known by it without a list to
+ * look it up in.
+ */
+export const REPOSITORY = '🗄 ';
 
 const keys = (rows: string[][]): TelegramKey[][] => rows.map((row) => row.map((text) => ({ text })));
 
@@ -83,11 +93,31 @@ export const serverMenu = (servers: Array<{ name: string; selected: boolean }>):
   selective: true,
 });
 
+/**
+ * The report menu: the whole report, a key per repository two to a row,
+ * each site's on rows of their own, and the way back. Always selective.
+ */
+export const reportMenu = (repositories: Array<{ short: string; site: string }>): TelegramReplyKeyboard => {
+  const sites = [...new Set(repositories.map(({ site }) => site))];
+  const rows = sites.flatMap((site) =>
+    pairs(repositories.filter((repository) => repository.site === site).map(({ short }) => `${REPOSITORY}${short}`)),
+  );
+  return {
+    keyboard: keys([[EVERY_REPOSITORY], ...rows, [HOME]]),
+    is_persistent: true,
+    resize_keyboard: true,
+    input_field_placeholder: 'Выберите репозиторий',
+    selective: true,
+  };
+};
+
 /** What pressing a key of the menu asks for. */
 export type Pressed =
   | { kind: 'command'; name: MenuCommand }
   | { kind: 'home' }
-  | { kind: 'server'; name: string };
+  | { kind: 'server'; name: string }
+  /** A key of the report menu: one repository, or `''` for every one. */
+  | { kind: 'repository'; name: string };
 
 /**
  * The key `text` is the label of, or undefined for anything else said in the
@@ -99,6 +129,10 @@ export const menuPressed = (text: string, servers: Array<{ name: string }>): Pre
   const command = (Object.keys(KEYS) as MenuCommand[]).find((name) => KEYS[name].label === said);
   if (command) return { kind: 'command', name: command };
   if (said === HOME) return { kind: 'home' };
+  if (said === EVERY_REPOSITORY) return { kind: 'repository', name: '' };
+  if (said.startsWith(REPOSITORY) && said.length > REPOSITORY.length) {
+    return { kind: 'repository', name: said.slice(REPOSITORY.length).trim() };
+  }
   const name = said.startsWith(SELECTED) ? said.slice(SELECTED.length) : said;
   return servers.some((server) => server.name === name) ? { kind: 'server', name } : undefined;
 };

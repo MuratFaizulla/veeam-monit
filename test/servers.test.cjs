@@ -307,7 +307,7 @@ test('the menu under the input field turns into the servers, and a server\'s key
 
   const switched = w.api.sent().find((message) => /Показан сервер BAAS/.test(message.text));
   assert.ok(switched, 'the switch is confirmed');
-  assert.deepEqual(labels(switched.reply_markup)[0], ['🖥 Серверы'], 'and the main menu is back');
+  assert.deepEqual(labels(switched.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт'], 'and the main menu is back');
   assert.equal(switched.reply_parameters.message_id, baas.id);
   assert.equal(w.store.selectedServer(), 'baas');
 
@@ -332,7 +332,7 @@ test('the keys of the main menu are answered as the commands they stand for', as
   await home.done;
   const menu = w.api.sent().at(-1);
   assert.deepEqual(labels(menu.reply_markup), [
-    ['🖥 Серверы'],
+    ['🖥 Серверы', '📄 Отчёт'],
     ['📊 Сводка', '🔄 Проверить'],
     ['📦 Задание', '🗂 Точки'],
     ['🩺 Статус', '📑 Темы'],

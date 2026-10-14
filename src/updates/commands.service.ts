@@ -6,7 +6,7 @@ import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
-import { mainMenu, MENU_TEXT, menuPressed, Pressed, serverMenu } from './menu';
+import { EVERY_REPOSITORY, mainMenu, MENU_TEXT, menuPressed, Pressed, REPOSITORY, reportMenu, serverMenu } from './menu';
 import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
@@ -61,6 +61,8 @@ const REFRESH_SUMMARY_BUTTON: ButtonRow = [['🔄 Обновить', { kind: 'su
 export class TelegramCommandsService implements Answers {
   private readonly logger = new Logger(TelegramCommandsService.name);
   private readonly config: AppConfig['telegram'];
+  /** The Replies said to be coming, until each is said. */
+  private readonly following = new Set<Promise<void>>();
 
   constructor(
     config: ConfigService,
@@ -113,7 +115,7 @@ export class TelegramCommandsService implements Answers {
     const key = menuPressed(text, this.monitor.servers());
     if (key) {
       const asked: Asked = { chat: message.chat, argument: '', messageId: message.message_id };
-      await this.general.say(this.whereAnswered(asked), await this.keyed(key, asked), message.message_id);
+      await this.respond(asked, await this.keyed(key, asked));
       return;
     }
 
@@ -131,15 +133,42 @@ export class TelegramCommandsService implements Answers {
       argument: gap === -1 ? '' : text.slice(gap + 1).trim(),
       messageId: message.message_id,
     };
-    await this.general.say(this.whereAnswered(asked), await command.answer(this, asked), message.message_id);
+    await this.respond(asked, await command.answer(this, asked));
   }
 
-  /** A key of the menu: one that stands for a command, the way back, or a server's. */
+  /**
+   * Says `reply` in General, and when it says more is coming, makes that and
+   * says it too — not waited for, so the next Update is answered meanwhile.
+   */
+  private async respond(asked: Asked, reply: Reply): Promise<void> {
+    const where = this.whereAnswered(asked);
+    await this.general.say(where, reply, asked.messageId);
+    if (!reply.later) return;
+    const following: Promise<void> = reply
+      .later()
+      .then((next) => this.general.say(where, next, asked.messageId))
+      .then(
+        () => undefined,
+        (error: Error) => this.logger.error(`Telegram reply failed: ${error.message}`),
+      )
+      .finally(() => this.following.delete(following));
+    this.following.add(following);
+  }
+
+  /** Resolves once every Reply said to be coming has been said. */
+  async settled(): Promise<void> {
+    while (this.following.size) await Promise.all(this.following);
+  }
+
+  /** A key of the menu: one that stands for a command, the way back, a server's or a repository's. */
   private async keyed(key: Pressed, asked: Asked): Promise<Reply> {
     if (key.kind === 'home') {
       return { lines: ['🤖 <b>Главное меню</b>'], markup: mainMenu({ selective: true }) };
     }
     if (key.kind === 'server') return this.selected(key.name);
+    if (key.kind === 'repository') return this.repositories({ ...asked, argument: key.name });
+    // Asked which repository first, as the server key asks which server.
+    if (key.name === 'repos') return this.reportChoices();
     // A key is pressed by accident far more easily than a command is typed,
     // and this one deletes: it asks first, with the Button that does it.
     if (key.name === 'clear') {
@@ -176,7 +205,7 @@ export class TelegramCommandsService implements Answers {
 
     const asked: Asked = { chat: message.chat, argument: '' };
     const answer = await this.act(action, asked);
-    if (answer) await this.general.say(this.whereAnswered(asked), answer);
+    if (answer) await this.respond(asked, answer);
   }
 
   /**
@@ -289,12 +318,56 @@ export class TelegramCommandsService implements Answers {
   }
 
   /**
-   * `/repos` — the Repository report as a PDF. A reading of every server takes
-   * a minute or two; while it does, the chat shows the bot sending a file, so
-   * the wait does not look like a bot that ignored the question.
+   * `/repos` and the keys of the report menu — the Repository report as a
+   * PDF. Reading every server takes a minute or two, so what is said at once
+   * is that it is coming and how long it takes, and the PDF follows; a name
+   * that matches no repository is said at once too, not after the wait.
    */
-  async repositories(asked: Asked): Promise<Reply> {
-    const chatId = String(asked.chat.id);
+  repositories(asked: Asked): Reply {
+    const tooSoon = this.tooSoon();
+    if (tooSoon) return tooSoon;
+    const query = asked.argument.trim();
+    const ahead = this.monitor.repositoryReportAhead(query);
+    if (ahead.kind === 'none') return { lines: [ahead.answer.text], markup: mainKeyboard() };
+    return {
+      lines: preparing(ahead.names.length ? ahead.names : query ? [query] : [], ahead.ready),
+      // Whoever pressed a repository's key gets the main menu back.
+      markup: mainMenu({ selective: true }),
+      later: () => this.uploading(String(asked.chat.id), () => this.answered(() => this.monitor.repositoryReport(query))),
+    };
+  }
+
+  /**
+   * The 📄 key: which repository the report is to be about. The keyboard
+   * turns into a key per repository for whoever pressed it, as the 🖥 key
+   * turns it into the servers.
+   */
+  private reportChoices(): Reply {
+    const repositories = this.monitor.repositoryChoices();
+    const sites = [...new Set(repositories.map(({ site }) => site))];
+    const listed = sites.flatMap((site) => [
+      ...(site ? [`<b>${escapeHtml(site)}</b>`] : []),
+      ...repositories
+        .filter((repository) => repository.site === site)
+        .map(({ short, freePercent }) =>
+          `${REPOSITORY}${escapeHtml(short)}${freePercent === undefined ? '' : ` — свободно ${Math.round(freePercent)}%`}`,
+        ),
+      '',
+    ]);
+    return {
+      lines: [
+        '📄 <b>Отчёт по репозиториям</b>',
+        '',
+        ...(repositories.length ? listed : ['Список репозиториев появится после первой проверки, через минуту.', '']),
+        `Выберите репозиторий кнопкой под полем ввода или «${EVERY_REPOSITORY}».`,
+        'PDF собирается 1–2 минуты, повторный в течение получаса — за секунды.',
+      ],
+      markup: reportMenu(repositories),
+    };
+  }
+
+  /** While `make` runs, the chat shows the bot sending a file. */
+  private async uploading(chatId: string, make: () => Promise<Reply>): Promise<Reply> {
     const sending = () =>
       void this.transport.call('sendChatAction', { chat_id: chatId, action: 'upload_document' }).catch(() => undefined);
     sending();
@@ -302,7 +375,7 @@ export class TelegramCommandsService implements Answers {
     const timer = setInterval(sending, 4_500);
     timer.unref();
     try {
-      return await this.reading(() => this.monitor.repositoryReport(asked.argument));
+      return await make();
     } finally {
       clearInterval(timer);
     }
@@ -422,6 +495,11 @@ export class TelegramCommandsService implements Answers {
     ask: () => Promise<Answer>,
     tail: ButtonRow = [],
   ): Promise<Reply> {
+    return this.tooSoon() ?? this.answered(ask, tail);
+  }
+
+  /** The rate limit on reads: what is said when it holds, and otherwise it is armed. */
+  private tooSoon(): Reply | undefined {
     if (this.store.cooldowns.isSuppressed(READ_COOLDOWN_KEY)) {
       return {
         lines: ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'],
@@ -429,6 +507,11 @@ export class TelegramCommandsService implements Answers {
       };
     }
     this.store.cooldowns.arm(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
+    return undefined;
+  }
+
+  /** The Answer to `ask` and what it lets somebody do next, or why there is none. */
+  private async answered(ask: () => Promise<Answer>, tail: ButtonRow = []): Promise<Reply> {
     try {
       return this.offered(await ask(), tail);
     } catch (error) {
@@ -482,6 +565,17 @@ export class TelegramCommandsService implements Answers {
     ];
   }
 }
+
+/** What is said at once when a report is asked for: that it is coming, and when. */
+const preparing = (names: string[], ready: boolean): string[] => [
+  names.length
+    ? `⏳ <b>Готовлю отчёт: ${names.map((name) => escapeHtml(name)).join(', ')}</b>`
+    : '⏳ <b>Готовлю отчёт по всем репозиториям</b>',
+  '',
+  ...(ready
+    ? ['Данные собраны недавно — PDF будет через несколько секунд.']
+    : ['Собираю данные со всех серверов Veeam — это 1–2 минуты.', 'PDF придёт сюда, а бот пока отвечает на другие команды.']),
+];
 
 /** How a server is doing, in the words of the server menu. */
 const standing = (server: ServerStatus): string => {
