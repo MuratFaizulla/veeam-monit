@@ -166,6 +166,7 @@ function idleMonitor() {
     describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
     repositoryReport: async (query) => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
     repositoryChoices: () => [],
+    jobChoices: async () => ({ server: SERVER, jobs: [] }),
     repositoryReportAhead: () => ({ kind: 'coming', names: [], ready: true }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,

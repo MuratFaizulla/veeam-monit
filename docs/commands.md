@@ -32,14 +32,14 @@ The keys are labelled in Russian; the English meaning is in brackets.
 | 📄 Отчёт (Report) | The repositories by site, with their free space; the keyboard turns into «📚 Все репозитории» (every repository), a «🗄 BKP03» button per repository and «⬅️ На главную». Pressing one is `/repos` for it, or for all; the main menu comes back. The list is what the last minute's check read, so it opens at once |
 | 📊 Сводка (Digest) | The same as `/digest` |
 | 🔄 Проверить (Check) | The same as `/check` |
-| 📦 Задание (Job) | The same as `/job` without a name: buttons for the jobs that are not fine right now |
+| 📦 Задание (Job) | Every job of the selected server to pick from, so nobody has to type a name: the keyboard turns into a key per job marked 🔴 failed, 🟡 warning, ▶️ running, 🟢 fine, ⚪ never run or ⏸ switched off — the ones not in order first, then by name — 50 to a page with «➡️ Дальше» (next) and «⬅️ Назад» (back), and «⬅️ На главную». Pressing a job opens its card; the keyboard stays, so the next job is one press away. `/job` typed without a name still offers the failing jobs as buttons under the message |
 | 🗂 Точки (Points) | The same as `/points` without a name: buttons for the jobs 🛡 lists |
 | 🩺 Статус (Status) | The same as `/status` |
 | 📑 Темы (Topics) | The same as `/topics` |
 | 🧹 Очистить (Clear) | First asks «Очистить General?» (clear General?); the «🧹 Да, очистить» (yes, clear) button under the question does the clearing. A typed `/clear` clears at once |
 | 🤖 Помощь (Help) | The same as `/help` |
 
-The menu lives in the «Меню Veeam Monitor» message in General. The bot checks it every `TELEGRAM_LIVE_REFRESH_MIN` minutes and posts it again if it was deleted. The server menu and the report menu change the keyboard only for the person who pressed. The bot sees a pressed key because it is an administrator of the group; otherwise privacy mode has to be turned off in BotFather.
+The menu lives in the «Меню Veeam Monitor» message in General. The bot checks it every `TELEGRAM_LIVE_REFRESH_MIN` minutes and posts it again if it was deleted. The server, report and job menus change the keyboard only for the person who pressed. The bot sees a pressed key because it is an administrator of the group; otherwise privacy mode has to be turned off in BotFather.
 
 ## What `/clear` does
 

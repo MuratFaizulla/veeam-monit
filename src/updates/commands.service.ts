@@ -6,7 +6,19 @@ import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
-import { EVERY_REPOSITORY, mainMenu, MENU_TEXT, menuPressed, Pressed, REPOSITORY, reportMenu, serverMenu } from './menu';
+import {
+  EVERY_REPOSITORY,
+  JOB_MARK,
+  jobMenu,
+  jobPage,
+  mainMenu,
+  MENU_TEXT,
+  menuPressed,
+  Pressed,
+  REPOSITORY,
+  reportMenu,
+  serverMenu,
+} from './menu';
 import { serverIcon } from '../live/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
@@ -167,8 +179,12 @@ export class TelegramCommandsService implements Answers {
     }
     if (key.kind === 'server') return this.selected(key.name);
     if (key.kind === 'repository') return this.repositories({ ...asked, argument: key.name });
+    if (key.kind === 'job') return this.job(key.name);
+    if (key.kind === 'jobs') return this.jobChoices(key.page);
     // Asked which repository first, as the server key asks which server.
     if (key.name === 'repos') return this.reportChoices();
+    // And which job, rather than typing its name.
+    if (key.name === 'job') return this.jobChoices();
     // A key is pressed by accident far more easily than a command is typed,
     // and this one deletes: it asks first, with the Button that does it.
     if (key.name === 'clear') {
@@ -363,6 +379,38 @@ export class TelegramCommandsService implements Answers {
         'PDF собирается 1–2 минуты, повторный в течение получаса — за секунды.',
       ],
       markup: reportMenu(repositories),
+    };
+  }
+
+  /**
+   * The 📦 key: which job's card to show. The keyboard turns into a key per
+   * job of the Selected server for whoever pressed it, the ones not in order
+   * first, and stays so while cards are opened from it.
+   *
+   * Not rate-limited, as the cards are: it is one request, and a limit armed
+   * by the list would refuse the card picked from it a moment later.
+   */
+  private async jobChoices(page = 1): Promise<Reply> {
+    const { server, jobs, unavailable } = await this.monitor.jobChoices();
+    if (!jobs) return { lines: [unavailable ?? '⚠️ Veeam не ответил.'], markup: mainKeyboard() };
+    if (!jobs.length) {
+      return { lines: [`📦 <b>Задания · ${escapeHtml(server)}</b>`, '', 'На этом сервере нет заданий.'], markup: mainKeyboard() };
+    }
+    const counted = (['failed', 'warning', 'running', 'disabled'] as const)
+      .map((mark) => [mark, jobs.filter((job) => job.mark === mark).length] as const)
+      .filter(([, count]) => count)
+      .map(([mark, count]) => `${JOB_MARK[mark]} ${count} ${STANDING_WORD[mark]}`);
+    const { at, pages } = jobPage(jobs.length, page);
+    return {
+      lines: [
+        `📦 <b>Задания · ${escapeHtml(server)}</b> — ${jobs.length}`,
+        ...(counted.length ? ['', counted.join(' · ')] : []),
+        '',
+        'Выберите задание кнопкой под полем ввода: сначала те, что не в порядке, дальше по алфавиту.',
+        ...(pages > 1 ? [`Страница ${at} из ${pages}.`] : []),
+        'Другой сервер — «🖥 Серверы». По части имени — <code>/job часть имени</code>.',
+      ],
+      markup: jobMenu(jobs, at),
     };
   }
 
@@ -565,6 +613,14 @@ export class TelegramCommandsService implements Answers {
     ];
   }
 }
+
+/** How many jobs stand so, in the words of the job menu: «🔴 2 с ошибкой». */
+const STANDING_WORD = {
+  failed: 'с ошибкой',
+  warning: 'с предупреждением',
+  running: 'в работе',
+  disabled: 'выключено',
+} as const;
 
 /** What is said at once when a report is asked for: that it is coming, and when. */
 const preparing = (names: string[], ready: boolean): string[] => [

@@ -15,6 +15,7 @@ import { retryWindowOf, runsOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
+import { JobChoice, jobChoicesOf } from './job-choices';
 import { JobCard, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 import { FailedObject, JobReads, JobSession, RECENT_SESSIONS } from './job-reads';
 import { RetainedRun } from './evidence';
@@ -243,6 +244,12 @@ export class JobQueryService {
     return risks.map(({ id, name }) => ({ id, name }));
   }
 
+
+  /** Every job, for the job menu: one request, the job list. */
+  async choices(): Promise<{ ok: true; jobs: JobChoice[] } | { ok: false; message: string }> {
+    const read = await this.jobsNow();
+    return read.ok ? { ok: true, jobs: jobChoicesOf(read.jobs) } : read;
+  }
 
   /**
    * The job list, right now, for a question rather than for a cycle.

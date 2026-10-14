@@ -1,9 +1,20 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
 import { Answer } from '../estate/answer';
+import { JobChoice } from '../estate/job-choices';
 import { ReportAhead, ReportChoice } from '../estate/repository-reports';
 
 export type { Answer } from '../estate/answer';
+export type { JobChoice, JobMark } from '../estate/job-choices';
 export type { ReportAhead, ReportChoice } from '../estate/repository-reports';
+
+/** The Selected server's jobs, for the job menu. */
+export interface JobChoices {
+  /** The server's name. */
+  server: string;
+  /** Undefined when they could not be read; `unavailable` says why, in HTML. */
+  jobs?: JobChoice[];
+  unavailable?: string;
+}
 
 /** The Selected server's side of the monitor, with what it delivered overall. */
 export interface MonitorHealth {
@@ -73,6 +84,8 @@ export interface Monitor {
    * named — or the Selected one, for a Button from before there was a list.
    */
   describeJobById(id: string, server?: string): Promise<Answer>;
+  /** Every job on the Selected server, worst first, for the job menu. */
+  jobChoices(): Promise<JobChoices>;
   /** A job's restore points on the Selected server, named as for `describeJob`. */
   describePoints(query: string): Promise<Answer>;
   /** A job's restore points for a Button that addressed it, as for `describeJobById`. */

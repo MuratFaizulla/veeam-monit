@@ -1,4 +1,5 @@
 import { TelegramKey, TelegramReplyKeyboard } from '../telegram/types';
+import type { JobChoice, JobMark } from '../monitor/monitor';
 import type { CommandName } from './commands';
 
 /**
@@ -26,8 +27,9 @@ const KEYS = {
   repos: { label: '📄 Отчёт', does: 'PDF по репозиториям: все или один на выбор' },
   digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
-  // Asked with no name, as these are, both offer the jobs that need somebody.
-  job: { label: '📦 Задание', does: 'карточка задания: запуски, ⚡ скорость, настройки' },
+  // Offers every job of the Selected server to pick, the worst first.
+  job: { label: '📦 Задание', does: 'выбрать задание из списка: карточка, ⚡ скорость, настройки' },
+  // Asked with no name, as it is, offers the jobs that need somebody.
   points: { label: '🗂 Точки', does: 'точки восстановления задания' },
   status: { label: '🩺 Статус', does: 'отвечает ли Veeam' },
   topics: { label: '📑 Темы', does: 'темы форума, которые знает бот' },
@@ -49,7 +51,7 @@ const ROWS: readonly (readonly MenuCommand[])[] = [
 /** The name of a command a key of the main menu stands for. */
 export type MenuCommand = keyof typeof KEYS;
 
-/** Back from the server menu and the report menu. */
+/** Back from the server menu, the report menu and the job menu. */
 const HOME = '⬅️ На главную';
 /** Marks the Selected server in the server menu. */
 const SELECTED = '✅ ';
@@ -61,6 +63,30 @@ export const EVERY_REPOSITORY = '📚 Все репозитории';
  * look it up in.
  */
 export const REPOSITORY = '🗄 ';
+/**
+ * What a job's key in the job menu begins with: how the job stands, in the
+ * icons the bot says it with everywhere. The mark is also what tells the key
+ * from anything else said in the chat.
+ */
+export const JOB_MARK: Record<JobMark, string> = {
+  failed: '🔴',
+  warning: '🟡',
+  running: '▶️',
+  success: '🟢',
+  none: '⚪',
+  disabled: '⏸',
+};
+/**
+ * Jobs on one keyboard of the job menu. A keyboard is the markup of one
+ * message, and Telegram refuses one too long; a server has over a hundred.
+ */
+export const JOBS_PER_PAGE = 50;
+/** Above this many keys the way back is offered on top too, not only after the scroll. */
+const LONG = 8;
+/** The keys that turn the job menu's pages: «➡️ Дальше · 2/3» goes to page 2 of 3. */
+const NEXT = '➡️ Дальше';
+const BACK = '⬅️ Назад';
+const TURN = /^(?:➡️ Дальше|⬅️ Назад) · (\d+)\/\d+$/u;
 
 const keys = (rows: string[][]): TelegramKey[][] => rows.map((row) => row.map((text) => ({ text })));
 
@@ -111,13 +137,49 @@ export const reportMenu = (repositories: Array<{ short: string; site: string }>)
   };
 };
 
+/** Which page of `count` jobs `page` comes to, kept within the pages there are. */
+export const jobPage = (count: number, page: number): { at: number; pages: number } => {
+  const pages = Math.max(1, Math.ceil(count / JOBS_PER_PAGE));
+  return { at: Math.min(Math.max(1, Math.trunc(page) || 1), pages), pages };
+};
+
+/**
+ * The job menu: a key per job, one to a row since a job's name is long, in
+ * the order given, a page at a time. Always selective, and kept while cards
+ * are opened from it: a card carries Buttons of its own, not a keyboard.
+ */
+export const jobMenu = (jobs: JobChoice[], page = 1): TelegramReplyKeyboard => {
+  const { at, pages } = jobPage(jobs.length, page);
+  const shown = jobs.slice((at - 1) * JOBS_PER_PAGE, at * JOBS_PER_PAGE);
+  const turns = [
+    ...(at > 1 ? [`${BACK} · ${at - 1}/${pages}`] : []),
+    ...(at < pages ? [`${NEXT} · ${at + 1}/${pages}`] : []),
+  ];
+  return {
+    keyboard: keys([
+      ...(shown.length > LONG ? [[HOME]] : []),
+      ...shown.map(({ name, mark }) => [`${JOB_MARK[mark]} ${name}`]),
+      ...(turns.length ? [turns] : []),
+      [HOME],
+    ]),
+    is_persistent: true,
+    resize_keyboard: true,
+    input_field_placeholder: 'Выберите задание',
+    selective: true,
+  };
+};
+
 /** What pressing a key of the menu asks for. */
 export type Pressed =
   | { kind: 'command'; name: MenuCommand }
   | { kind: 'home' }
   | { kind: 'server'; name: string }
   /** A key of the report menu: one repository, or `''` for every one. */
-  | { kind: 'repository'; name: string };
+  | { kind: 'repository'; name: string }
+  /** A key of the job menu: one job, by its name. */
+  | { kind: 'job'; name: string }
+  /** A page of the job menu. */
+  | { kind: 'jobs'; page: number };
 
 /**
  * The key `text` is the label of, or undefined for anything else said in the
@@ -133,6 +195,11 @@ export const menuPressed = (text: string, servers: Array<{ name: string }>): Pre
   if (said.startsWith(REPOSITORY) && said.length > REPOSITORY.length) {
     return { kind: 'repository', name: said.slice(REPOSITORY.length).trim() };
   }
+  const turn = TURN.exec(said);
+  if (turn) return { kind: 'jobs', page: Number(turn[1]) };
+  const mark = Object.values(JOB_MARK).find((icon) => said.startsWith(`${icon} `));
+  const job = mark ? said.slice(mark.length + 1).trim() : '';
+  if (job) return { kind: 'job', name: job };
   const name = said.startsWith(SELECTED) ? said.slice(SELECTED.length) : said;
   return servers.some((server) => server.name === name) ? { kind: 'server', name } : undefined;
 };

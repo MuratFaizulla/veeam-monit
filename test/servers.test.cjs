@@ -347,7 +347,7 @@ test('the keys of the main menu are answered as the commands they stand for', as
   assert.deepEqual(w.api.sent(), []);
 });
 
-test('a job\'s keys offer the jobs that need somebody, as the commands do asked with no name', async () => {
+test('the points key offers the jobs that need somebody, as the command does asked with no name', async () => {
   // Two worlds each, so the rate limit armed by one cannot answer the other.
   const answerTo = async (said) => {
     const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Failed')] });
@@ -355,14 +355,81 @@ test('a job\'s keys offer the jobs that need somebody, as the commands do asked 
     return w.api.sent().at(-1);
   };
 
-  for (const [label, command] of [['📦 Задание', '/job'], ['🗂 Точки', '/points'], ['📑 Темы', '/topics']]) {
+  for (const [label, command] of [['🗂 Точки', '/points'], ['📑 Темы', '/topics']]) {
     const [key, typed] = [await answerTo(label), await answerTo(command)];
     assert.equal(key.text, typed.text, `${label} = ${command}`);
     assert.deepEqual(key.reply_markup?.inline_keyboard, typed.reply_markup?.inline_keyboard);
   }
-  const card = await answerTo('📦 Задание');
+  // /job typed with no name still offers the one that failed, under the message.
+  const card = await answerTo('/job');
   assert.match(card.text, /Укажите задание/);
   assert.equal(card.reply_markup.inline_keyboard[0][0].text, 'SQL Daily', 'and offers the one that failed');
+});
+
+test('the 📦 key lists every job of the shown server, the worst first, and a job\'s key opens its card', async () => {
+  const w = twoServers({
+    ast: [
+      job('a1', 'SQL Daily', 'Success'),
+      job('a2', 'Files', 'Failed'),
+      { ...job('a3', 'Archive', 'Success'), status: 'Disabled' },
+      { ...job('a4', 'Mail', 'Success'), status: 'Working' },
+      job('a5', 'Billing', 'Warning'),
+    ],
+    baas: [job('b1', 'Other', 'Success')],
+  });
+
+  const opened = keyed(w, '📦 Задание');
+  await opened.done;
+  const list = w.api.sent().at(-1);
+  assert.equal(list.text, [
+    '📦 <b>Задания · AST</b> — 5',
+    '',
+    '🔴 1 с ошибкой · 🟡 1 с предупреждением · ▶️ 1 в работе · ⏸ 1 выключено',
+    '',
+    'Выберите задание кнопкой под полем ввода: сначала те, что не в порядке, дальше по алфавиту.',
+    'Другой сервер — «🖥 Серверы». По части имени — <code>/job часть имени</code>.',
+  ].join('\n'));
+  assert.deepEqual(labels(list.reply_markup), [
+    ['🔴 Files'], ['🟡 Billing'], ['▶️ Mail'], ['🟢 SQL Daily'], ['⏸ Archive'], ['⬅️ На главную'],
+  ]);
+  // Only for whoever pressed it, as the server menu is.
+  assert.equal(list.reply_markup.selective, true);
+  assert.equal(list.reply_parameters.message_id, opened.id);
+
+  await keyed(w, '🔴 Files').done;
+  const card = w.api.sent().at(-1);
+  assert.match(card.text, /Files/);
+  assert.doesNotMatch(card.text, /Укажите задание|не найдено/);
+  assert.deepEqual(card.reply_markup.inline_keyboard[0].map((button) => button.text), ['🔄 Обновить', '🗂 Точки', '📊 Сводка']);
+
+  // Something else said in General that only looks like a key is left alone.
+  w.api.reset();
+  await keyed(w, '🔴').done;
+  assert.deepEqual(w.api.sent(), []);
+});
+
+test('a server with more jobs than one keyboard holds offers them a page at a time', async () => {
+  const many = Array.from({ length: 120 }, (_, at) => job(`j${at}`, `Job ${String(at + 1).padStart(3, '0')}`, 'Success'));
+  const w = twoServers({ ast: many });
+
+  await keyed(w, '📦 Задание').done;
+  const first = w.api.sent().at(-1);
+  let keys = labels(first.reply_markup);
+  assert.match(first.text, /\nСтраница 1 из 3\.\n/);
+  assert.deepEqual(keys[0], ['⬅️ На главную'], 'the way back on top of a long list too');
+  assert.deepEqual(keys[1], ['🟢 Job 001']);
+  assert.equal(keys.filter(([key]) => key.startsWith('🟢 ')).length, 50);
+  assert.deepEqual(keys.slice(-2), [['➡️ Дальше · 2/3'], ['⬅️ На главную']]);
+
+  await keyed(w, '➡️ Дальше · 2/3').done;
+  keys = labels(w.api.sent().at(-1).reply_markup);
+  assert.deepEqual(keys[1], ['🟢 Job 051']);
+  assert.deepEqual(keys.at(-2), ['⬅️ Назад · 1/3', '➡️ Дальше · 3/3']);
+
+  await keyed(w, '➡️ Дальше · 3/3').done;
+  keys = labels(w.api.sent().at(-1).reply_markup);
+  assert.equal(keys.filter(([key]) => key.startsWith('🟢 ')).length, 20);
+  assert.deepEqual(keys.at(-2), ['⬅️ Назад · 2/3']);
 });
 
 test('the 🧹 key asks first, and only its Button empties General', async () => {

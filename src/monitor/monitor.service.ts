@@ -14,7 +14,7 @@ import { JobAlerts } from './job-alerts';
 import { ServerWatch } from './server-watch';
 import { escapeHtml, renderEvent } from '../telegram/format';
 import { Answer } from '../estate/answer';
-import { Monitor, MonitorHealth, ReportAhead, ReportChoice, Selection, ServerStatus } from './monitor';
+import { JobChoices, Monitor, MonitorHealth, ReportAhead, ReportChoice, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
 
@@ -245,6 +245,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   async describePointsById(id: string, server?: string): Promise<Answer> {
     const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
     return this.answered(watch, await watch.estate.jobs.describePointsById(id));
+  }
+
+  async jobChoices(): Promise<JobChoices> {
+    const watch = this.shown();
+    const read = await watch.estate.jobs.choices();
+    return read.ok ? { server: watch.estate.name, jobs: read.jobs } : { server: watch.estate.name, unavailable: read.message };
   }
 
   /** Every server's, whichever is selected: a repository is shared by several. */
