@@ -10,7 +10,7 @@ export const JOB_STYLE = `
 .runs { display: flex; flex-direction: column; gap: 1mm; }
 .runs .ph, .nb .ph { display: flex; justify-content: space-between; align-items: flex-start; gap: 4mm; }
 .lg-ok { background: var(--ok); } .lg-none { background: var(--panel2); box-shadow: inset 0 0 0 0.25mm var(--line); }
-.lg-miss { box-shadow: inset 0 0 0 0.3mm var(--unk); background: repeating-linear-gradient(45deg, transparent 0 0.6mm, #e2e8f0 0.6mm 1.2mm); }
+.lg-miss { box-shadow: inset 0 0 0 0.3mm var(--unk); background: repeating-linear-gradient(45deg, transparent 0 0.6mm, var(--line) 0.6mm 1.2mm); }
 
 /* The month of runs */
 .chart { position: relative; flex: 1; min-height: 0; margin: 6mm 3mm 0 12mm; }
@@ -22,21 +22,21 @@ export const JOB_STYLE = `
 .ch-bar i { display: block; border-radius: 0.7mm; min-height: 0.7mm; flex: none; }
 .ch-bar i.success { background: var(--ok); } .ch-bar i.warning { background: var(--warn); } .ch-bar i.failed { background: var(--crit); } .ch-bar i.none { background: var(--unk); }
 .ch-bar i.retry { opacity: 0.62; }
-.ch-bar.cut::after { content: ''; position: absolute; left: -0.8mm; right: -0.8mm; top: 6mm; height: 0.5mm; background: #fff; box-shadow: 0 1.1mm 0 #fff; transform: skewY(-14deg); }
+.ch-bar.cut::after { content: ''; position: absolute; left: -0.8mm; right: -0.8mm; top: 6mm; height: 0.5mm; background: var(--page); box-shadow: 0 1.1mm 0 var(--page); transform: skewY(-14deg); }
 .ch-lab { position: absolute; bottom: 100%; left: 50%; transform: translate(-50%, -1mm); font-size: 6.2pt; white-space: nowrap; color: var(--ink); font-weight: 650; text-align: center; }
 .ch-lab em { font-style: normal; color: var(--muted); font-weight: 600; margin-left: 0.8mm; }
 .ch-d { position: absolute; bottom: -11mm; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; font-size: 5.8pt; color: var(--faint); line-height: 1.2; white-space: nowrap; }
 .ch-d b { color: var(--text); font-size: 6.4pt; }
 .ch-d .bad { color: var(--crit); font-weight: 700; }
 .ch-d.left { transform: translateX(-88%); align-items: flex-end; } .ch-d.right { transform: translateX(-12%); align-items: flex-start; }
-.ch-miss { position: absolute; left: 0; right: 0; bottom: 0; height: 9mm; border-radius: 0.7mm; box-shadow: inset 0 0 0 0.3mm var(--unk); background: repeating-linear-gradient(45deg, transparent 0 0.6mm, #e2e8f0 0.6mm 1.2mm); }
+.ch-miss { position: absolute; left: 0; right: 0; bottom: 0; height: 9mm; border-radius: 0.7mm; box-shadow: inset 0 0 0 0.3mm var(--unk); background: repeating-linear-gradient(45deg, transparent 0 0.6mm, var(--line) 0.6mm 1.2mm); }
 .ch-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 9pt; }
 
 /* Machines by run */
 .vms { table-layout: fixed; }
 .vms td { padding: 0.7mm 2mm; }
 .vms td.r, .vms th.r { white-space: nowrap; }
-.vms tr.bad td { background: #fff8f9; }
+.vms tr.bad td { background: var(--crit-bg); }
 .vm-n { display: flex; align-items: baseline; gap: 1.6mm; min-width: 0; }
 .vm-n span { font-weight: 650; color: var(--ink); font-size: 7.5pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .vm-n small { flex: none; font-size: 6.2pt; color: var(--faint); }
@@ -70,7 +70,7 @@ export const JOB_STYLE = `
 .nb-r { display: grid; grid-template-columns: 54mm 1fr 34mm; gap: 2mm; align-items: center; padding: 0.4mm 0; border-bottom: 0.25mm solid var(--hair); }
 .nb-r .g-num { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nb-r.own .g-n { color: var(--brand); font-weight: 700; }
-.nb-r .track.mini { background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(12.5% - 0.25mm), var(--hair) calc(12.5% - 0.25mm), var(--hair) 12.5%), linear-gradient(90deg, #fff 0 25%, var(--win) 25% 79.1667%, #fff 79.1667%); }
+.nb-r .track.mini { background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(12.5% - 0.25mm), var(--hair) calc(12.5% - 0.25mm), var(--hair) 12.5%), linear-gradient(90deg, var(--page) 0 25%, var(--win) 25% 79.1667%, var(--page) 79.1667%); }
 .a-x { font-size: 7pt; color: var(--text); margin-top: 0.6mm; line-height: 1.3; }
 .act .a-p { margin-top: 1.2mm; }
 .act.ok .a-n { background: var(--ok); }

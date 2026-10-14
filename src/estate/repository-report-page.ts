@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { STYLE } from './repository-report-style';
+import { HEAT_STEPS, themeCss } from './report-theme';
 import { Stage } from './run-speed';
 import {
   Attachment,
@@ -60,7 +61,7 @@ export const reportPage = (report: RepositoryReport, only: ReportRepository[] | 
       pages.push(frame(['Репозитории', ...(repository.site ? [repository.site] : []), repository.short], (pageOf.get(repository) as number) + index, body)),
     );
   }
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Репозитории Veeam — ${stamp}</title><style>${fonts()}${STYLE}</style></head><body>${pages.join('\n')}</body></html>`;
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Репозитории Veeam — ${stamp}</title><style>${fonts()}${themeCss()}${STYLE}</style></head><body>${pages.join('\n')}</body></html>`;
 };
 
 interface View {
@@ -133,40 +134,26 @@ const donut = (repository: ReportRepository): string => {
     .filter(([bytes]) => bytes > 0 && capacity > 0)
     .map(([bytes, colour]) => {
       const share = (100 * bytes) / capacity;
-      const arc = `<circle r="${radius}" cx="21" cy="21" fill="none" stroke="${colour}" stroke-width="5.2" stroke-dasharray="${Math.max(0.3, share - 0.7).toFixed(2)} ${(100 - share + 0.7).toFixed(2)}" stroke-dashoffset="${(25 - at).toFixed(2)}"/>`;
+      const arc = `<circle r="${radius}" cx="21" cy="21" fill="none" style="stroke:${colour}" stroke-width="5.2" stroke-dasharray="${Math.max(0.3, share - 0.7).toFixed(2)} ${(100 - share + 0.7).toFixed(2)}" stroke-dashoffset="${(25 - at).toFixed(2)}"/>`;
       at += share;
       return arc;
     })
     .join('');
-  return `<svg class="donut" viewBox="0 0 42 42"><circle r="${radius}" cx="21" cy="21" fill="none" stroke="#EEF2F7" stroke-width="5.2"/>${arcs}<text x="21" y="22" text-anchor="middle" class="d-v">${Math.round(repository.freePercent)}%</text><text x="21" y="27.4" text-anchor="middle" class="d-l">свободно</text></svg>`;
+  return `<svg class="donut" viewBox="0 0 42 42"><circle r="${radius}" cx="21" cy="21" fill="none" style="stroke:var(--hair)" stroke-width="5.2"/>${arcs}<text x="21" y="22" text-anchor="middle" class="d-v">${Math.round(repository.freePercent)}%</text><text x="21" y="27.4" text-anchor="middle" class="d-l">свободно</text></svg>`;
 };
 
-// --- Load hour by hour: calm blue, busy amber, overload red
-const HEAT: Array<[string, string]> = [
-  ['#F1F5F9', 'transparent'],
-  ['#E0E7FF', '#3730A3'],
-  ['#C7D2FE', '#312E81'],
-  ['#A5B4FC', '#1E1B4B'],
-  ['#FDE68A', '#78350F'],
-  ['#FCD34D', '#78350F'],
-  ['#FB923C', '#FFFFFF'],
-  ['#FB923C', '#FFFFFF'],
-  ['#F43F5E', '#FFFFFF'],
-  ['#F43F5E', '#FFFFFF'],
-  ['#9F1239', '#FFFFFF'],
-];
-const heatOf = (count: number): [string, string] => HEAT[Math.min(HEAT.length - 1, count)];
+// --- Load hour by hour: one hue, pale when calm, deep when overloaded (the theme's .h0 … .h10)
+const heatOf = (count: number): string => `h${Math.min(HEAT_STEPS - 1, count)}`;
 const inWindow = (hour: number) => hour >= 18 || hour < 7;
 const heatScale = () =>
-  `<div class="scale"><span>спокойно</span>${[1, 2, 3, 4, 5, 6, 8, 10].map((count) => `<i style="background:${heatOf(count)[0]}"></i>`).join('')}<span>перегруз</span></div>`;
+  `<div class="scale"><span>спокойно</span>${[1, 2, 3, 4, 5, 6, 8, 10].map((count) => `<i class="${heatOf(count)}"></i>`).join('')}<span>перегруз</span></div>`;
 const heatmap = (repository: ReportRepository): string =>
   `<div class="heat"><div></div>${Array.from({ length: 24 }, (_, hour) => `<div class="hh${inWindow(hour) ? ' win' : ''}">${String(hour).padStart(2, '0')}</div>`).join('')}${repository.heat
     .map(
       (row, index) =>
         `<div class="hd">${dayName(WEEK[index])}</div>${row
           .map((count) => {
-            const [background, colour] = heatOf(count);
-            return `<div class="hc${count === repository.peak && count ? ' peak' : ''}" style="background:${background};color:${colour}">${count || ''}</div>`;
+            return `<div class="hc ${heatOf(count)}${count === repository.peak && count ? ' peak' : ''}">${count || ''}</div>`;
           })
           .join('')}`,
     )

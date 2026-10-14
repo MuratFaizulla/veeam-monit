@@ -3,6 +3,7 @@ import { plural } from '../telegram/time';
 import { calendarLabel, dayLabel, JobReport, ReportMachine, sizeOf, spanOf } from './job-report';
 import { JOB_STYLE } from './job-report-style';
 import { fonts, glyph, icon, kpi, pill, stampOf, tone } from './repository-report-page';
+import { themeCss } from './report-theme';
 import { STYLE } from './repository-report-style';
 
 /**
@@ -20,7 +21,7 @@ export const jobReportPage = (report: JobReport, timezone: string): string => {
   const bodies = [overview(view), ...machinePages.map((machines, index) => machinesPage(view, machines, index === 0)), storagePage(view)];
   const top = (number: number) =>
     `<div class="top"><div class="crumb"><span class="logo"></span>Задания<em>›</em>${esc(report.server)}<em>›</em><b>${esc(report.name)}</b></div><div>${stamp} · ${report.days} дней · <b>${number}</b> / ${bodies.length}</div></div>`;
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(report.name)} — ${stamp}</title><style>${fonts()}${STYLE}${JOB_STYLE}</style></head><body>${bodies
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(report.name)} — ${stamp}</title><style>${fonts()}${themeCss()}${STYLE}${JOB_STYLE}</style></head><body>${bodies
     .map((body, index) => `<section class="page">${top(index + 1)}${body}</section>`)
     .join('\n')}</body></html>`;
 };
