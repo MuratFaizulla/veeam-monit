@@ -103,6 +103,23 @@ export const missedFullDays = (
   return missed;
 };
 
+/**
+ * The next day, today included, a Full is owed on, as for `missedFullDays`;
+ * undefined when none is owed in the coming year.
+ */
+export const nextFullDay = (
+  schedules: FullSchedule[],
+  now: number,
+  timezone: string,
+): { day: number; kind: FullSchedule['kind'] } | undefined => {
+  const today = dayIn(now, timezone);
+  for (let day = today; day < today + LOOKBACK_DAYS * DAY; day += DAY) {
+    const owed = schedules.find((schedule) => isOwed(schedule, day));
+    if (owed) return { day, kind: owed.kind };
+  }
+  return undefined;
+};
+
 /** Whether `schedule` owes a Full on `day`, a `Date.UTC` midnight. */
 const isOwed = (schedule: FullSchedule, day: number): boolean => {
   const date = new Date(day);
@@ -123,7 +140,7 @@ const formatters = new Map<string, Intl.DateTimeFormat>();
  * The calendar day `at` falls on in `timezone`, as its `Date.UTC` midnight:
  * stepping a day is adding a day, whatever the zone does with its clocks.
  */
-const dayIn = (at: number, timezone: string): number => {
+export const dayIn = (at: number, timezone: string): number => {
   let formatter = formatters.get(timezone);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat('en-CA', {

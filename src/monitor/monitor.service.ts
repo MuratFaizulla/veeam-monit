@@ -16,6 +16,7 @@ import { escapeHtml, renderEvent } from '../telegram/format';
 import { Answer } from '../estate/answer';
 import { JobChoices, Monitor, MonitorHealth, ReportAhead, ReportChoice, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
+import { JobReports } from '../estate/job-reports';
 import { RepositoryReports } from '../estate/repository-reports';
 
 const HOUR = 3_600_000;
@@ -75,6 +76,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     private readonly live: TelegramLiveService,
     private readonly snapshots: LiveSnapshotsService,
     private readonly reports: RepositoryReports,
+    private readonly jobReports: JobReports,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
     this.watches = estates.all.map((estate) => {
@@ -245,6 +247,11 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   async describePointsById(id: string, server?: string): Promise<Answer> {
     const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
     return this.answered(watch, await watch.estate.jobs.describePointsById(id));
+  }
+
+  jobReport(id: string, server?: string): Promise<Answer> {
+    const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
+    return this.jobReports.answer(watch.estate, id);
   }
 
   async jobChoices(): Promise<JobChoices> {

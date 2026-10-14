@@ -226,6 +226,22 @@ name that matches none, so only the report itself waits. A server that
 stops answering keeps what it said before it stopped. Printed by a headless
 Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
 
+## Job report
+
+One job over a month, as a PDF in the Repository report's look, asked for by
+the Button under its Job card: its Runs as bars of their attempts, each
+machine by Run, the chain on disk, Veeam's errors by meaning, who else wrote
+to the repository during the newest Run, and what to do.
+
+A machine is judged by Runs too: one whose first attempt failed and whose
+Run's retry saved it is saved, and said to be saved by the retry; one no Run
+saved in the month is **never saved**, whatever its attempts said. A
+scheduled start no Run came for within twelve hours of it is a missed start,
+counted only after the job's first Run of the month.
+
+Read from the job's own server when asked — a few dozen requests — and kept
+by nobody; printed by the same browser, one report at a time.
+
 What it says is `src/estate/repository-report.ts`, pure; reading and
 answering, `src/estate/repository-reports.ts`; the page,
 `src/estate/repository-report-page.ts`; printing, `src/estate/report-printer.ts`.

@@ -5,6 +5,7 @@ import { ReportAhead, ReportChoice } from '../estate/repository-reports';
 
 export type { Answer } from '../estate/answer';
 export type { JobChoice, JobMark } from '../estate/job-choices';
+export { JOB_REPORT_DAYS } from '../estate/job-report';
 export type { ReportAhead, ReportChoice } from '../estate/repository-reports';
 
 /** The Selected server's jobs, for the job menu. */
@@ -95,6 +96,11 @@ export interface Monitor {
    * ones `query` names. Read on demand and kept for half an hour.
    */
   repositoryReport(query: string): Promise<Answer>;
+  /**
+   * One job's report over a month as a PDF, for a Button that addressed the
+   * job by id on the server it named — or the Selected one.
+   */
+  jobReport(id: string, server?: string): Promise<Answer>;
   /** The repositories the report can be asked for, in its order, as the cycles last saw them. */
   repositoryChoices(): ReportChoice[];
   /**

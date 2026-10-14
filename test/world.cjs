@@ -31,6 +31,7 @@ const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
 const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
 const { RepositoryReports } = require('../dist/estate/repository-reports');
+const { JobReports } = require('../dist/estate/job-reports');
 
 const CHAT = '-1001234567890';
 /** The key of the one server a world has: named after its host, https://localhost:9419. */
@@ -167,6 +168,7 @@ function idleMonitor() {
     repositoryReport: async (query) => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
     repositoryChoices: () => [],
     jobChoices: async () => ({ server: SERVER, jobs: [] }),
+    jobReport: async (id) => ({ text: `отчёт задания ${id}`, document: { filename: 'job.pdf', content: Buffer.from('%PDF') } }),
     repositoryReportAhead: () => ({ kind: 'coming', names: [], ready: true }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
@@ -279,8 +281,9 @@ function printerOf() {
 /** A monitor watching several servers, the first of them selected until one is chosen. */
 function monitorOfServers(w, servers, printer = printerOf()) {
   const reports = new RepositoryReports(w.config, { all: servers }, printer);
+  const jobReports = new JobReports(w.config, printer);
   return new MonitorService(
-    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports,
+    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports, jobReports,
   );
 }
 

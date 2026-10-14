@@ -72,8 +72,8 @@ interface View {
 // --- Words
 const STATUS_WORD: Record<Status, string> = { crit: 'Критично', warn: 'Внимание', ok: 'Норма', unknown: 'Нет данных' };
 /** The stylesheet's name for a status. */
-const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'unk' : status);
-const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}"><i></i>${STATUS_WORD[status]}</span>`;
+export const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'unk' : status);
+export const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}"><i></i>${STATUS_WORD[status]}</span>`;
 const freeTone = (repository: ReportRepository): string => (repository.freePercent < 10 ? 'crit' : repository.freePercent < 20 ? 'warn' : 'ok');
 const slug = (repository: ReportRepository): string => `r-${repository.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const jobsWord = (count: number) => plural(count, 'задача', 'задачи', 'задач');
@@ -105,9 +105,9 @@ const ICONS: Record<Icon | 'check' | 'alert' | 'arrow' | 'down' | 'pin', string>
   down: '<path d="M8 3v10M4 9l4 4 4-4"/>',
   pin: '<path d="M8 14s5-4.2 5-8A5 5 0 0 0 3 6c0 3.8 5 8 5 8z"/><circle cx="8" cy="6" r="1.6"/>',
 };
-const icon = (name: keyof typeof ICONS, colour = '') =>
+export const icon = (name: keyof typeof ICONS, colour = '') =>
   `<span class="ic ${colour}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg></span>`;
-const glyph = (name: keyof typeof ICONS) =>
+export const glyph = (name: keyof typeof ICONS) =>
   `<svg class="gl" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
 // --- Space: what jobs hold, what no job owns in disk terms, what is free
@@ -205,7 +205,7 @@ const axis = (nowMinute: number) =>
   `<div class="g-axis">${[0, 3, 6, 9, 12, 15, 18, 21].map((hour) => `<span style="left:${share(hour * 60)}%">${String(hour).padStart(2, '0')}</span>`).join('')}<em style="left:${share(nowMinute)}%">сейчас</em></div>`;
 
 // --- Small parts
-const kpi = (label: string, value: string | number, unit: string, hint: string, colour = '') =>
+export const kpi = (label: string, value: string | number, unit: string, hint: string, colour = '') =>
   `<div class="kpi ${colour}"><div class="k-l">${label}</div><div class="k-v">${value}<small>${unit}</small></div><div class="k-h">${hint}</div></div>`;
 const chip = (colour: string, text: string) => `<span class="chip ${colour}">${text}</span>`;
 const top = (crumb: string[], number: number, total: number, view: View) =>
@@ -548,7 +548,7 @@ export const stampOf = (at: number, timezone: string): string => {
  * fonts with Cyrillic of its own. Read once, a few hundred kilobytes.
  */
 let embedded: string | undefined;
-const fonts = (): string => {
+export const fonts = (): string => {
   if (embedded === undefined) {
     const css = require.resolve('@fontsource-variable/inter/index.css');
     const dir = dirname(css);

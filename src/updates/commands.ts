@@ -69,9 +69,10 @@ export interface Answers {
 
 /**
  * A Button that stands for a command. A job's own Buttons are not: they
- * carry an id, and `/job` and `/points` are asked with a half-remembered name.
+ * carry an id, and `/job` and `/points` are asked with a half-remembered name;
+ * its report has no command at all, only the Button under its card.
  */
-export type CommandButton = Exclude<Action['kind'], 'job' | 'points'>;
+export type CommandButton = Exclude<Action['kind'], 'job' | 'points' | 'report'>;
 
 export interface Command {
   /** What is typed after the slash, and what the menu shows. */

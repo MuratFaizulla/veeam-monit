@@ -984,10 +984,10 @@ test('pressing a job button opens that job, without anybody typing a name', asyn
   assert.equal(sent.message_thread_id, undefined, 'ответ в General');
   assert.match(sent.text, /OPS_ERP_APP_DB1/);
   assert.match(sent.text, /Расписание:<\/b> пн, ср, пт в 03:12/);
-  // And the card offers its own refresh, so the loop closes.
+  // And the card offers its own refresh, so the loop closes, and its month as a PDF.
   assert.deepEqual(
     sent.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
-    [`a:job:${SERVER}:1`, `a:pts:${SERVER}:1`, 'a:sum'],
+    [`a:job:${SERVER}:1`, `a:pts:${SERVER}:1`, 'a:sum', `a:rpt:${SERVER}:1`],
   );
 });
 

@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
-import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
+import { JOB_REPORT_DAYS, MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
@@ -236,6 +236,7 @@ export class TelegramCommandsService implements Answers {
     if (action.kind === 'points') {
       return this.reading(() => this.monitor.describePointsById(action.id, action.server));
     }
+    if (action.kind === 'report') return this.jobReport(asked, action.id, action.server);
     return commandPressed(action.kind)?.answer(this, asked);
   }
 
@@ -350,6 +351,25 @@ export class TelegramCommandsService implements Answers {
       // Whoever pressed a repository's key gets the main menu back.
       markup: mainMenu({ selective: true }),
       later: () => this.uploading(String(asked.chat.id), () => this.answered(() => this.monitor.repositoryReport(query))),
+    };
+  }
+
+  /**
+   * The 📄 Button under a Job card: that job's month as a PDF. A few dozen
+   * requests and a print, so it is said at once that it is coming, and the
+   * PDF follows, as the Repository report does.
+   */
+  private jobReport(asked: Asked, id: string, server?: string): Reply {
+    const tooSoon = this.tooSoon();
+    if (tooSoon) return tooSoon;
+    return {
+      lines: [
+        '⏳ <b>Готовлю отчёт по заданию</b>',
+        '',
+        `Читаю запуски, машины и точки за ${JOB_REPORT_DAYS} дней — это 20–30 секунд.`,
+        'PDF придёт сюда, а бот пока отвечает на другие команды.',
+      ],
+      later: () => this.uploading(String(asked.chat.id), () => this.answered(() => this.monitor.jobReport(id, server))),
     };
   }
 

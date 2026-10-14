@@ -31,7 +31,9 @@ export type Action =
    */
   | { kind: 'job'; id: string; server?: string }
   /** One job's restore points, addressed the same way. */
-  | { kind: 'points'; id: string; server?: string };
+  | { kind: 'points'; id: string; server?: string }
+  /** One job's report over a month, as a PDF, addressed the same way. */
+  | { kind: 'report'; id: string; server?: string };
 
 /** The Actions that address one job, and so carry its id. */
 type JobAction = Extract<Action, { id: string }>;
@@ -44,7 +46,11 @@ const PREFIX = {
   clear: 'a:clr',
   job: 'a:job:',
   points: 'a:pts:',
+  report: 'a:rpt:',
 } as const;
+
+/** The Actions that carry a job's id, in the order they are told apart. */
+const JOB_KINDS = ['job', 'points', 'report'] as const;
 
 /** Telegram's own limit. A longer id is not encoded rather than truncated. */
 const DATA_LIMIT = 64;
@@ -53,7 +59,7 @@ const fits = (data: string): string | undefined =>
   Buffer.byteLength(data) <= DATA_LIMIT ? data : undefined;
 
 export const encode = (action: Action): string | undefined => {
-  if (action.kind === 'job' || action.kind === 'points') {
+  if (action.kind === 'job' || action.kind === 'points' || action.kind === 'report') {
     // A job id is a GUID and never holds a colon, so the server goes first.
     const server = action.server === undefined ? '' : `${action.server}:`;
     return fits(`${PREFIX[action.kind]}${server}${action.id}`);
@@ -69,7 +75,7 @@ export const decode = (data: string | undefined): Action | undefined => {
   if (data === PREFIX.help) return { kind: 'help' };
   if (data === PREFIX.status) return { kind: 'status' };
   if (data === PREFIX.clear) return { kind: 'clear' };
-  for (const kind of ['job', 'points'] as const) {
+  for (const kind of JOB_KINDS) {
     if (!data.startsWith(PREFIX[kind])) continue;
     const rest = data.slice(PREFIX[kind].length);
     const colon = rest.indexOf(':');
@@ -125,7 +131,7 @@ export const jobsKeyboard = (
     tail,
   ]);
 
-/** Under a job card: ask the same question again, see its points, or step back out. */
+/** Under a job card: ask the same question again, see its points, its month as a PDF, or step back out. */
 export const cardKeyboard = (id: string, server?: string): TelegramKeyboard | undefined =>
   keyboard([
     [
@@ -133,6 +139,7 @@ export const cardKeyboard = (id: string, server?: string): TelegramKeyboard | un
       ['🗂 Точки', { kind: 'points', id, server }],
       ['📊 Сводка', { kind: 'summary' }],
     ],
+    [['📄 Отчёт PDF', { kind: 'report', id, server }]],
   ]);
 
 /** Under a job's points: ask again, see its card, or step back out. */
