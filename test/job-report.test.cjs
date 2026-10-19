@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount } = require('./world.cjs');
 const { jobReportOf } = require('../dist/estate/job-report');
 const { jobReportPage } = require('../dist/estate/job-report-page');
+const { sessionReportOf } = require('../dist/estate/session-report');
+const { sessionReportPage, veeamSize, veeamDuration } = require('../dist/estate/session-report-page');
 const { readJob } = require('../dist/estate/job-reports');
 const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
 const { encode, decode } = require('../dist/updates/keyboard');
@@ -184,17 +186,205 @@ test('a first attempt a retry makes good every time is a warning, and a Full tha
   ]);
 });
 
-test('the page has the overview, the machines and the storage, and Veeam\'s names are escaped', () => {
-  const html = jobReportPage(jobReportOf(edgeReading({ job: { id: 'j1', name: 'OPS_<b>Edge</b>', type: 'Backup', result: 'failed' } }), TZ), TZ);
+/* ------------------------------------------------------------------ *
+ * The file: the job's sessions, as Veeam's own report prints them
+ * ------------------------------------------------------------------ */
 
-  assert.equal(html.match(/<section class="page">/g).length, 3);
-  assert.match(html, /Запуски за 30 дней/);
-  assert.match(html, /Машины/);
-  assert.match(html, /Кто ещё писал в BKP03/);
-  assert.match(html, /OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
+test('every session is a block of its own, newest first, a retry and a Full named as Veeam names them', () => {
+  const report = sessionReportOf(edgeReading(), TZ);
+
+  assert.equal(report.kind, 'Backup job');
+  assert.deepEqual(report.sessions.map((session) => [session.title, session.status, `${session.processed} of ${session.of}`]), [
+    ['OPS_Edge (Retry 1)', 'Error', '1 of 1'],
+    ['OPS_Edge', 'Error', '3 of 3'],
+    ['OPS_Edge (Retry 1)', 'Error', '1 of 1'],
+    ['OPS_Edge', 'Error', '3 of 3'],
+    ['OPS_Edge (Retry 1)', 'Error', '2 of 2'],
+    ['OPS_Edge', 'Error', '3 of 3'],
+  ]);
+  const newestRun = report.sessions[1];
+  assert.deepEqual(newestRun.counts, { success: 2, warning: 0, error: 1 });
+  assert.deepEqual(newestRun.notes, ['Job finished with error at 10/13/2026 4:30:00 AM']);
+  assert.equal(newestRun.transferred, 3 * GB);
+  assert.equal(newestRun.totalSize, undefined, 'Veeam did not say how big the machines are');
+  // edge-01's own outcome names the machine again: the row already does.
+  assert.deepEqual(newestRun.machines[0].details, ["Error: The method is disabled by 'vShield_SVM'"]);
+  assert.deepEqual(newestRun.machines[1].details, []);
+
+  const full = sessionReportOf(edgeReading({
+    attempts: [attempt('f1', '2026-10-13T04:00:00+05:00', 30, 'success', [{ ...task('db-01', 'success'), algorithm: 'Full' }, { ...task('web-01', 'success'), algorithm: 'Full' }])],
+  }), TZ);
+  assert.equal(full.sessions[0].title, 'OPS_Edge (Full)');
+  assert.equal(full.sessions[0].status, 'Success');
+  assert.deepEqual(full.sessions[0].notes, []);
+});
+
+test('a session\'s backup size is what it wrote; before the oldest file on disk it is not known', () => {
+  const report = sessionReportOf(edgeReading({
+    files: [
+      { name: 'OPS_EdgeD2026-10-13T040002.vib', creationTime: '2026-10-13T04:00:02', backupSize: 4 * GB, dataSize: 18 * GB, dedupRatio: 71, compressRatio: 56 },
+      { name: 'OPS_EdgeD2026-10-12T040002.vib', creationTime: '2026-10-12T04:00:02', backupSize: 3 * GB, dataSize: 9 * GB },
+    ],
+  }), TZ);
+  const at = (start) => report.sessions.find((session) => session.start === Date.parse(start));
+
+  const wrote = at('2026-10-13T04:00:00+05:00');
+  assert.equal(wrote.backupSize, 4 * GB);
+  assert.equal(wrote.dedupe.toFixed(1), '1.4');
+  assert.equal(wrote.compression.toFixed(1), '1.8');
+  // The retry after it wrote nothing: there are files that old, and none of its own.
+  assert.deepEqual([at('2026-10-13T04:42:00+05:00').backupSize, at('2026-10-13T04:42:00+05:00').dedupe], [0, 1]);
+  // 10.10 is before the oldest file kept: whatever it wrote is gone, not unwritten.
+  assert.equal(at('2026-10-10T04:00:00+05:00').backupSize, undefined);
+});
+
+test('a machine\'s details are what its log says went wrong, each line once, the last line kept', () => {
+  const failed = { ...task('db-01', 'failed', 'Getting VM info from vSphere'), id: 't-db', creationTime: '2026-10-13T23:50:00', endTime: '2026-10-14T00:10:00' };
+  const report = sessionReportOf(edgeReading({
+    attempts: [attempt('d1', '2026-10-13T23:45:00+05:00', 40, 'failed', [failed])],
+    taskLogs: { 't-db': [
+      { status: 'Succeeded', title: 'Queued for processing at 13.10.2026 23:50:00' },
+      { status: 'Failed', title: 'Getting VM info from vSphere' },
+      { status: 'Failed', title: 'Error: Cannot get service content.\r\nSoap fault.' },
+      { status: 'Warning', title: 'Processing db-01 Error: Cannot get service content.' },
+      { status: 'Failed', title: 'Processing finished with errors at 14.10.2026 0:10:00' },
+    ] },
+  }), TZ);
+  const [machine] = report.sessions[0].machines;
+
+  assert.deepEqual(machine.details, ['Getting VM info from vSphere', 'Error: Cannot get service content.', 'Soap fault.', 'Processing finished with errors at 14.10.2026 0:10:00']);
+  // A task's time is the Veeam server's clock: 23:50 to 00:10, twenty minutes, into the next day.
+  assert.equal(machine.minutes, 20);
+});
+
+test('past midnight is "(+N)" by whole days since the session started, as Veeam counts it, and seconds are not rounded up', () => {
+  const html = (start, minutes) => sessionReportPage(sessionReportOf(edgeReading({ attempts: [attempt('l1', start, minutes, 'failed', [])] }), TZ), TZ);
+
+  // 23:45 to 00:25: the next day, but not a day later.
+  assert.match(html('2026-10-13T23:45:00+05:00', 40), /<td class="k">End time<\/td><td>12:25:00 AM<\/td>/);
+  // Friday 21:48:48 to Sunday 19:41:50 — 45:53:02 — is "(+1)" in Veeam's report.
+  const long = html('2026-10-10T21:48:48+05:00', 45 * 60 + 53 + 2.9 / 60);
+  assert.match(long, /7:41:50 PM \(\+1\)/);
+  assert.match(long, /<td>45:53:02<\/td>/);
+});
+
+test('a replica\'s backup size is what a good session sent and nothing for a failed one; a job started by hand has no retries', () => {
+  const replica = edgeReading({
+    job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
+    configured: { ...edgeReading().configured, schedule: { runAutomatically: false, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } } },
+    files: [],
+    attempts: [
+      attempt('r2', '2026-10-13T04:42:00+05:00', 30, 'success', [task('db-01', 'success')]),
+      attempt('r1', '2026-10-13T04:00:00+05:00', 30, 'failed', [task('db-01', 'failed', 'Error: A connection attempt failed because the connected party did not properly respond after a period of time 10.13.0.7:443')]),
+    ],
+  });
+  const report = sessionReportOf(replica, TZ);
+
+  assert.equal(report.kind, 'Replication job');
+  assert.deepEqual(report.sessions.map((session) => [session.title, session.backupSize]), [['OPS_Replica', GB], ['OPS_Replica', 0]]);
+  assert.equal(report.sessions[0].dedupe, 1);
+});
+
+test('a session still going says how far it has got, and its machines still going have no end', () => {
+  const running = {
+    session: { id: 'r1', creationTime: '2026-10-14T04:00:00+05:00', endTime: '1900-01-01T00:00:00Z', state: 'Working', progressPercent: 62, result: { result: 'None' } },
+    tasks: [{ name: 'db-01', state: 'Working', result: { result: 'None' }, creationTime: '2026-10-14T04:01:00', endTime: '1900-01-01T00:00:00', progress: { processedSize: 40 * GB, readSize: 10 * GB, transferredSize: 2 * GB } }],
+  };
+  const report = sessionReportOf(edgeReading({ attempts: [running] }), TZ);
+  const [session] = report.sessions;
+
+  assert.equal(session.status, 'In progress');
+  assert.deepEqual(session.notes, ['Processing (62% done)']);
+  assert.equal(`${session.processed} of ${session.of}`, '0 of 1');
+  assert.equal(session.machines[0].status, 'In progress');
+  assert.equal(session.machines[0].end, undefined);
+  assert.equal(session.totalSize, 40 * GB);
+});
+
+test('the page is Veeam\'s: its header, its day, its numbers, its Details; names escaped, nothing fetched', () => {
+  const html = sessionReportPage(sessionReportOf(edgeReading({ job: { id: 'j1', name: 'OPS_<b>Edge</b>', type: 'Backup', result: 'failed' } }), TZ), TZ);
+
+  assert.equal(html.match(/<div class="vb">/g).length, 6);
+  assert.match(html, /Backup job: OPS_&lt;b&gt;Edge&lt;\/b&gt; \(Retry 1\)/);
   assert.doesNotMatch(html, /OPS_<b>Edge/);
+  assert.match(html, /Tuesday, October 13, 2026 4:42:00 AM/);
+  assert.match(html, /<td class="k">Backup size<\/td>/);
+  assert.match(html, />Details</);
+  assert.match(html, /<span class="st bad">Error<\/span>/);
   assert.match(html, /url\(data:font\/woff2;base64,/, 'the font is in the page');
   assert.doesNotMatch(html, /https?:\/\//, 'the page fetches nothing');
+});
+
+/* ------------------------------------------------------------------ *
+ * The file's first page: the job at a glance
+ * ------------------------------------------------------------------ */
+
+test('the file opens with a page that says how the job stands, and the sessions follow on pages of their own', () => {
+  const reading = edgeReading({ job: { id: 'j1', name: 'OPS_<b>Edge</b>', type: 'Backup', result: 'failed' } });
+  const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
+
+  assert.equal(html.match(/<section class="js">/g).length, 1, 'one page before the sessions');
+  assert.match(html, /Задание: OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
+  assert.match(html, /Сводка/);
+  assert.match(html, /1 из 3 машин не сохранена ни разу за 30 дней/);
+  assert.match(html, /Запуски за 30 дней/);
+  assert.match(html, /Что сделать/);
+  assert.match(html, /Исключить из задания 1 служебную машину NSX/);
+  assert.match(html, /Машины/);
+  assert.match(html, /Кто ещё писал в BKP03/);
+  assert.match(html, /<div class="vr">/);
+  assert.match(html, /@page sessions \{[^}]*margin: 9mm 10mm/);
+  assert.match(html, /Backup job: OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /OPS_<b>Edge/);
+  assert.doesNotMatch(html, /https?:\/\//, 'the page fetches nothing');
+});
+
+test('a replica is told by its runs, not by restore points the bot cannot see', () => {
+  const replica = edgeReading({
+    job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
+    configured: { ...edgeReading().configured, virtualMachines: { includes: [{ type: 'VirtualMachine', name: 'db-01' }] } },
+    files: [],
+    points: [],
+    neighbours: [],
+    neighbourRuns: [],
+    attempts: [
+      attempt('r2', '2026-10-13T04:00:00+05:00', 30, 'failed', [task('db-01', 'failed', 'Error: A connection attempt failed because the connected party did not properly respond after a period of time 10.13.0.7:443')]),
+      attempt('r1', '2026-10-12T04:00:00+05:00', 30, 'success', [task('db-01', 'success')]),
+    ],
+  });
+  const report = jobReportOf(replica, TZ);
+  const html = jobReportPage(report, sessionReportOf(replica, TZ), TZ);
+
+  assert.match(html, /Машины реплицированы/);
+  assert.match(html, /Последняя удачная/);
+  assert.doesNotMatch(html, /точек нет/);
+  assert.doesNotMatch(html, /Кто ещё писал/, 'nobody else writes there: no chart of nobody');
+  assert.equal(report.steps[0].title, 'Проверить связь до 10.13.0.7:443');
+  assert.equal(report.steps[0].severity, 'crit');
+});
+
+test('a run still going leaves "all failed" to the ones that ended, and a machine no run took on is said', () => {
+  const going = {
+    session: { id: 'g1', creationTime: '2026-10-14T04:00:00+05:00', endTime: '1900-01-01T00:00:00Z', state: 'Working', result: { result: 'None' } },
+    tasks: [task('db-01', 'none')],
+  };
+  const reading = edgeReading({
+    configured: { ...edgeReading().configured, virtualMachines: { includes: [{ type: 'VirtualMachine', name: 'db-01' }, { type: 'VirtualMachine', name: 'gone-01' }] } },
+    attempts: [going, ...edgeReading().attempts.filter(({ session }) => !session.id.startsWith('c')).map((a) => ({ ...a, tasks: a.tasks.filter((t) => t.name === 'db-01') }))],
+  });
+  const report = jobReportOf(reading, TZ);
+
+  assert.equal(report.status, 'crit');
+  assert.equal(report.verdict, '1 из 2 машин задания ни один запуск не обработал; все 2 запуска закончились ошибкой');
+  assert.equal(report.steps[0].title, 'Найти в vCenter 1 машину задания');
+  assert.deepEqual(report.steps[0].tags, ['gone-01']);
+});
+
+test('sizes and durations are written as Veeam writes them', () => {
+  assert.deepEqual([0, 512, 1.5 * 1024 ** 2, 9 * 1024 ** 4, 40.3 * 1024 ** 4].map(veeamSize), ['0 B', '512 B', '1.5 MB', '9 TB', '40.3 TB']);
+  assert.equal(veeamSize(undefined), '—');
+  assert.equal(veeamDuration(45 * 60 + 53 + 2 / 60), '45:53:02');
+  assert.equal(veeamDuration(3), '0:03:00');
 });
 
 /* ------------------------------------------------------------------ *
@@ -257,6 +447,20 @@ test('a job is read for its month: its sessions and their machines, its files an
   assert.deepEqual(reading.neighbourRuns.map((run) => run.jobId), ['n1']);
 });
 
+test('the log of a machine is read only when it did not end in a success: its own outcome says only the step', async () => {
+  const askedLogs = [];
+  const log = (id, records) => () => { askedLogs.push(id); return { records }; };
+  const { veeam } = edgeServer({
+    '/api/v1/sessions/s1/taskSessions': { data: [{ ...task('db-01', 'Failed', 'Getting VM info from vSphere'), id: 'tf' }, { ...task('web-01', 'Success'), id: 'ts' }] },
+    '/api/v1/taskSessions/tf/logs': log('tf', [{ status: 'Failed', title: 'Error: Cannot get service content.' }]),
+    '/api/v1/taskSessions/ts/logs': log('ts', []),
+  });
+  const reading = await readJob('veeam01-backup-a', new VeeamEstateReader(veeam, monitorAccount()), 'j1', NOW);
+
+  assert.deepEqual(askedLogs, ['tf']);
+  assert.deepEqual(reading.taskLogs, { tf: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] });
+});
+
 test('a request after the sessions that fails is said, and the rest is kept; a job that is gone is none', async () => {
   const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
   const reader = new VeeamEstateReader(veeam, monitorAccount());
@@ -296,7 +500,9 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   assert.match(sent.document.filename, /^Задание OPS_Edge \d\d\.\d\d\.\d{4}\.pdf$/);
   assert.match(sent.caption, /^📄 <b>OPS_Edge<\/b> — /);
   assert.match(sent.caption, /\n<i>localhost · за 30 дней, на \d\d\.\d\d\.\d{4} \d\d:\d\d\.<\/i>$/);
-  assert.match(printer.pages[0], /Машины/);
+  assert.match(printer.pages[0], /Что сделать/);
+  assert.match(printer.pages[0], /Backup job: OPS_Edge/);
+  assert.match(printer.pages[0], />Details</);
 });
 
 test('a job\'s report Button carries its server and id within Telegram\'s 64 bytes, and reads back', () => {

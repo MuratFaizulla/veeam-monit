@@ -3,12 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { escapeHtml } from '../telegram/format';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
+import { VeeamLogRecord } from '../veeam/types';
 import { Answer } from './answer';
 import { endOf, JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
-import { jobReportPage } from './job-report-page';
 import { ReportPrinter } from './report-printer';
 import { stampOf } from './repository-report-page';
 import { ServerEstate } from './server-estates';
+import { jobReportPage } from './job-report-page';
+import { sessionReportOf } from './session-report';
 
 const DAY = 86_400_000;
 /** The job's newest sessions asked for: a month of a daily job with every retry, and then some. */
@@ -17,6 +19,8 @@ const SESSIONS = 500;
 const TASK_SESSIONS = 60;
 /** The newest finished sessions whose log says what held them back. */
 const LOG_SESSIONS = 6;
+/** Logs of the machines that did not end in a success, a request each: a failing month of a big job has hundreds. */
+const TASK_LOGS = 150;
 /** Requests in flight at a time. */
 const POOL = 6;
 
@@ -26,9 +30,10 @@ const STATUS_WORD = { crit: 'критично', warn: 'внимание', ok: '�
 /**
  * The Job report, read and printed when somebody presses its Button under a
  * Job card: one job on one server, over a month. Some eighty requests — the
- * job's sessions and every one's machines, the backups and their files, the
- * repository and who else writes there — so it is read on demand only, and
- * printed by the same browser as the Repository report, one at a time.
+ * job's sessions and every one's machines, the logs of those that failed, the
+ * backups and their files, the repository and who else writes there — so it
+ * is read on demand only, and printed by the same browser as the Repository
+ * report, one at a time.
  */
 @Injectable()
 export class JobReports {
@@ -48,7 +53,7 @@ export class JobReports {
     if (!reading) return { text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.' };
     if (reading.error) this.logger.warn(`Job report: ${estate.name} ${reading.job.name} read in part: ${reading.error}`);
     const report = jobReportOf(reading, this.timezone);
-    const content = await this.printer.print(jobReportPage(report, this.timezone));
+    const content = await this.printer.print(jobReportPage(report, sessionReportOf(reading, this.timezone), this.timezone));
     const stamp = stampOf(report.at, this.timezone);
     return {
       text: [
@@ -90,6 +95,10 @@ export const readJob = async (server: string, reader: VeeamEstateReader, id: str
   // A server whose REST API predates task sessions answers 404: the machines are unknown, the runs are not.
   const tasks = await pooled(sessions.slice(0, TASK_SESSIONS), (session) => reader.taskSessions(session.id as string));
   reading.attempts = sessions.map((session, index) => ({ session, tasks: tasks[index] }));
+  // A machine's own outcome says only the step it failed at, "Getting VM info from vSphere"; its log says why.
+  const unsaved = tasks.flatMap((list) => list ?? []).filter((task) => task.id && !/^success$/i.test(task.result?.result ?? '')).slice(0, TASK_LOGS);
+  const taskLogs = await pooled(unsaved, (task) => reader.taskLog(task.id as string));
+  reading.taskLogs = Object.fromEntries(unsaved.flatMap((task, index) => (taskLogs[index] ? [[task.id as string, taskLogs[index] as VeeamLogRecord[]]] : [])));
 
   await step('журналы', async () => {
     const logs = await pooled(sessions.filter((session) => endOf(session)).slice(0, LOG_SESSIONS), (session) => reader.sessionLog(session.id as string));

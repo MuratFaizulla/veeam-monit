@@ -228,15 +228,27 @@ Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
 
 ## Job report
 
-One job over a month, as a PDF in the Repository report's look, asked for by
-the Button under its Job card: its Runs as bars of their attempts, each
-machine by Run, the chain on disk, Veeam's errors by meaning, who else wrote
-to the repository during the newest Run, and what to do.
+One job over a month, asked for by the Button under its Job card, as a PDF:
+first a page that says how the job stands, judged by its Runs — a verdict,
+its numbers, the month of Runs, what to do, its machines and who else wrote
+to the repository during the newest Run — and then the job's sessions as
+Veeam's own session report prints them, a **Session report**.
+
+A Session report is a block a session, newest first, not a Run: Veeam's
+retries are blocks of their own, marked «(Retry N)» by the attempt they were
+of their Run, and «(Full)» when most machines took one; a job started by hand
+has no retries, since Veeam retries only what it starts. Each says Veeam's
+numbers in Veeam's English and, for every machine, what its log said that
+was not a success. A session's backup size is that of the files written
+during it; before the oldest file kept, it is unknown rather than nothing.
 
 A machine is judged by Runs too: one whose first attempt failed and whose
 Run's retry saved it is saved, and said to be saved by the retry; one no Run
-saved in the month is **never saved**, whatever its attempts said. A
-scheduled start no Run came for within twelve hours of it is a missed start,
+saved in the month is **never saved**, whatever its attempts said; one the job
+names that no Run took on is **absent** — deleted, renamed or made again in
+vCenter. A Run still going counts for neither side. A replica is saved when a
+Run saved it: its points are on the target host, which the bot does not read.
+A scheduled start no Run came for within twelve hours of it is a missed start,
 counted only after the job's first Run of the month.
 
 Read from the job's own server when asked — a few dozen requests — and kept

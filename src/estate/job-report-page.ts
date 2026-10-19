@@ -1,234 +1,258 @@
 import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
-import { calendarLabel, dayLabel, JobReport, ReportMachine, sizeOf, spanOf } from './job-report';
-import { JOB_STYLE } from './job-report-style';
-import { fonts, glyph, icon, kpi, pill, stampOf, tone } from './repository-report-page';
-import { STYLE } from './repository-report-style';
+import { jobTypeWord } from '../telegram/words';
+import { calendarLabel, dayLabel, JobReport, JobRun, ReportMachine, sizeOf, spanOf } from './job-report';
+import { fonts, stampOf } from './repository-report-page';
+import { SessionReport } from './session-report';
+import { SESSION_STYLE, sessionsHtml } from './session-report-page';
 
 /**
- * The Job report as one HTML document of A4 landscape pages, for the browser
- * to print, in the Repository report's look: an overview with the month of
- * runs, the machines by run, then the chain, the errors, the neighbours on
- * the repository and what to do.
+ * The Job report as one HTML document for the browser to print: first a page
+ * that says at a glance how the job stands — the verdict, its numbers, the
+ * month of runs, what to do, its machines and who else writes where it
+ * does — then every session, newest first. Both in the look of Veeam's own
+ * report: a header coloured by the result, grey section bars, ruled tables,
+ * Veeam's colours. The first page is in Russian, the sessions in Veeam's
+ * English.
  */
-export const jobReportPage = (report: JobReport, timezone: string): string => {
+export const jobReportPage = (report: JobReport, sessions: SessionReport, timezone: string): string => {
   const stamp = stampOf(report.at, timezone);
-  const view: View = { report, timezone, stamp };
-  const machinePages: ReportMachine[][] = [];
-  for (let from = 0; from < report.machines.length; from += MACHINE_ROWS) machinePages.push(report.machines.slice(from, from + MACHINE_ROWS));
-  if (!machinePages.length) machinePages.push([]);
-  const bodies = [overview(view), ...machinePages.map((machines, index) => machinesPage(view, machines, index === 0)), storagePage(view)];
-  const top = (number: number) =>
-    `<div class="top"><div class="crumb"><span class="logo"></span>Задания<em>›</em>${esc(report.server)}<em>›</em><b>${esc(report.name)}</b></div><div>${stamp} · ${report.days} дней · <b>${number}</b> / ${bodies.length}</div></div>`;
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(report.name)} — ${stamp}</title><style>${fonts()}${STYLE}${JOB_STYLE}</style></head><body>${bodies
-    .map((body, index) => `<section class="page">${top(index + 1)}${body}</section>`)
-    .join('\n')}</body></html>`;
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(report.name)} — ${stamp}</title><style>${fonts()}${STYLE}${SESSION_STYLE}</style></head><body>${summary(report, timezone, stamp)}${sessionsHtml(sessions, timezone)}</body></html>`;
 };
 
-interface View {
-  report: JobReport;
-  timezone: string;
-  stamp: string;
-}
+/** What fits the first page by construction: the browser grows a row to its content when it prints. */
+const MACHINE_ROWS = 6;
+const STEP_ROWS = 3;
+const NEIGHBOUR_ROWS = 4;
+const ERROR_ROWS = 3;
+const CHAIN_ROWS = 5;
 
-/** Machines on one page: a row each, about six millimetres. */
-const MACHINE_ROWS = 24;
-/** Up to this many runs each get their duration above the bar and their date below. */
-const LABELLED_RUNS = 16;
+/** Veeam's colours, as its own report has them. */
+const COLOUR = { success: '#00b050', warning: '#e8b32c', failed: '#e8645f', none: '#8fa9c4', empty: '#e3e3e3' } as const;
+const BAND = { crit: '#fb9895', warn: '#ffd96c', ok: '#00b050', unknown: '#a7a9ac' } as const;
+/** White on Veeam's yellow does not read; its other colours keep Veeam's white. */
+const INK = { crit: '#fff', warn: '#3d3d3d', ok: '#fff', unknown: '#fff' } as const;
+const STATUS_WORD = { crit: 'Критично', warn: 'Внимание', ok: 'Норма', unknown: 'Нет данных' } as const;
 
 const machinesWord = (count: number) => plural(count, 'машина', 'машины', 'машин');
 const runsWord = (count: number) => plural(count, 'запуск', 'запуска', 'запусков');
-
 const timeOf = (at: number, timezone: string): string =>
   new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at));
-const weekdayOf = (at: number, timezone: string): string =>
-  new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, weekday: 'short' }).format(new Date(at));
+/** "db-01 (4f2edb3f-…)" is how vCloud names a machine; the id says nothing on this page. */
+const shortName = (name: string) => name.replace(/\s\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)$/i, '');
+/** A replica keeps its points on the target host, where the restore points the bot reads are not. */
+const isReplica = (report: JobReport) => /replica/i.test(report.type ?? '');
 
-// --- Page 1: the job at a glance and its month of runs
-const overview = ({ report, timezone }: View): string => {
-  const { runs } = report;
-  const good = runs.filter((run) => run.result === 'success').length;
-  const warned = runs.filter((run) => run.result === 'warning').length;
-  const failed = runs.filter((run) => run.result === 'failed').length;
-  const never = report.machines.filter((machine) => machine.failing).length;
-  const saved = report.machines.filter((machine) => machine.points).length;
-  const chips = [
-    report.schedule && `<span><b>${esc(report.schedule)}</b></span>`,
-    report.retry && `<span>повторы: ${esc(report.retry)}</span>`,
-    report.retention && `<span>${esc(report.retention)}</span>`,
-    report.fulls && `<span>${esc(report.fulls)}</span>`,
-    report.repository && `<span>репозиторий <b>${esc(report.repository.short)}</b></span>`,
+// --- The first page
+const summary = (report: JobReport, timezone: string, stamp: string): string => {
+  const replica = isReplica(report);
+  const total = report.machines.length;
+  const facts = [
+    jobTypeWord(report.type),
+    total ? `${total} ${machinesWord(total)}` : '',
+    report.repository && `репозиторий ${report.repository.short}`,
+    report.schedule,
+    report.retry && `повторы ${report.retry}`,
+    report.retention,
+    report.fulls,
   ].filter(Boolean);
-  const where = [report.server, report.type, report.machines.length ? `${report.machines.length} ${machinesWord(report.machines.length)}` : '', report.repository?.name].filter(Boolean);
-  const ago = report.newestPoint === undefined ? 0 : Math.max(0, Math.floor((report.at - report.newestPoint) / 86_400_000));
-  const tiles =
-    kpi('Запуски', good + warned, `из ${runs.length}`, `успешно ${good} · предупр. ${warned} · ошибка ${failed}`, runs.length && failed === runs.length ? 'crit' : failed ? 'warn' : '') +
-    kpi(
-      'Машины сохранены',
-      report.machines.length ? saved : '—',
-      report.machines.length ? `из ${report.machines.length}` : '',
-      !report.machines.length ? 'сервер не отдаёт машины' : never ? `${never} — ни разу за ${report.days} дней` : 'у каждой есть точка',
-      never ? 'crit' : '',
-    ) +
-    kpi(
-      'Последняя точка',
-      report.newestPoint === undefined ? '—' : dayLabel(report.newestPoint, timezone),
-      report.newestPoint === undefined ? '' : timeOf(report.newestPoint, timezone),
-      report.newestPoint === undefined
-        ? 'точек нет'
-        : `${ago} дн. назад${report.depth ? ` · откат на ${report.depth.points} ${plural(report.depth.points, 'точку', 'точки', 'точек')}, до ${dayLabel(report.depth.oldest, timezone)}` : ''}`,
-      report.newestPoint === undefined ? 'crit' : '',
-    ) +
-    kpi(
-      'Обычно идёт',
-      report.usual ? spanOf(report.usual).replace(/ мин$/, '') : '—',
-      report.usual && / мин$/.test(spanOf(report.usual)) ? 'мин' : '',
-      report.longest ? `дольше всего ${spanOf(report.longest.minutes)} · ${dayLabel(report.longest.start, timezone)}` : '',
-    ) +
-    kpi('На диске', report.disk ? sizeOf(report.disk).split(' ')[0] : '—', report.disk ? sizeOf(report.disk).split(' ')[1] : '', report.data && report.disk ? `данных ${sizeOf(report.data)} · сжато в ${(report.data / report.disk).toFixed(1).replace('.', ',')} раза` : '');
-  const status = report.status === 'unknown' ? 'ok' : report.status;
-  return `
-  <div class="rhead jr-head">
-    <div>
-      <div class="eyebrow">${glyph('pin')} ${where.map((part) => esc(String(part))).join(' · ')}</div>
-      <h1>${esc(report.name)}</h1>
-      <div class="srv">${chips.join('')}</div>
+  return `<section class="js">
+  <table class="js-hd" style="--band:${BAND[report.status]};--ink:${INK[report.status]}"><tr><td>Задание: ${esc(report.name)}<div class="js-d">${facts.map((fact) => esc(String(fact))).join(' · ')}</div></td><td class="js-s">${STATUS_WORD[report.status]}<div class="js-d">${esc(report.server)} · ${stamp} · за ${report.days} дней</div></td></tr></table>
+  <table class="js-t"><tr><td class="js-verdict">${esc(report.verdict)}.</td></tr></table>
+  ${report.partial ? `<div class="js-partial">Прочитано не всё: ${esc(report.partial.slice(0, 220))}</div>` : ''}
+  <div><div class="js-band">Сводка</div>${numbers(report, timezone, replica)}</div>
+  <div class="js-two">
+    <div class="js-col">
+      <div class="js-band">Запуски за ${report.days} дней</div>
+      <div class="js-box">${chart(report, timezone)}<div class="js-legend"><span><i style="background:${COLOUR.success}"></i>успешно</span><span><i style="background:${COLOUR.warning}"></i>с предупреждением</span><span><i style="background:${COLOUR.failed}"></i>ошибка</span><span><i class="run"></i>идёт</span><span><b>×</b>не было запуска по расписанию</span></div></div>
+      <div class="js-band">Машины</div>${machinesTable(report, timezone)}
     </div>
-    ${pill(report.status, true)}
+    <div class="js-col">
+      <div class="js-band">Что сделать</div>${stepsTable(report)}
+      ${report.neighbours.jobs && report.neighbours.window ? neighboursTable(report, timezone) : report.errors.length ? errorsTable(report, timezone) : chainTable(report)}
+    </div>
   </div>
-  <div class="verdict ${tone(report.status)}">${icon(status === 'ok' ? 'check' : 'alert', tone(report.status))}<div>${esc(report.verdict)}</div></div>
-  ${report.partial ? `<div class="partial">Прочитано не всё: ${esc(report.partial.slice(0, 220))}</div>` : ''}
-  <div class="kpis k5">${tiles}</div>
-  <div class="panel grow runs">
-    <div class="ph"><div><h3>Запуски за ${report.days} дней</h3><div class="sub">Высота — сколько шёл запуск; нижний кусок — первая попытка, выше — повторы. Под датой — сколько машин сохранено.</div></div>
-    <div class="legend"><span><i class="lg-ok"></i>успешно</span><span><i class="lg-meh"></i>предупреждение</span><span><i class="lg-bad"></i>ошибка</span><span><i class="lg-miss"></i>нет запуска по расписанию</span></div></div>
-    ${chart(report, timezone)}
-  </div>
-  ${report.findings.length ? `<div class="probs">${report.findings.slice(0, 3).map((finding) => `<div class="prob ${finding.severity}">${icon(finding.icon, finding.severity)}<div><div class="pt">${esc(finding.title)}</div><div class="pd">${esc(finding.detail)}</div></div></div>`).join('')}</div>` : ''}`;
+  <div class="js-next">Дальше — каждая сессия за ${report.days} дней, новые сверху: цифры сессии и каждая машина с тем, что Veeam о ней написал.</div>
+</section>`;
 };
 
+/** Three rows of three: what a reader asks first. A replica is told by its runs. */
+const numbers = (report: JobReport, timezone: string, replica: boolean): string => {
+  const { runs, machines } = report;
+  const good = runs.filter((run) => run.result === 'success' || run.result === 'warning').length;
+  const failed = runs.filter((run) => run.result === 'failed').length;
+  const going = runs.filter((run) => run.result === 'none' && run.end === undefined).length;
+  const total = machines.length;
+  const saved = machines.filter((machine) => (replica ? machine.lastSaved !== undefined : machine.points)).length;
+  const newest = replica ? Math.max(...machines.map((machine) => machine.lastSaved ?? -Infinity)) : report.newestPoint ?? -Infinity;
+  const sent = machines.reduce((sum, machine) => sum + (machine.transferred ?? 0), 0);
+  const bad = (text: string, when: boolean) => (when ? `<span class="js-bad">${text}</span>` : text);
+  const cell = (label: string, value: string) => `<td class="k">${label}</td><td class="v">${value}</td>`;
+  const rows = [
+    [
+      cell('Запуски', bad(`${good} успешно из ${runs.length}`, runs.length > 0 && good === 0)),
+      cell(replica ? 'Последняя удачная' : 'Последняя точка', Number.isFinite(newest) ? `${dayLabel(newest, timezone)} ${timeOf(newest, timezone)}` : bad(replica ? 'не было' : 'точек нет', true)),
+      cell('Обычно идёт', report.usual ? spanOf(report.usual) : '—'),
+    ],
+    [
+      cell('С ошибкой', `${bad(String(failed), failed > 0)}${going ? ` · идёт ${going}` : ''}${report.missed.length ? ` · не было ${report.missed.length}` : ''}`),
+      replica
+        ? cell('Передано', sent ? `${sizeOf(sent)} при последней удачной` : '—')
+        : cell('Откат', report.depth ? `на ${report.depth.points} ${plural(report.depth.points, 'точку', 'точки', 'точек')}, до ${dayLabel(report.depth.oldest, timezone)}` : '—'),
+      cell('Дольше всего', report.longest ? `${spanOf(report.longest.minutes)} · ${dayLabel(report.longest.start, timezone)}` : '—'),
+    ],
+    [
+      cell(replica ? 'Машины реплицированы' : 'Машины сохранены', total ? bad(`${saved} из ${total}`, saved < total) : '—'),
+      cell(replica ? 'Без удачной' : 'Без точек', total ? bad(String(total - saved), saved < total) : '—'),
+      replica
+        ? cell('Узкое место', report.bottleneck ? esc(report.bottleneck) : '—')
+        : cell('На диске', report.disk ? `${sizeOf(report.disk)}${report.data ? ` · данных ${sizeOf(report.data)}` : ''}` : '—'),
+    ],
+  ];
+  return `<table class="js-t">${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`;
+};
+
+/**
+ * The month of runs: a run a bar where it started, its height how long it
+ * took on a scale of ten minutes, an hour, six hours, a day and three — so
+ * that a twenty-minute run and a three-day one both read, with no bar cut
+ * short and no label over another.
+ */
 const chart = (report: JobReport, timezone: string): string => {
-  const { runs } = report;
-  if (!runs.length) return `<div class="chart"><div class="ch-empty">За ${report.days} дней запусков не было</div></div>`;
+  const W = 1000;
+  const H = 360;
+  const left = 64;
+  const right = 24;
+  const top = 12;
+  const bottom = 34;
   const from = report.at - report.days * 86_400_000;
-  const x = (at: number) => (100 * (at - from)) / (report.at - from);
-  const sorted = runs.map((run) => run.minutes).sort((a, b) => a - b);
-  const typical = sorted[Math.floor((sorted.length - 1) / 2)];
-  const cap = Math.max(60, Math.ceil((2.5 * typical) / 30) * 30);
-  const width = Math.min(2.1, Math.max(0.35, 80 / runs.length));
-  const labelled = runs.length <= LABELLED_RUNS;
-  const grid = [0, 0.5, 1].map((share) => `<div class="ch-grid" style="bottom:${(share * 100).toFixed(1)}%"><span>${share ? spanOf(cap * share) : '0'}</span></div>`).join('');
-  const xs = runs.map((run) => x(run.start));
-  const lean = (index: number) => (index > 0 && xs[index] - xs[index - 1] < 4 ? ' right' : index < xs.length - 1 && xs[index + 1] - xs[index] < 4 ? ' left' : '');
-  const bars = runs
-    .map((run, index) => {
-      const over = run.minutes > cap;
-      const scale = over ? cap / run.minutes : 1;
-      const pieces = run.pieces.map((piece, at) => `<i class="${piece.result}${at ? ' retry' : ''}" style="height:${((100 * piece.minutes * scale) / cap).toFixed(2)}%"></i>`).join('');
-      const label = labelled || over
-        ? `<div class="ch-lab">${over ? `<b class="crit">${spanOf(run.minutes)}</b>` : spanOf(run.minutes)}${run.pieces.length > 1 ? `<em>↻${run.pieces.length - 1}</em>` : ''}</div>`
-        : '';
-      const date = labelled
-        ? `<div class="ch-d${lean(index)}" style="left:${xs[index].toFixed(2)}%"><b>${dayLabel(run.start, timezone)}</b><span>${weekdayOf(run.start, timezone)} ${timeOf(run.start, timezone)}</span>${run.machines ? `<span class="${(run.saved ?? 0) < run.machines ? 'bad' : ''}">${run.saved}/${run.machines}</span>` : ''}</div>`
-        : '';
-      return `<div class="ch-col" style="left:${xs[index].toFixed(2)}%;width:${width.toFixed(2)}%"><div class="ch-bar${over ? ' cut' : ''}" style="height:${Math.min(100, (100 * run.minutes) / cap).toFixed(2)}%">${label}${pieces}</div></div>${date}`;
-    })
+  const x = (at: number) => left + ((W - left - right) * (at - from)) / (report.at - from);
+  const longest = Math.max(0, ...report.runs.map((run) => run.minutes));
+  const ticks: Array<[number, string]> = [[10, '10 мин'], [60, '1 ч'], [360, '6 ч'], [1440, '1 сут'], [4320, '3 сут'], [10080, '7 сут']];
+  const ceiling = Math.max(5760, longest * 1.15);
+  const lo = Math.log(5);
+  const hi = Math.log(ceiling);
+  const y = (minutes: number) => top + (H - top - bottom) * (1 - (Math.log(Math.max(5, Math.min(ceiling, minutes))) - lo) / (hi - lo));
+  const base = H - bottom;
+  const barWidth = Math.max(3, Math.min(14, ((W - left - right) / report.days) * 0.55));
+  const lines = ticks
+    .filter(([minutes]) => minutes <= ceiling)
+    .map(([minutes, label]) => `<line x1="${left}" x2="${W - right}" y1="${y(minutes).toFixed(1)}" y2="${y(minutes).toFixed(1)}" class="g"/><text x="${left - 8}" y="${(y(minutes) + 5).toFixed(1)}" text-anchor="end">${label}</text>`)
     .join('');
-  // Many runs: a date every five days instead of under every bar.
-  const ticks = labelled
-    ? ''
-    : Array.from({ length: Math.floor(report.days / 5) + 1 }, (_, step) => from + step * 5 * 86_400_000)
-        .map((at) => `<div class="ch-d" style="left:${x(at).toFixed(2)}%"><b>${dayLabel(at, timezone)}</b></div>`)
-        .join('');
-  const missed = report.missed
-    .map((at) => `<div class="ch-col" style="left:${x(at).toFixed(2)}%;width:${width.toFixed(2)}%"><div class="ch-miss"></div></div>${labelled ? `<div class="ch-d" style="left:${x(at).toFixed(2)}%"><b>${dayLabel(at, timezone)}</b><span>нет запуска</span></div>` : ''}`)
+  const days = Array.from({ length: Math.floor(report.days / 5) + 1 }, (_, step) => from + step * 5 * 86_400_000);
+  const dates = days
+    .map((at, index) => `<line x1="${x(at).toFixed(1)}" x2="${x(at).toFixed(1)}" y1="${top}" y2="${base}" class="g"/><text x="${x(at).toFixed(1)}" y="${base + 22}" text-anchor="${index === 0 ? 'start' : x(at) > W - right - 30 ? 'end' : 'middle'}">${dayLabel(at, timezone)}</text>`)
     .join('');
-  return `<div class="chart"><div class="ch-plot">${grid}${bars}${missed}${ticks}</div></div>`;
+  const bar = (run: JobRun) => {
+    const height = Math.max(2, base - y(run.minutes));
+    const going = run.result === 'none' && run.end === undefined;
+    const colour = COLOUR[run.result] ?? COLOUR.none;
+    return `<rect x="${(x(run.start) - barWidth / 2).toFixed(1)}" y="${(base - height).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${height.toFixed(1)}" ${going ? `fill="#fff" stroke="${COLOUR.none}" stroke-width="2"` : `fill="${colour}"`}/>`;
+  };
+  const missed = report.missed.map((at) => `<text x="${x(at).toFixed(1)}" y="${base - 5}" text-anchor="middle" class="m">×</text>`).join('');
+  const empty = report.runs.length ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">За ${report.days} дней запусков не было</text>`;
+  return `<svg class="js-chart" viewBox="0 0 ${W} ${H}">${lines}${dates}<line x1="${left}" x2="${W - right}" y1="${base}" y2="${base}" class="a"/>${report.runs.map(bar).join('')}${missed}${empty}</svg>`;
 };
 
-// --- Page 2: every machine by run
-const machinesPage = ({ report, timezone }: View, machines: ReportMachine[], first: boolean): string => {
-  const { history } = report;
-  const span = history.from !== undefined && history.to !== undefined ? `${dayLabel(history.from, timezone)} → ${dayLabel(history.to, timezone)}` : '';
-  const head = history.byDay ? `по дням: ${span}` : `${history.runs} ${runsWord(history.runs)}${span ? `: ${span}` : ''}`;
-  const cells = machines[0]?.history.length ?? 0;
-  const historyWidth = Math.max(40, Math.min(84, (history.byDay ? 2.8 : 4.3) * cells + 6));
-  const rows = machines
+const machinesTable = (report: JobReport, timezone: string): string => {
+  const shown: ReportMachine[] = report.machines.slice(0, MACHINE_ROWS);
+  if (!shown.length) return '<table class="js-t"><tr><td class="js-dim">Сведений по машинам нет: этот сервер их не отдаёт (REST API 1.1), или запусков не было.</td></tr></table>';
+  const rows = shown
     .map(
-      (machine) => `<tr class="${machine.failing ? 'bad' : ''}">
-  <td><div class="vm-n"><span>${esc(machine.name)}</span>${machine.size ? `<small>${esc(machine.size)}</small>` : ''}</div></td>
-  <td><div class="hist${history.byDay ? ' dense' : ''}">${machine.history.map((outcome) => `<i class="${outcome}"></i>`).join('')}</div></td>
-  <td class="r"><b class="${machine.failing ? 'crit' : machine.succeeded < machine.tookPart ? 'warn' : 'ok'}">${machine.succeeded}</b><span class="dim"> / ${machine.tookPart}</span></td>
-  <td class="r">${machine.points ? `${machine.points}<span class="dim"> · с ${dayLabel(machine.oldestPoint as number, timezone)}</span>` : '<b class="crit">нет</b>'}</td>
-  <td class="r">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<b class="crit">никогда</b>'}</td>
-  <td class="r">${machine.minutes ? spanOf(machine.minutes) : '—'}</td>
-  <td class="r">${machine.transferred !== undefined ? sizeOf(machine.transferred) : '—'}</td>
-  <td class="err ${machine.errorTone ?? ''}">${machine.error ? `<div class="err-t">${esc(machine.error.slice(0, 110))}${machine.errorTone === 'healed' ? ' <em>· повтор помог</em>' : ''}</div>` : '<span class="dim">—</span>'}</td>
-</tr>`,
+      (machine) => `<tr><td class="v js-name">${esc(shortName(machine.name))}</td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td><td class="v">${machine.succeeded < machine.tookPart || !machine.tookPart ? `<span class="js-bad">${machine.succeeded} из ${machine.tookPart}</span>` : `${machine.succeeded} из ${machine.tookPart}`}</td><td class="v">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<span class="js-bad">никогда</span>'}</td><td><div class="js-err">${esc(machine.error ?? '')}${machine.errorTone === 'healed' ? ' <span class="js-dim">· повтор помог</span>' : ''}</div></td></tr>`,
     )
     .join('');
-  const table = machines.length
-    ? `<table class="mx vms"><colgroup><col style="width:62mm"><col style="width:${historyWidth.toFixed(0)}mm"><col style="width:17mm"><col style="width:23mm"><col style="width:19mm"><col style="width:15mm"><col style="width:16mm"><col></colgroup>
-    <thead><tr><th>Машина</th><th>${head}</th><th class="r">Успешно</th><th class="r">Точек</th><th class="r">Сохранена</th><th class="r">Обычно</th><th class="r">Передано</th><th>Последняя ошибка или предупреждение</th></tr></thead>
-    <tbody>${rows}</tbody></table>`
-    : `<div class="empty">Сведений по машинам нет: этот сервер их не отдаёт (REST API 1.1), или запусков не было.</div>`;
-  return `
-  <div class="sect"><div><h2>Машины${first ? '' : ' (продолжение)'}</h2><div class="h2sub">Каждая машина по ${history.byDay ? 'дням' : 'запускам'} за ${report.days} дней, слева направо от старых к новым. Сверху — те, что не сохраняются.</div></div>
-  <div class="legend"><span><i class="lg-ok"></i>сохранена</span><span><i class="lg-meh"></i>с предупреждением</span><span><i class="lg-bad"></i>ошибка</span><span><i class="lg-none"></i>не обрабатывалась</span></div></div>
-  <div class="panel grow">${table}</div>`;
+  const more = report.machines.length - shown.length;
+  return `<table class="js-t js-vms"><tr class="th"><td>Машина</td><td>По ${report.history.byDay ? 'дням' : 'запускам'}</td><td>Успешно</td><td>Сохранена</td><td>Последняя ошибка</td></tr>${rows}</table>${more > 0 ? `<div class="js-more">и ещё ${more} — в сессиях на следующих страницах</div>` : ''}`;
 };
 
-// --- Page 3: the chain, the errors, the neighbours and what to do
-const storagePage = ({ report, timezone }: View): string => {
-  const { chain, repository, neighbours } = report;
-  const biggest = Math.max(1, ...chain.map((day) => day.disk));
-  const files = chain.reduce((sum, day) => sum + day.files, 0);
-  const free = repository?.capacityGB ? (100 * repository.freeGB) / repository.capacityGB : undefined;
+const stepsTable = (report: JobReport): string => {
+  const shown = report.steps.slice(0, STEP_ROWS);
+  const rows = shown
+    .map((step, index) => `<tr class="${step.severity}"><td class="k">${index + 1}</td><td><b>${esc(step.title)}</b><p>${esc(step.detail)}${step.tags.length ? ` ${esc(step.tags.slice(0, 3).map(shortName).join(', '))}` : ''}</p></td></tr>`)
+    .join('');
+  const rest = report.steps.slice(STEP_ROWS);
+  return `<table class="js-t js-steps">${rows}</table>${rest.length ? `<div class="js-more">Ещё: ${rest.map((step) => esc(step.title.charAt(0).toLowerCase() + step.title.slice(1))).join('; ')}.</div>` : ''}`;
+};
+
+const neighboursTable = (report: JobReport, timezone: string): string => {
+  const { neighbours, repository } = report;
+  const window = neighbours.window as { start: number; end: number };
   const position = (at: number) => Math.max(0, Math.min(100, (100 * (at - neighbours.origin)) / 86_400_000));
-  const track = (spans: Array<{ start: number; end: number }>, kind: string) =>
-    `<div class="track mini">${spans.map(({ start, end }) => `<i class="${kind}" style="left:${position(start).toFixed(2)}%;width:${Math.max(0.6, position(end) - position(start)).toFixed(2)}%"></i>`).join('')}</div>`;
-  const hours = [12, 15, 18, 21, 0, 3, 6, 9];
-  const window = neighbours.window;
-  return `
-  <div class="duo jr">
-    <div class="panel">
-      <h3>${glyph('layers')} Цепочка на диске</h3><div class="sub">${chain.length} ${plural(chain.length, 'день', 'дня', 'дней')} с точками · ${files} ${plural(files, 'файл', 'файла', 'файлов')} · ${sizeOf(report.disk)} на диске</div>
-      ${chain.length ? `<div class="orph">${chain
-        .slice(0, 9)
-        .map((day) => `<div class="or ch"><div class="or-n">${calendarLabel(day.day)} <small>${day.full ? 'Full' : 'инкремент'}</small></div><div class="or-b"><i class="${day.full ? 'full' : ''}" style="width:${((100 * day.disk) / biggest).toFixed(1)}%"></i></div><div class="or-v">${sizeOf(day.disk)}</div><div class="or-d">${day.data ? `из ${sizeOf(day.data)}` : ''}</div></div>`)
-        .join('')}</div>${chain.length > 9 ? `<div class="more">и ещё ${chain.length - 9}</div>` : ''}` : '<div class="empty">Файлов бэкапа не найдено.</div>'}
-      ${repository ? `<div class="repo"><div><b>${esc(repository.name)}</b><span>${esc(repository.type)}</span></div>${free !== undefined ? `<div class="bar"><span class="b-used" style="width:${(100 - free).toFixed(1)}%"></span><span class="b-free ${free < 10 ? 'crit' : free < 20 ? 'warn' : 'ok'}" style="width:${free.toFixed(1)}%"></span></div><div class="rc-free">свободно <b>${Math.round(free)}%</b> · ${sizeOf(repository.freeGB * 1024 ** 3)} из ${sizeOf(repository.capacityGB * 1024 ** 3)}</div>` : ''}</div>` : ''}
-    </div>
-    <div class="panel">
-      <h3>${glyph('fail')} Ошибки</h3><div class="sub">Что писал Veeam, по смыслу, за ${report.days} дней</div>
-      <div class="errs">${
-        report.errors
-          .slice(0, 5)
-          .map(
-            (group) =>
-              `<div class="er ${group.failed ? 'crit' : 'warn'}"><div class="er-c"><b>${group.machines.length}</b><span>${plural(group.machines.length, 'машина', 'машины', 'машин')}</span></div><div><div class="er-t">${esc(group.text.slice(0, 150))}</div><div class="er-d">${group.runs} ${runsWord(group.runs)} · последний ${dayLabel(group.last, timezone)} · ${esc(group.machines.slice(0, 3).join(', '))}${group.machines.length > 3 ? ` и ещё ${group.machines.length - 3}` : ''}</div></div></div>`,
-          )
-          .join('') || '<div class="empty">Ошибок не было.</div>'
-      }</div>
-    </div>
-  </div>
-  ${
-    window && repository
-      ? `<div class="panel nb">
-    <div class="ph"><div><h3>${glyph('disk')} Кто ещё писал в ${esc(repository.short)} во время запуска ${dayLabel(window.start, timezone)} ${timeOf(window.start, timezone)}–${timeOf(window.end, timezone)}</h3><div class="sub">${neighbours.jobs} ${plural(neighbours.jobs, 'задача', 'задачи', 'задач')} из ${neighbours.of} на этом репозитории · шкала с 12:00 до 12:00${report.bottleneck ? ` · узкое место последних запусков — <b>${esc(report.bottleneck)}</b>` : ''}</div></div></div>
-    <div class="nbs">${neighbours.rows
-      .map((row) => `<div class="nb-r${row.own ? ' own' : ''}"><div class="g-n">${esc(row.name)}</div>${track(row.spans, row.own ? 't-run good' : 't-max good')}<div class="g-num">${row.spans.map((span) => `${timeOf(span.start, timezone)}–${timeOf(span.end, timezone)}`).join(', ')}</div></div>`)
-      .join('')}
-    <div class="nb-r"><div></div><div class="g-axis">${hours.map((hour, index) => `<span style="left:${(index * 12.5).toFixed(1)}%">${String(hour).padStart(2, '0')}</span>`).join('')}</div><div></div></div></div>
-  </div>`
-      : ''
-  }
-  <div class="sect"><div><h2>Что сделать</h2></div></div>
-  <div class="acts">${report.steps
-    .slice(0, 4)
+  const rows = neighbours.rows.slice(0, NEIGHBOUR_ROWS + 1);
+  const more = neighbours.jobs - (rows.length - 1);
+  return `<div class="js-band">Кто ещё писал в ${esc(repository?.short ?? 'репозиторий')} ${dayLabel(window.start, timezone)}</div>
+  <table class="js-t js-nb">${rows
     .map(
-      (step, index) =>
-        `<div class="act ${step.severity}"><span class="a-n">${index + 1}</span><div><div class="a-t">${esc(step.title)}</div><div class="a-x">${esc(step.detail)}</div>${step.tags.length ? `<div class="a-p">${step.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div>` : ''}</div></div>`,
+      (row) =>
+        `<tr><td class="v js-name">${row.own ? `<b>${esc(row.name)}</b>` : esc(row.name)}</td><td class="js-track">${row.spans.map(({ start, end }) => `<i class="${row.own ? 'own' : ''}" style="left:${position(start).toFixed(1)}%;width:${Math.max(0.8, position(end) - position(start)).toFixed(1)}%"></i>`).join('')}</td><td class="v">${timeOf(row.spans[0].start, timezone)}–${timeOf(row.spans[0].end, timezone)}${row.spans.length > 1 ? ` <span class="js-dim">+${row.spans.length - 1}</span>` : ''}</td></tr>`,
     )
-    .join('')}</div>`;
+    .join('')}<tr><td class="js-dim">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${esc(report.bottleneck)}` : ''}</td><td><div class="js-axis">${[12, 15, 18, 21, 0, 3, 6, 9].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</div></td><td></td></tr></table>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}`;
 };
+
+const errorsTable = (report: JobReport, timezone: string): string => `<div class="js-band">Последние ошибки</div>
+  <table class="js-t"><tr class="th"><td>Что писал Veeam</td><td>Машин</td><td>Последний раз</td></tr>${[...report.errors]
+    // The newest first: on this page it is the latest trouble that matters.
+    .sort((a, b) => b.last - a.last)
+    .slice(0, ERROR_ROWS)
+    .map((group) => `<tr><td><div class="js-err">${esc(group.text.slice(0, 160))}</div></td><td class="v">${group.machines.length}</td><td class="v">${dayLabel(group.last, timezone)} · ${group.runs} ${runsWord(group.runs)}</td></tr>`)
+    .join('')}</table>`;
+
+const chainTable = (report: JobReport): string => `<div class="js-band">Цепочка на диске</div>
+  <table class="js-t"><tr class="th"><td>День</td><td>Файл</td><td>На диске</td><td>Данных</td></tr>${
+    report.chain.length
+      ? report.chain
+          .slice(0, CHAIN_ROWS)
+          .map((day) => `<tr><td class="v">${calendarLabel(day.day)}</td><td class="v">${day.full ? 'Full' : 'инкремент'}</td><td class="v">${sizeOf(day.disk)}</td><td class="v">${day.data ? sizeOf(day.data) : '—'}</td></tr>`)
+          .join('')
+      : '<tr><td colspan="4" class="js-dim">Файлов бэкапа не найдено.</td></tr>'
+  }</table>`;
+
+/* ------------------------------------------------------------------ *
+ * The first page's sheet: Veeam's header, grey bars and ruled tables
+ * ------------------------------------------------------------------ */
+
+const STYLE = `
+@page { size: 297mm 210mm; margin: 0; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { margin: 0; background: #fff; }
+.js { width: 297mm; height: 210mm; padding: 9mm 10mm; display: flex; flex-direction: column; gap: 2.4mm; overflow: hidden; break-after: page; font-family: 'Inter Variable', Tahoma, sans-serif; font-size: 8.5pt; line-height: 1.32; color: #000; }
+.js * { box-sizing: border-box; margin: 0; padding: 0; }
+.js table { border-collapse: collapse; width: 100%; }
+.js-hd td { background: var(--band); color: var(--ink, #fff); font-weight: 700; font-size: 13pt; height: 15mm; vertical-align: bottom; padding: 0 3.6mm 3mm; }
+.js-hd .js-s { width: 27%; border-left: 0.25mm solid rgba(255, 255, 255, 0.5); }
+.js-d { font-size: 8pt; margin-top: 0.8mm; }
+.js-t td { border: 0.25mm solid #a7a9ac; padding: 0.6mm 1mm; vertical-align: top; }
+.js-t .k { font-weight: 700; white-space: nowrap; width: 1%; }
+.js-t .v { white-space: nowrap; }
+.js-t .th td { background: #e3e3e3; font-weight: 700; white-space: nowrap; }
+.js-t td.js-verdict { font-weight: 700; font-size: 9.4pt; padding: 1.4mm 1.6mm; }
+.js-partial { color: #9a6700; font-size: 7.2pt; }
+.js-band { background: #f3f4f4; color: #626365; font-size: 11pt; padding: 1.6mm 3.6mm; border: 0.25mm solid #a7a9ac; border-bottom: none; }
+.js-two { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 3mm; }
+.js-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.js-col > .js-band:not(:first-child) { margin-top: 2.4mm; }
+.js-box { border: 0.25mm solid #a7a9ac; padding: 1.6mm 2mm 1.2mm; }
+.js-chart { width: 100%; height: auto; display: block; font-family: 'Inter Variable', sans-serif; }
+.js-chart text { font-size: 16px; fill: #626365; }
+.js-chart .g { stroke: #e3e3e3; stroke-width: 1; }
+.js-chart .a { stroke: #a7a9ac; stroke-width: 1; }
+.js-chart .m { font-size: 18px; font-weight: 700; fill: #000; }
+.js-legend { display: flex; gap: 4mm; flex-wrap: wrap; color: #626365; font-size: 7.6pt; margin-top: 0.6mm; }
+.js-legend i { display: inline-block; width: 3mm; height: 2.2mm; margin-right: 1mm; vertical-align: -0.3mm; }
+.js-legend i.run { background: #fff; box-shadow: inset 0 0 0 0.35mm ${COLOUR.none}; }
+.js-legend b { color: #000; margin-right: 0.8mm; }
+.js-bad { color: #ff0000; font-weight: 700; }
+.js-dim { color: #626365; }
+.js-name { max-width: 44mm; overflow: hidden; text-overflow: ellipsis; }
+.js-hist { display: flex; gap: 0.5mm; } .js-hist i { width: 2.6mm; height: 2.6mm; display: block; flex: none; }
+.js-err { font-size: 7.6pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; word-break: break-word; }
+.js-steps p { color: #626365; font-size: 7.8pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.js-steps tr.crit b { color: #ff0000; }
+.js-steps tr.warn b { color: #9a6700; }
+.js-more { color: #626365; font-size: 7.6pt; padding: 0.8mm 1mm 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.js-nb .js-name { width: 34mm; }
+.js-track { position: relative; width: 100%; } .js-track i { position: absolute; top: 1mm; bottom: 1mm; background: #b8c4d0; } .js-track i.own { background: #5b7fa6; }
+.js-axis { display: flex; justify-content: space-between; color: #626365; font-size: 6.6pt; }
+.js-next { color: #626365; font-size: 7pt; text-align: right; margin-top: auto; }
+`;

@@ -169,6 +169,9 @@ export interface VeeamBackupFile {
   dataSize?: number;
   /** Bytes the file takes up on the repository. */
   backupSize?: number;
+  /** What deduplication and compression left of the data, in percent: 71 is Veeam's "1.4x". */
+  dedupRatio?: number;
+  compressRatio?: number;
   creationTime?: string;
 }
 

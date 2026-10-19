@@ -3,6 +3,7 @@ import { Job } from '../veeam/estate';
 import {
   VeeamBackupFile,
   VeeamJob,
+  VeeamLogRecord,
   VeeamRepositoryState,
   VeeamRestorePoint,
   VeeamSession,
@@ -14,12 +15,14 @@ import { retryWindowOf, runsOf } from './runs';
 import { describeRetry, describeSchedule } from './schedule-planner';
 
 /**
- * The Job report: one job over a month, as a PDF — every run, every machine
- * by run, the chain on disk, what Veeam said went wrong, who else writes to
- * the repository meanwhile, and what to do.
+ * What the Job report finds about one job over a month — every run, every
+ * machine by run, the chain on disk, what Veeam said went wrong, who else
+ * writes to the repository meanwhile — and the verdict its caption opens
+ * with. The file under the caption is the job's sessions as Veeam's own
+ * report prints them: `./session-report`.
  *
  * Here is what it says, from what was read; nothing here asks Veeam. The
- * reading is `./job-reports`, the page `./job-report-page`.
+ * reading is `./job-reports`.
  */
 
 /** The period a Job report covers. */
@@ -37,6 +40,8 @@ export interface JobReading {
   configured?: VeeamJob;
   /** The job's sessions inside the period, newest first, each with its machines' tasks when they were read. */
   attempts: Array<{ session: VeeamSession; tasks?: VeeamTaskSession[] }>;
+  /** By task id, the log of each machine that did not end in a success: the only place that says why. */
+  taskLogs?: Record<string, VeeamLogRecord[]>;
   /** Veeam's primary bottleneck of each of the newest runs: `Target`, `Source`, … */
   bottlenecks: string[];
   repository?: VeeamRepositoryState;
@@ -191,6 +196,8 @@ const ofMachines = (count: number) => plural(count, 'машины', 'машин'
 /** Veeam's message as worth reading: no "Processing <machine>", no "Error:", its first line. */
 export const saidOf = (message: string | undefined): string =>
   (String(message ?? '')
+    // A machine's name may hold spaces, "db-01 (4f2e…)": what follows it starts with Veeam's verdict.
+    .replace(/^Processing .+?\s+(?=(?:Error|Warning):)/, '')
     .replace(/^Processing \S+\s*/, '')
     .replace(/^Error:\s*/, '')
     .split('\n')
@@ -240,7 +247,7 @@ const instantOf = (day: number, minute: number, timezone: string): number => {
  * Veeam server's own clock, taken to be in the bot's zone — read as the
  * process's local time instead, a file written at 22:00 would land on the next day.
  */
-const veeamTime = (text: string | undefined, timezone: string): number => {
+export const veeamTime = (text: string | undefined, timezone: string): number => {
   if (!text) return NaN;
   if (/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(text)) return Date.parse(text);
   const wall = Date.parse(`${text}Z`);
@@ -523,16 +530,30 @@ export const spanOf = (minutes: number): string => {
 
 const isVShield = (text: string | undefined) => /vShield_SVM|MethodDisabled/i.test(text ?? '');
 
+const SEVERITY: Record<Step['severity'], number> = { crit: 0, warn: 1, ok: 2 };
+
+/** The runs that have ended, oldest first. */
+const finishedOf = (runs: JobRun[]): JobRun[] => runs.filter((run) => run.end !== undefined || run.result !== 'none');
+
+/**
+ * Machines the job names that no run whose machines were read took on: what
+ * a machine deleted, renamed or made again in vCenter (a new id) looks like.
+ */
+const absentOf = (report: JobReport): ReportMachine[] => (report.history.runs ? report.machines.filter((machine) => machine.tookPart === 0) : []);
+
 /** What is wrong, the worst first. */
 const findingsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: string): Finding[] => {
   const findings: Finding[] = [];
-  const { runs, machines, days } = report;
+  const { machines, days } = report;
+  // A run still going has not ended either way: "all failed" is about the ones that have.
+  const runs = finishedOf(report.runs);
   const never = machines.filter((machine) => machine.failing);
+  const absent = absentOf(report);
   const failed = runs.filter((run) => run.result === 'failed');
   const retried = runs.filter((run) => run.pieces.length > 1 && run.pieces[0].result === 'failed' && saved(run.result));
   const firstFailure = report.errors.find((group) => group.failed);
 
-  if (!runs.length && schedule?.runAutomatically !== false) {
+  if (!report.runs.length && schedule?.runAutomatically !== false) {
     findings.push({ severity: 'crit', icon: 'alert', title: `За ${days} дней ни одного запуска`, detail: report.schedule ? `по расписанию — ${report.schedule}` : 'расписание не прочитано' });
   }
   if (never.length) {
@@ -541,6 +562,14 @@ const findingsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone:
       icon: 'fail',
       title: `${never.length} из ${machines.length} ${ofMachines(machines.length)} ${plural(never.length, 'не сохранена', 'не сохранены', 'не сохранены')} ни разу за ${days} дней`,
       detail: never[0].error ? `«${never[0].error}»` : '',
+    });
+  }
+  if (absent.length) {
+    findings.push({
+      severity: 'crit',
+      icon: 'fail',
+      title: `${absent.length} из ${machines.length} ${ofMachines(machines.length)} задания ни один запуск не обработал`,
+      detail: absent.slice(0, 3).map((machine) => machine.name).join(', '),
     });
   }
   if (runs.length && failed.length === runs.length) {
@@ -631,9 +660,21 @@ const stepsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: st
       tags: tags(others.map((machine) => machine.name)),
     });
   }
+  const absent = absentOf(report);
+  if (absent.length) {
+    steps.push({
+      severity: 'crit',
+      title: `Найти в vCenter ${absent.length} ${plural(absent.length, 'машину', 'машины', 'машин')} задания`,
+      detail: `${plural(absent.length, 'Она есть', 'Они есть', 'Они есть')} в задании, но ни один запуск за ${report.days} дней ${plural(absent.length, 'её', 'их', 'их')} не обработал — так бывает, когда машину удалили, переименовали или пересоздали (у неё новый ID). Убрать из задания и добавить заново или убрать совсем.`,
+      tags: tags(absent.map((machine) => machine.name)),
+    });
+  }
+  const last = finishedOf(report.runs).at(-1);
+  const lastFailure = last?.result === 'failed' ? report.errors.find((group) => group.failed && group.last === last.start) : undefined;
   const dns = report.errors.find((group) => /name resolution|getaddrinfo/i.test(group.raw));
   if (dns) {
-    steps.push({ severity: 'warn', title: 'Проверить DNS на прокси', detail: `Прокси не нашёл vCenter по имени (${dayLabel(dns.last, timezone)}): «${dns.text}»`, tags: tags(dns.machines, 3) });
+    // What failed the last run is no longer a warning.
+    steps.push({ severity: dns === lastFailure ? 'crit' : 'warn', title: 'Проверить DNS на прокси', detail: `Прокси не нашёл vCenter по имени (${dayLabel(dns.last, timezone)}): «${dns.text}»`, tags: tags(dns.machines, 3) });
   }
   const timeout = report.errors.find((group) => group.failed && /истекло|timed? ?out|Getting VM info/i.test(group.text));
   if (timeout && retried) {
@@ -668,10 +709,57 @@ const stepsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: st
       tags: tags(report.neighbours.rows.filter((row) => !row.own).map((row) => row.name), 3),
     });
   }
-  if (!steps.some((step) => step.severity !== 'ok')) {
-    steps.unshift({ severity: 'ok', title: 'Ничего срочного', detail: report.runs.length ? 'Запуски проходят, машины сохраняются.' : 'Запусков за период не было.', tags: [] });
+  // A last run that failed for a reason nothing above is about: what Veeam said, and where to look.
+  if (last?.result === 'failed' && !steps.some((step) => step.severity === 'crit')) {
+    steps.unshift(failureStep(lastFailure ?? report.errors.find((group) => group.failed), last, timezone));
   }
-  return steps;
+  if (report.missed.length) {
+    steps.push({
+      severity: 'warn',
+      title: 'Выяснить, почему не было запусков по расписанию',
+      detail: `${report.missed.slice(0, 6).map((at) => dayLabel(at, timezone)).join(', ')}: задание не стартовало. Так бывает, когда прошлый запуск ещё шёл — Veeam не запускает задание, пока идёт прошлое.`,
+      tags: [],
+    });
+  }
+  if (!steps.some((step) => step.severity !== 'ok')) {
+    steps.unshift({
+      severity: 'ok',
+      title: 'Ничего срочного',
+      detail: !report.runs.length ? 'Запусков за период не было.' : report.findings.length ? 'Срочного нет; что заметно — сказано выше.' : 'Запуски проходят, машины сохраняются.',
+      tags: [],
+    });
+  }
+  return steps.sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity]);
+};
+
+/** The step for a failed run, by what Veeam said: an address it could not reach, the backup window, a person, or else its words. */
+const failureStep = (group: ErrorGroup | undefined, run: JobRun, timezone: string): Step => {
+  const said = `${group?.raw ?? ''} ${group?.text ?? ''}`;
+  const tags = group ? [...group.machines.slice(0, 3), ...(group.machines.length > 3 ? [`ещё ${group.machines.length - 3}`] : [])] : [];
+  const day = dayLabel(run.start, timezone);
+  const address = /connection attempt failed|did not properly respond|failed to respond|connection refused|no connection could be made/i.test(said)
+    ? /\b(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})\b/.exec(said)?.[1]
+    : undefined;
+  if (address) {
+    return {
+      severity: 'crit',
+      title: `Проверить связь до ${address}`,
+      detail: `Запуск ${day} упал: Veeam не дождался ответа от ${address}. Проверить сеть и firewall от сервера Veeam и прокси до этого адреса — обычно это vCenter или ESXi.`,
+      tags,
+    };
+  }
+  if (/backup window/i.test(said)) {
+    return { severity: 'warn', title: 'Окно бэкапа обрывает запуск', detail: `Запуск ${day} Veeam остановил по окну бэкапа, не закончив машины: расширить окно или ускорить задание.`, tags };
+  }
+  if (/canceled by user/i.test(said)) {
+    return { severity: 'warn', title: `Запуск ${day} остановили вручную`, detail: `«${group?.text ?? ''}» — если это не плановая остановка, выяснить, кто и зачем.`, tags };
+  }
+  return {
+    severity: 'crit',
+    title: `Разобраться, почему упал запуск ${day}`,
+    detail: group ? `«${group.text.slice(0, 160)}»` : 'Veeam не объяснил причину — что он писал, видно в сессиях ниже.',
+    tags,
+  };
 };
 
 const verdictOf = (report: JobReport): string => {
