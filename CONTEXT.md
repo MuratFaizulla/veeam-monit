@@ -9,9 +9,9 @@ What one reading of the Veeam estate established: every restore point the server
 holds, every session that wrote one, and every job configuration saying whether
 a job was supposed to run at all.
 
-Two live slots — 🛡 Protection and 🧹 Orphaned backups — and /points are
-questions about one Evidence. Reading it costs around twenty requests and
-about forty seconds, so it happens on its own cadence
+Two live slots — 🛡 Protection and 🧹 Orphaned backups — /points and the
+**Job report** are questions about one Evidence. Reading it costs around
+twenty requests and about forty seconds, so it happens on its own cadence
 (`TELEGRAM_PROTECTION_INTERVAL_MIN`) and the answer is kept until the next one.
 Only the selected server's Evidence is read. A server that is selected again is
 read again at once, unless its Evidence is less than ten minutes old.
@@ -45,10 +45,12 @@ to be refreshed by the live step, which runs last, so the alerts read the
 previous cycle's evidence; after a cycle Veeam did not answer that was
 pending, and the first alert after the outage lost the job's retry policy.
 
-Two readers are outside any cycle and take the current value from
-`evidence` instead: a **Job card** asked for between cycles, and an alert
-whose Evidence is still pending, which reads the job's own configuration for
-its retry policy rather than going without "из 4" until a scan succeeds.
+Readers outside any cycle take the current value from `evidence` instead: a
+**Job card**, /points and the **Job report** asked for between cycles, and an
+alert whose Evidence is still pending, which reads the job's own
+configuration for its retry policy rather than going without "из 4" until a
+scan succeeds. A pending Evidence is said by its reason, in the card and the
+report alike.
 
 ## Run
 
@@ -66,11 +68,17 @@ Veeam finished the backup, with complaints. Only a session that *failed* has
 its points set aside (see **Restore point**). Two questions, two answers.
 
 Which sessions are one Run is decided in one place, `src/estate/runs.ts`,
-and read by all three things that need it: the alert's **Attempt** label, the
-failure streak in 🛡 Protection, and the run list on a **Job card**. They used
-to fold sessions by rules of their own, and the streak's — start to start —
-counted a Run whose attempts took longer than the allowance as several: one
-night the alert called "3 из 4" was, to 🛡, three failed Runs in a row.
+and read by everything that needs it: the alert's **Attempt** label, the
+failure streak in 🛡 Protection, the run list on a **Job card**, and both
+reports. They used to fold sessions by rules of their own, and the streak's
+— start to start — counted a Run whose attempts took longer than the
+allowance as several: one night the alert called "3 из 4" was, to 🛡, three
+failed Runs in a row.
+
+A job only a hand starts has no retries: Veeam retries only the runs it
+starts itself, so each of its sessions is a Run of its own (`retryWindowOf`).
+That rule was the Job report's session pages' alone, and its first page
+folded a failure and the start after it into one Run a retry had saved.
 
 A session is an attempt, not a Run; in code it is `JobSession`.
 
@@ -119,7 +127,9 @@ appears the next afternoon. /points says the newest Full that has written its
 data, a typical increment (the median: the night after a Full can be ten times
 the others), and what the job takes up altogether. A Full whose file is there
 and empty is "still being written". Read when somebody asks, a request per
-backup; the scan never reads files.
+backup; the scan never reads files. The **Job report**'s chain, and the Full
+it holds the next one against, put a file in its Run the same way
+(`runSizesOf`).
 
 ## Missed Full
 
@@ -146,9 +156,10 @@ judged: an unknown schedule is treated as a real one, because the failure mode
 of the other choice is silently dropping a job from every check.
 
 Standings are worked out from one Evidence by one rule — by 🛡 Protection
-once a cycle, and by /points when somebody asks — so the two cannot disagree
-about which jobs are in scope or how many were left out. /points used to work
-out its own excuse, a copy of the rule, twice.
+once a cycle, and by /points and the **Job report** when somebody asks
+(`judgementOf`) — so they cannot disagree about which jobs are in scope or
+how many were left out. /points used to work out its own excuse, a copy of
+the rule, twice.
 
 The **Verdict** is whether a job needs somebody, judged against the clock
 when it is asked: no point at all; none for longer than its deadline — the
@@ -156,8 +167,8 @@ job's own interval times `TELEGRAM_PROTECTION_OVERDUE_FACTOR`, never less
 than `TELEGRAM_PROTECTION_STALE_DAYS`; failing run after run; or past a
 scheduled Full. Anything else is fine. How many Runs it has skipped is said
 beside, not decided by: one late night wakes nobody. 🛡 lists every job by it,
-and /points opens with it in the same words — without a name, /points offers
-the jobs 🛡 lists, in 🛡's order.
+and /points and the Job report open with it in the same words — without a
+name, /points offers the jobs 🛡 lists, in 🛡's order.
 
 It used to be two topics: 🗂 Restore points listed a job by the Runs it had
 skipped and 🛡 by its deadline, and the two said it of the same job in
@@ -236,7 +247,19 @@ One job over a month, asked for by the Button under its Job card, as a PDF:
 first a page that says how the job stands, judged by its Runs — a verdict,
 its numbers, the month of Runs, what to do, its machines and who else wrote
 to the repository during the newest Run — and then the job's sessions as
-Veeam's own session report prints them, a **Session report**.
+Veeam's own session report prints them, a **Session report**. Both halves
+fold the month's sessions into Runs by one fold, so they agree which session
+is a retry.
+
+Its points are not its own: how far back the job goes, its newest point, the
+chain and its Fulls, and the **Verdict** 🛡 lists it by are the server's
+**Evidence**'s, as /points has them, and the verdict opens the page and the
+caption in 🛡's words. While the Evidence is pending the page says why, as
+the Job card does, and claims nothing of the points. It used to read every
+restore point of the server again and judge them by rules of its own: a
+failed Run's point of a machine that failed in it counted, a day with a
+.vbk file was a Full — which a machine added to the job writes on an
+incremental night — and a verdict of its own said «норма» of a job 🛡 listed.
 
 A Session report is a block a session, newest first, not a Run: Veeam's
 retries are blocks of their own, marked «(Retry N)» by the attempt they were
@@ -250,10 +273,11 @@ A machine is judged by Runs too: one whose first attempt failed and whose
 Run's retry saved it is saved, and said to be saved by the retry; one no Run
 saved in the month is **never saved**, whatever its attempts said; one the job
 names that no Run took on is **absent** — deleted, renamed or made again in
-vCenter. A Run still going counts for neither side. A replica is saved when a
-Run saved it: its points are on the target host, which the bot does not read.
-A scheduled start no Run came for within twelve hours of it is a missed start,
-counted only after the job's first Run of the month.
+vCenter. A Run still going counts for neither side. A machine is saved when a
+Run saved it, a replica's as much as a backup's: the Evidence keeps no
+machine's points apart, and a replica's are on the target host, which the
+bot does not read. A scheduled start no Run came for within twelve hours of
+it is a missed start, counted only after the job's first Run of the month.
 
 A machine is judged only by the Runs whose machines were read. On a server
 whose REST API is 1.1, which has no task sessions, a session's machines are
@@ -264,10 +288,11 @@ neither never saved nor absent; the page says what could not be read. Both
 used to be an empty place the report could not tell from none, and every
 machine of the job was printed in red as never saved.
 
-Read from the job's own server when asked — a few dozen requests — and kept
-by nobody; printed by the same browser, one report at a time. The job's
-month — its attempts and their machines, the logs that say why, its
-configuration, and what could not be read — is asked of the **Job reads**.
+Read from the job's own server when asked — a few dozen requests, no restore
+point among them — and kept by nobody; printed by the same browser, one
+report at a time. The job's month — its attempts and their machines, the
+logs that say why, its configuration, and what could not be read — is asked
+of the **Job reads**.
 
 What it says is `src/estate/job-report.ts` and, for the sessions,
 `src/estate/session-report.ts`, pure; reading and answering,
@@ -454,7 +479,8 @@ is read. Alerts are written in English; the live topics in Russian. That answer 
 attempts; an attempt with no end yet is the next attempt of the failed run
 it follows, never the end of it. Veeam retries only the runs it starts
 itself, so a job set to start by hand, or switched off in Veeam, has no
-attempts to promise whatever its retry settings say (`retriesAllowed`). A
+attempts to promise whatever its retry settings say (`retriesAllowed`), and
+none of its sessions is the retry of another (`retryWindowOf`). A
 scheduled job somebody started by hand cannot be told apart: the REST API does
 not say who started a session.
 

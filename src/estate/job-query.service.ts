@@ -17,8 +17,7 @@ import { JobChoice, jobChoicesOf } from './job-choices';
 import { JobCard, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 import { FailedObject, JobReads, JobSession, RECENT_SESSIONS } from './job-reads';
 import { RetainedRun } from './evidence';
-import { assessProtection, excuseFor, standingOf, standingsOf, thresholdsOf, verdictOf } from './job-standing';
-import { pointsOf } from './point-facts';
+import { assessProtection, judgementOf, standingsOf, thresholdsOf } from './job-standing';
 import { PointsCard, renderPointsCard } from './points-card';
 import { PointSizes, sizesOf } from './points-sizes';
 
@@ -187,17 +186,13 @@ export class JobQueryService {
     const evidence = this.evidence.evidence;
     let card: PointsCard;
     if (evidence.status === 'ready') {
-      const standing = standingOf(job, evidence);
-      const excused = excuseFor(job, evidence) ?? undefined;
-      const points = pointsOf(standing);
+      // By the verdict 🛡 lists the job by, so the two cannot disagree about it.
+      const { byRuns, ...judged } = judgementOf(job, evidence, this.clock(), thresholdsOf(this.config));
       card = {
         name: job.name,
-        excused,
-        // By the verdict 🛡 lists the job by, so the two cannot disagree about it.
-        verdict: excused ? undefined : verdictOf(standing, this.clock(), thresholdsOf(this.config)),
-        points,
-        sizes: points ? await this.sizesOf(evidence.backupsByJob.get(job.id) ?? [], points.retained ?? []) : undefined,
-        elsewhere: standing.byRuns,
+        ...judged,
+        sizes: judged.points ? await this.sizesOf(evidence.backupsByJob.get(job.id) ?? [], judged.points.retained ?? []) : undefined,
+        elsewhere: byRuns,
       };
     } else {
       card = { name: job.name, unavailable: evidence.reason };

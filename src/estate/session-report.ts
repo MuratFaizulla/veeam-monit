@@ -1,8 +1,7 @@
 import { instantOf } from '../veeam/estate';
 import { linesOf, sessionLines } from '../veeam/session-text';
 import { VeeamBackupFile, VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
-import { JobReading } from './job-report';
-import { retryWindowOf, runsOf } from './runs';
+import { JobReading, runsOfMonth } from './job-report';
 
 /**
  * The Session report: one job's sessions over the month the way Veeam's own
@@ -186,15 +185,10 @@ export const sessionReportOf = (reading: JobReading, timezone: string): SessionR
   // Files are kept as long as the chain is: before the oldest, a session's files are gone, not unwritten.
   const oldestFile = files.length ? Math.min(...files.map((file) => file.at)) : Infinity;
 
-  // Which attempt of its run each session was, by the rule the alerts count with. Veeam retries
-  // only the runs it starts itself: a job started by hand that is started again was started again.
-  const schedule = reading.configured?.schedule;
-  const attempts = reading.attempts.map((attempt) => ({ ...attempt, startedAt: attempt.session.creationTime, endedAt: attempt.session.endTime, result: attempt.session.result?.result }));
+  // Which attempt of its run each session was, by the fold the first page reads its runs by.
   const retryOf = new Map<string, number>();
-  if (schedule?.runAutomatically !== false) {
-    for (const run of runsOf(attempts, retryWindowOf(schedule))) {
-      [...run.attempts].reverse().forEach((attempt, index) => retryOf.set(attempt.session.id ?? '', index));
-    }
+  for (const run of runsOfMonth(reading)) {
+    [...run.attempts].reverse().forEach((attempt, index) => retryOf.set(attempt.session.id ?? '', index));
   }
   // A replica writes no backup files: Veeam calls what a good session sent its backup size, and a failed one's nothing.
   const replica = /replica/i.test(reading.job.type ?? '');

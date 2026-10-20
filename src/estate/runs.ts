@@ -46,8 +46,17 @@ const DEFAULT_AWAIT_MINUTES = 10;
 /** Allowance for the length of the failing attempt, on top of the wait. */
 const RUN_ALLOWANCE_MINUTES = 20;
 
-/** Longest gap that still counts as "Veeam retried", from the job's policy. */
+/**
+ * Longest gap that still counts as "Veeam retried", from the job's policy.
+ *
+ * None for a job only a hand starts: Veeam retries only the runs it starts
+ * itself, so a session after a failed one was started again by somebody and
+ * is a run of its own. The Job report's session pages knew it, by a rule of
+ * their own, and its first page did not: a failure and the start after it
+ * were one run there, "спасает повтор", and two sessions with no retry below.
+ */
 export const retryWindowOf = (schedule: VeeamSchedule | undefined): number => {
+  if (schedule?.runAutomatically === false) return Number.NEGATIVE_INFINITY;
   const retry = schedule?.retry;
   // Retries switched off means no gap is a retry; the allowance still applies,
   // because two runs of the same job can otherwise never be told apart at all.

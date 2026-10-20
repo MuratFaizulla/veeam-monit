@@ -1,12 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount, jobReadsOf } = require('./world.cjs');
-const { jobReportOf } = require('../dist/estate/job-report');
+const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount, jobReadsOf, telegramConfig } = require('./world.cjs');
+const { jobReportOf, dayLabel } = require('../dist/estate/job-report');
 const { jobReportPage } = require('../dist/estate/job-report-page');
 const { sessionReportOf } = require('../dist/estate/session-report');
 const { sessionReportPage, veeamSize, veeamDuration } = require('../dist/estate/session-report-page');
-const { readJob } = require('../dist/estate/job-reports');
+const { readJob, JobReports } = require('../dist/estate/job-reports');
+const { readingOf } = require('../dist/estate/evidence');
+const { assessProtection, judgementOf, standingsOf, thresholdsOf } = require('../dist/estate/job-standing');
+const { renderProtection } = require('../dist/live/protection');
 const { VeeamJobReads } = require('../dist/estate/job-reads');
 const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
 const { VeeamApiError } = require('../dist/veeam/api.error');
@@ -21,6 +24,8 @@ const AT = Date.parse('2026-10-14T06:00:00Z'); // 11:00 on Wednesday 14.10, loca
 const GB = 1024 ** 3;
 const MINUTE = 60_000;
 const local = (at) => new Intl.DateTimeFormat('ru-RU', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at));
+/** "04:30", as the first page writes a time; `timezone` empty for the machine's own. */
+const timeLabel = (at, timezone) => new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at));
 
 /** One machine in one attempt. */
 const task = (name, result, message = '', minutes = 10) => ({
@@ -35,12 +40,50 @@ const attempt = (id, start, minutes, result, tasks) => ({
 const NSX = "Processing edge-01 Error: The method is disabled by 'vShield_SVM'";
 const TIMEOUT = 'Error: Время ожидания операции истекло';
 
+/** 🛡's thresholds as shipped: three days at least, two and a half of the job's own intervals, three failed runs. */
+const THRESHOLDS = thresholdsOf(telegramConfig());
+
+const edgePoint = (id, session, name, at, type = 'Increment') => ({ id, backupId: 'b1', sessionId: session, name, type, creationTime: at });
+/**
+ * OPS_Edge's points as the scan read them: db-01 and web-01 each night a run
+ * saved them, a Full on 10.10. A retry writes into its run's point, which
+ * carries the first attempt's id.
+ */
+const EDGE_POINTS = [
+  edgePoint('p10-db', 'a1', 'db-01', '2026-10-10T04:50:00+05:00', 'Full'),
+  edgePoint('p10-web', 'a1', 'web-01', '2026-10-10T04:10:00+05:00', 'Full'),
+  edgePoint('p12-db', 'b1', 'db-01', '2026-10-12T04:20:00+05:00'),
+  edgePoint('p12-web', 'b1', 'web-01', '2026-10-12T04:10:00+05:00'),
+  edgePoint('p13-db', 'c1', 'db-01', '2026-10-13T04:20:00+05:00'),
+  edgePoint('p13-web', 'c1', 'web-01', '2026-10-13T04:10:00+05:00'),
+];
+
+/**
+ * The job of `reading` as its server's Evidence judges it, the scan having
+ * read the month's sessions, `points`, and how the machines of the failed
+ * sessions ended — as /points and 🛡 have it at the report's moment.
+ */
+const judgedOf = (reading, points = EDGE_POINTS) => {
+  const sessions = reading.attempts.map(({ session }) => ({ ...session, jobId: reading.job.id, sessionType: 'BackupJob' }));
+  const outcomes = new Map(reading.attempts.map(({ session, tasks }) => [session.id, new Map((tasks ?? []).map((one) => [one.name, one.result.result]))]));
+  const evidence = readingOf({ jobs: [reading.job], configurations: reading.configured ? [reading.configured] : [], backups: [{ id: 'b1', jobId: reading.job.id }], points, sessions })
+    .evidence(outcomes, reading.at);
+  return { status: 'ready', ...judgementOf(reading.job, evidence, { now: new Date(reading.at), timezone: TZ }, THRESHOLDS) };
+};
+
 /**
  * OPS_Edge, every day at 04:00: edge-01 is an NSX machine no run can save,
  * db-01 timed out once and its retry saved it, web-01 is fine. Nothing ran on
  * 11.10. A Full on the third Wednesday of the month; the newest is 10.10.
+ * Its points are the Evidence's, of `points` read beside its sessions.
  */
-const edgeReading = (over = {}) => ({
+const edgeReading = (over = {}, points = EDGE_POINTS) => {
+  const reading = edgeRead(over);
+  return { ...reading, evidence: over.evidence ?? judgedOf(reading, points) };
+};
+
+/** What is read of OPS_Edge but its Evidence. */
+const edgeRead = (over) => ({
   at: AT,
   days: 30,
   server: 'veeam01-backup-a',
@@ -73,17 +116,11 @@ const edgeReading = (over = {}) => ({
   // As the Job reads give them, by the rule the card's ⚡ reads its run by.
   bottlenecks: ['target', 'target', 'source'],
   repository: { id: 'r1', name: 'NAS01_SHARE_BKP03', type: 'Smb', capacityGB: 100 * 1024, freeGB: 15 * 1024 },
+  // Each names the points it holds. Its time is the Veeam server's own clock, with no offset.
   files: [
-    // A backup file's time is the Veeam server's own clock, with no offset: 22:30 on the 12th is the 12th.
-    { name: 'OPS_EdgeD2026-10-12T223000.vib', creationTime: '2026-10-12T22:30:00', backupSize: 5 * GB, dataSize: 20 * GB },
-    { name: 'OPS_EdgeD2026-10-13T040002.vib', creationTime: '2026-10-13T04:00:02', backupSize: 4 * GB, dataSize: 18 * GB },
-    { name: 'OPS_EdgeD2026-10-10T040002.vbk', creationTime: '2026-10-10T04:00:02', backupSize: 100 * GB, dataSize: 400 * GB },
-  ],
-  points: [
-    { name: 'db-01', creationTime: '2026-10-10T04:30:00+05:00' },
-    { name: 'db-01', creationTime: '2026-10-13T04:20:00+05:00' },
-    { name: 'web-01', creationTime: '2026-10-10T04:10:00+05:00' },
-    { name: 'web-01', creationTime: '2026-10-13T04:10:00+05:00' },
+    { name: 'OPS_EdgeD2026-10-13T040002.vib', creationTime: '2026-10-13T04:00:02', restorePointIds: ['p13-db', 'p13-web'], backupSize: 4 * GB, dataSize: 18 * GB },
+    { name: 'OPS_EdgeD2026-10-12T040002.vib', creationTime: '2026-10-12T04:00:02', restorePointIds: ['p12-db', 'p12-web'], backupSize: 5 * GB, dataSize: 20 * GB },
+    { name: 'OPS_EdgeD2026-10-10T040002.vbk', creationTime: '2026-10-10T04:00:02', restorePointIds: ['p10-db', 'p10-web'], backupSize: 100 * GB, dataSize: 400 * GB },
   ],
   neighbours: [{ id: 'n1', name: 'OPS_Files' }, { id: 'n2', name: 'OPS_Mail' }],
   neighbourRuns: [
@@ -113,13 +150,11 @@ test('a machine no run saves comes first, and one a retry saved says so', () => 
   assert.deepEqual(report.machines.map((machine) => machine.name), ['edge-01', 'db-01', 'web-01'], 'the folder is not a machine');
   const [edge, db, web] = report.machines;
   assert.equal(edge.failing, true);
-  assert.equal(edge.points, 0);
   assert.equal(edge.error, "The method is disabled by 'vShield_SVM'");
   assert.deepEqual(edge.history, ['failed', 'failed', 'failed']);
   assert.equal(db.error, 'Время ожидания операции истекло');
   assert.equal(db.errorTone, 'healed');
   assert.deepEqual(db.history, ['success', 'success', 'success']);
-  assert.equal(db.points, 2);
   assert.equal(web.error, undefined);
   assert.equal(web.minutes, 10);
   assert.deepEqual(report.errors.map((group) => [group.text, group.machines.length, group.runs]), [
@@ -132,8 +167,9 @@ test('the report says what is wrong and what to do about it, in the words of wha
   const report = jobReportOf(edgeReading(), TZ);
 
   assert.equal(report.status, 'crit');
-  assert.equal(report.verdict, '1 из 3 машин не сохранена ни разу за 30 дней; все 3 запуска закончились ошибкой');
-  assert.deepEqual(report.findings.map((finding) => finding.title).slice(2), ['Не было 1 запуска по расписанию', 'На BKP03 свободно 15%']);
+  // What 🛡 says of it first, in its words, then what the month's runs and machines say.
+  assert.equal(report.verdict, '3 неудачных запуска подряд; 1 из 3 машин не сохранена ни разу за 30 дней');
+  assert.deepEqual(report.findings.map((finding) => finding.title).slice(2), ['Все 3 запуска закончились ошибкой', 'Не было 1 запуска по расписанию', 'На BKP03 свободно 15%']);
   assert.equal(report.steps[0].title, 'Исключить из задания 1 служебную машину NSX');
   assert.deepEqual(report.steps[0].tags, ['edge-01']);
   const full = report.steps.find((step) => /Active Full/.test(step.title));
@@ -141,18 +177,41 @@ test('the report says what is wrong and what to do about it, in the words of wha
   assert.equal(full.severity, 'ok');
 });
 
-test('the chain is told a day at a time, newest first, each on the day the Veeam server wrote it', () => {
-  const report = jobReportOf(edgeReading(), TZ);
+test('the chain is the Evidence\'s, a day a row: a Full where most of a run\'s points are, its size the files that hold them', () => {
+  // On 13.10 app-01 joined the job: its first point is a Full, in a .vbk of its own, on an incremental night.
+  const reading = edgeReading({
+    attempts: edgeReading().attempts.map((one) => (one.session.id === 'c1' ? { ...one, tasks: [...one.tasks, task('app-01', 'success')] } : one)),
+    files: [
+      ...edgeReading().files,
+      { name: 'OPS_EdgeD2026-10-13T042500.vbk', creationTime: '2026-10-13T04:25:00', restorePointIds: ['p13-app'], backupSize: 30 * GB, dataSize: 40 * GB },
+    ],
+  }, [...EDGE_POINTS, edgePoint('p13-app', 'c1', 'app-01', '2026-10-13T04:25:00+05:00', 'Full')]);
+  const report = jobReportOf(reading, TZ);
   const day = (utcMidnight) => new Date(utcMidnight).toISOString().slice(0, 10);
 
-  assert.deepEqual(report.chain.map((entry) => [day(entry.day), entry.full]), [
-    ['2026-10-13', false],
-    ['2026-10-12', false],
-    ['2026-10-10', true],
+  assert.deepEqual(report.chain.map((entry) => [day(entry.day), entry.full, entry.disk / GB]), [
+    ['2026-10-13', false, 34],
+    ['2026-10-12', false, 5],
+    ['2026-10-10', true, 100],
   ]);
-  assert.equal(report.disk, 109 * GB);
-  assert.equal(report.lastFull.disk, 100 * GB);
-  assert.deepEqual(report.depth, { points: 2, oldest: Date.parse('2026-10-10T04:10:00+05:00') });
+  assert.equal(report.disk, 139 * GB);
+  // The Full the next one is held against is 10.10's, as /points has it.
+  assert.deepEqual([report.lastFull.at, report.lastFull.disk], [Date.parse('2026-10-10T04:10:00+05:00'), 100 * GB]);
+  // How far back each machine goes: the three runs it was saved in, as /points counts them.
+  assert.deepEqual(report.depth, { points: 3, oldest: Date.parse('2026-10-10T04:10:00+05:00') });
+  assert.equal(report.newestPoint, Date.parse('2026-10-13T04:25:00+05:00'));
+
+  // On the page, where nothing went wrong and nobody else wrote: a day a row, or why there is none.
+  const night = (id, day) => attempt(id, `2026-10-${day}T04:00:00+05:00`, 30, 'success', [task('db-01', 'success'), task('web-01', 'success')]);
+  const quiet = (over, points) => {
+    const reading = edgeReading({ neighbours: [], neighbourRuns: [], attempts: [night('c1', 13), night('b1', 12), night('a1', 10)], ...over }, points);
+    const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
+    return html.slice(html.indexOf('Цепочка на диске'));
+  };
+  assert.match(quiet(), /<td class="v">13\.10<\/td><td class="v">инкремент<\/td><td class="v">4,0 ГБ<\/td><td class="v">18 ГБ<\/td>/);
+  assert.match(quiet(), /<td class="v">10\.10<\/td><td class="v">Full<\/td><td class="v">100 ГБ<\/td><td class="v">400 ГБ<\/td>/);
+  assert.match(quiet({}, []), /<td colspan="4" class="js-dim">У задания нет ни одной точки восстановления\.<\/td>/);
+  assert.match(quiet({ evidence: { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' } }), /<td colspan="4" class="js-dim">Точки восстановления ещё не прочитаны\.<\/td>/);
 });
 
 test('who else writes to the repository is whoever was writing while the newest run was', () => {
@@ -308,10 +367,9 @@ test('past midnight is "(+N)" by whole days since the session started, as Veeam 
   assert.match(long, /<td>45:53:02<\/td>/);
 });
 
-test('a replica\'s backup size is what a good session sent and nothing for a failed one; a job started by hand has no retries', () => {
+test('a replica\'s backup size is what a good session sent and nothing for a failed one', () => {
   const replica = edgeReading({
     job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
-    configured: { ...edgeReading().configured, schedule: { runAutomatically: false, retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 } } },
     files: [],
     attempts: [
       attempt('r2', '2026-10-13T04:42:00+05:00', 30, 'success', [task('db-01', 'success')]),
@@ -321,8 +379,31 @@ test('a replica\'s backup size is what a good session sent and nothing for a fai
   const report = sessionReportOf(replica, TZ);
 
   assert.equal(report.kind, 'Replication job');
-  assert.deepEqual(report.sessions.map((session) => [session.title, session.backupSize]), [['OPS_Replica', GB], ['OPS_Replica', 0]]);
+  assert.deepEqual(report.sessions.map((session) => session.backupSize), [GB, 0]);
   assert.equal(report.sessions[0].dedupe, 1);
+});
+
+test('the first page and the sessions agree which session is a retry: none of a job only a hand starts', () => {
+  // A failure, and a start five minutes after it ended.
+  const night = [
+    attempt('m2', '2026-10-13T04:35:00+05:00', 20, 'success', [task('db-01', 'success')]),
+    attempt('m1', '2026-10-13T04:00:00+05:00', 30, 'failed', [task('db-01', 'failed', TIMEOUT)]),
+  ];
+  const told = (schedule) => {
+    const reading = edgeReading({ configured: { ...edgeReading().configured, schedule }, attempts: night });
+    const report = jobReportOf(reading, TZ);
+    return {
+      runs: report.runs.map((run) => run.pieces.length),
+      healed: report.findings.some((finding) => /спасает повтор/.test(finding.title)),
+      sessions: sessionReportOf(reading, TZ).sessions.map((session) => session.title),
+    };
+  };
+
+  // Veeam's retry: one run of two attempts, the newer session its Retry 1.
+  assert.deepEqual(told(edgeReading().configured.schedule), { runs: [2], healed: true, sessions: ['OPS_Edge (Retry 1)', 'OPS_Edge'] });
+  // Started again by somebody: Veeam retries only what it starts. Two runs, and no retry on either half.
+  const byHand = { ...edgeReading().configured.schedule, runAutomatically: false };
+  assert.deepEqual(told(byHand), { runs: [1, 1], healed: false, sessions: ['OPS_Edge', 'OPS_Edge'] });
 });
 
 test('a session still going says how far it has got, and its machines still going have no end', () => {
@@ -368,6 +449,10 @@ test('the file opens with a page that says how the job stands, and the sessions 
   assert.match(html, /Задание: OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
   assert.match(html, /Сводка/);
   assert.match(html, /1 из 3 машин не сохранена ни разу за 30 дней/);
+  // A machine is saved by a run of the month, whatever points a failed one left of it.
+  assert.match(html, /Машины сохранены<\/td><td class="v"><span class="js-bad">2 из 3<\/span>/);
+  assert.match(html, /Не сохранены<\/td><td class="v"><span class="js-bad">1<\/span>/);
+  assert.match(html, /Откат<\/td><td class="v">на 3 точки, до 10\.10</);
   assert.match(html, /Запуски за 30 дней/);
   assert.match(html, /Что сделать/);
   assert.match(html, /Исключить из задания 1 служебную машину NSX/);
@@ -385,14 +470,13 @@ test('a replica is told by its runs, not by restore points the bot cannot see', 
     job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
     configured: { ...edgeReading().configured, virtualMachines: { includes: [{ type: 'VirtualMachine', name: 'db-01' }] } },
     files: [],
-    points: [],
     neighbours: [],
     neighbourRuns: [],
     attempts: [
       attempt('r2', '2026-10-13T04:00:00+05:00', 30, 'failed', [task('db-01', 'failed', 'Error: A connection attempt failed because the connected party did not properly respond after a period of time 10.13.0.7:443')]),
       attempt('r1', '2026-10-12T04:00:00+05:00', 30, 'success', [task('db-01', 'success')]),
     ],
-  });
+  }, []);
   const report = jobReportOf(replica, TZ);
   const html = jobReportPage(report, sessionReportOf(replica, TZ), TZ);
 
@@ -560,7 +644,7 @@ const edgeServer = (over = {}) => {
     '/api/v1/backupInfrastructure/repositories/states': { data: [edgeReading().repository] },
     '/api/v1/backups': { data: [{ id: 'b1', name: 'OPS_Edge', jobId: 'j1' }, { id: 'b2', name: 'OPS_Other', jobId: 'j2' }] },
     '/api/v1/backups/b1/backupFiles': { data: edgeReading().files },
-    '/api/v1/restorePoints': { data: [{ name: 'db-01', backupId: 'b1', creationTime: recent(47) }, { name: 'other', backupId: 'b2', creationTime: recent(47) }] },
+    // No restore point: the report has its points from the Evidence.
     ...over,
   });
   return { veeam, asked };
@@ -579,9 +663,22 @@ const edgeMonth = (history = {}) => jobReadsOf({
   },
 });
 
-test('a job\'s report has its month from the Job reads, and beside it the repository, the files and points, and the neighbours', async () => {
+/** OPS_Edge's server's Evidence, of the one point its good night wrote. */
+const edgeEvidence = () => readingOf({
+  jobs: [EDGE],
+  configurations: [edgeReading().configured],
+  backups: [{ id: 'b1', name: 'OPS_Edge', jobId: 'j1' }],
+  points: [{ id: 'p1', backupId: 'b1', sessionId: 's1', name: 'db-01', creationTime: recent(47.8) }],
+  sessions: [
+    { id: 's2', jobId: 'j1', sessionType: 'BackupJob', creationTime: recent(24), endTime: recent(23.5), result: { result: 'failed' } },
+    { id: 's1', jobId: 'j1', sessionType: 'BackupJob', creationTime: recent(48), endTime: recent(47.5), result: { result: 'success' } },
+  ],
+}).evidence(new Map(), NOW);
+
+test('a job\'s report has its month from the Job reads, its points from the Evidence, and beside them the repository, the files and the neighbours', async () => {
   const { veeam, asked } = edgeServer();
-  const reading = await readJob({ name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: edgeMonth() }, 'j1', NOW, TZ);
+  const estate = { name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: edgeMonth(), evidence: { evidence: edgeEvidence() } };
+  const reading = await readJob(estate, 'j1', NOW, TZ, THRESHOLDS);
 
   assert.equal(reading.error, undefined);
   assert.equal(reading.job.name, 'OPS_Edge');
@@ -590,7 +687,10 @@ test('a job\'s report has its month from the Job reads, and beside it the reposi
   assert.deepEqual(reading.bottlenecks, ['target']);
   assert.equal(reading.repository.name, 'NAS01_SHARE_BKP03');
   assert.equal(reading.files.length, 3);
-  assert.deepEqual(reading.points.map((point) => point.name), ['db-01']);
+  // One moment to go back to, two days old: nothing wrong by 🛡's thresholds.
+  assert.equal(reading.evidence.status, 'ready');
+  assert.deepEqual([reading.evidence.points.runs, reading.evidence.points.newest], [1, Date.parse(recent(47.8))]);
+  assert.equal(reading.evidence.verdict.trouble, undefined);
   assert.deepEqual(reading.neighbours, [{ id: 'n1', name: 'OPS_Files' }]);
   // Their sessions from a day before the newest run started.
   assert.deepEqual(asked.map((params) => params.createdAfterFilter), [recent(48)]);
@@ -600,14 +700,67 @@ test('a job\'s report has its month from the Job reads, and beside it the reposi
 test('what could not be read, of the month or beside it, is said, and the rest is kept; a job that is gone is none', async () => {
   const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
   const reader = new VeeamEstateReader(veeam, monitorAccount());
-  const estate = { name: 'BAAS', reader, reads: edgeMonth({ missing: ['машины 1 сессии из 2: socket hang up'] }) };
-  const reading = await readJob(estate, 'j1', NOW, TZ);
+  // No scan has finished on this server: that is said, and is no failure of this read.
+  const pending = { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' };
+  const estate = { name: 'BAAS', reader, reads: edgeMonth({ missing: ['машины 1 сессии из 2: socket hang up'] }), evidence: { evidence: pending } };
+  const reading = await readJob(estate, 'j1', NOW, TZ, THRESHOLDS);
 
   assert.equal(reading.error, 'машины 1 сессии из 2: socket hang up; бэкапы: The Veeam server did not respond within 30000 ms');
   assert.equal(reading.attempts.length, 2);
   assert.deepEqual(reading.files, []);
-  assert.deepEqual(reading.points, []);
-  assert.equal(await readJob(estate, 'gone', NOW, TZ), undefined);
+  assert.deepEqual(reading.evidence, pending);
+  assert.equal(await readJob(estate, 'gone', NOW, TZ, THRESHOLDS), undefined);
+});
+
+test('the report says of a job what 🛡 says, on the same Evidence: its verdict, how far back it goes, its newest point', async () => {
+  // OPS_Edge saved both its machines three nights running, three weeks ago;
+  // the one night since failed, and the point it wrote of db-01, which failed
+  // in it, is no state to restore to. By its runs alone, one failure in four.
+  const w = world();
+  const job = { id: 'j1', name: 'OPS_Edge', type: 'Backup', status: 'Stopped', result: 'failed' };
+  const configuration = { id: 'j1', name: 'OPS_Edge', schedule: { runAutomatically: true }, storage: { backupRepositoryId: 'r1' } };
+  const night = (id, daysAgo, result) => ({
+    id, jobId: 'j1', sessionType: 'BackupJob', creationTime: recent(24 * daysAgo + 0.5), endTime: recent(24 * daysAgo - 0.5), result: { result },
+  });
+  const sessions = [night('s4', 19, 'failed'), night('s3', 20, 'success'), night('s2', 21, 'success'), night('s1', 22, 'success')];
+  const point = (session, name, daysAgo) => ({ id: `${session}-${name}`, backupId: 'b1', sessionId: session, name, type: 'Increment', creationTime: recent(24 * daysAgo) });
+  const points = [
+    ...[['s1', 22], ['s2', 21], ['s3', 20]].flatMap(([session, daysAgo]) => [point(session, 'db-01', daysAgo), point(session, 'web-01', daysAgo)]),
+    point('s4', 'db-01', 19),
+  ];
+  const evidence = readingOf({ jobs: [job], configurations: [configuration], backups: [{ id: 'b1', jobId: 'j1', name: 'OPS_Edge' }], points, sessions })
+    // How the machines of the night that failed ended, as the scan asks it.
+    .evidence(new Map([['s4', new Map([['db-01', 'failed']])]]), NOW);
+
+  const clock = { now: new Date(NOW), timezone: w.telegram.timezone };
+  const [shield] = renderProtection(assessProtection({ standings: standingsOf([job], evidence), now: NOW, timezone: clock.timezone, ...thresholdsOf(w.telegram) }), clock);
+  const [, said] = /🔴 <b>OPS_Edge<\/b> — (.+)/.exec(shield);
+  assert.equal(said, 'нет бэкапа 20 дней');
+
+  const veeam = veeamFake({
+    '/api/v1/jobs/states': { data: [{ id: 'j1', name: 'OPS_Edge', type: 'Backup', status: 'Stopped', lastResult: 'Failed' }] },
+    '/api/v1/backupInfrastructure/repositories/states': { data: [] },
+    '/api/v1/backups': { data: [{ id: 'b1', name: 'OPS_Edge', jobId: 'j1' }] },
+    '/api/v1/backups/b1/backupFiles': { data: [] },
+    '/api/v1/jobs': { data: [configuration] },
+  });
+  const machines = (result) => [task('db-01', result), task('web-01', 'success')];
+  const month = jobReadsOf({ configuration, history: { attempts: sessions.map((session) => ({ session, tasks: machines(session.result.result) })) } });
+  const printer = printerOf();
+  const estate = { name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: month, evidence: { evidence } };
+  const answer = await new JobReports(w.config, printer).answer(estate, 'j1');
+
+  // The caption opens with 🛡's words and its colour, whatever the runs say after them.
+  const [title, verdict] = answer.text.split('\n');
+  assert.equal(title, '📄 <b>OPS_Edge</b> — 🔴 критично');
+  assert.equal(verdict.split('; ')[0], `${said.charAt(0).toUpperCase()}${said.slice(1)}`);
+  // It reads no restore point of its own: the Evidence has them, and nothing was left unread.
+  assert.doesNotMatch(answer.text, /Прочитано не всё/);
+  // Three moments a machine, the failed night's not among them, as /points counts them.
+  const [page] = printer.pages;
+  const moment = (daysAgo) => `${dayLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)} ${timeLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)}`;
+  assert.match(page, new RegExp(`Последняя точка</td><td class="v">${moment(20)}<`));
+  assert.match(page, new RegExp(`Откат</td><td class="v">на 3 точки, до ${dayLabel(Date.parse(recent(24 * 22)), clock.timezone)}<`));
 });
 
 /* ------------------------------------------------------------------ *
@@ -641,6 +794,10 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   assert.match(printer.pages[0], /Что сделать/);
   assert.match(printer.pages[0], /Backup job: OPS_Edge/);
   assert.match(printer.pages[0], />Details</);
+  // No scan has read this server's points yet: said as the Job card says it, and nothing claimed of them.
+  assert.match(printer.pages[0], /<div class="js-partial">Точки восстановления ещё не прочитаны\.<\/div>/);
+  assert.match(printer.pages[0], /Последняя точка<\/td><td class="v">—<\/td>/);
+  assert.match(printer.pages[0], /Откат<\/td><td class="v">—<\/td>/);
 });
 
 test('a job\'s report Button carries its server and id within Telegram\'s 64 bytes, and reads back', () => {

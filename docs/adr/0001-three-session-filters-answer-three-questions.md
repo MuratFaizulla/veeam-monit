@@ -56,3 +56,9 @@ Update, 2026-09-30: they were (`src/estate/evidence.ts`). The placing of
 points and the streak now start from one grouping of a job's sessions, newest
 first, and each keeps its own filter: every attempt for the placing, finished
 attempts of the last seven days for the streak.
+
+Update, 2026-10-21: the second such rule, that Veeam retries only the runs it
+starts itself, had landed in the Job report's session pages, and its first
+page folded a job started by hand otherwise. It is in `retryWindowOf` now, so
+every reader folds such a job's sessions one way; the three filters are as
+they were.

@@ -4,7 +4,7 @@ import { Job } from '../veeam/estate';
 import { RetainedHistory, Retention, ScannedEvidence } from './evidence';
 import { FullSchedule, missedFullDays } from './full-schedule';
 import { isDisabled } from './job-state';
-import { missedRunsWords, owedDaysWords } from './point-facts';
+import { JobPoints, missedRunsWords, owedDaysWords, pointsOf } from './point-facts';
 
 /**
  * What each job is owed, what it has, and whether it needs somebody.
@@ -238,6 +238,36 @@ export const verdictOf = (job: JobStanding, clock: Clock, thresholds: Protection
     owed,
     fullsChecked: fulls !== undefined,
     lastFull: points?.chain?.lastFull,
+  };
+};
+
+/** One job as the Evidence has it: what /points says of it, and the Job report too. */
+export interface JobJudgement {
+  /** Why the job owes nobody a point, when it does not. */
+  excused?: Excuse;
+  /** Where it stands by 🛡's verdict; absent when it is excused. */
+  verdict?: Verdict;
+  /** Its points; absent when it has none in the list the scan reads. */
+  points?: JobPoints;
+  /** Judged by its good runs, its points being kept where the scan does not read. */
+  byRuns: boolean;
+}
+
+/**
+ * One job, judged from the Evidence against `clock`: whether it is excused,
+ * the verdict 🛡 lists it by, and its points. /points and the Job report both
+ * ask it. The report used to judge by rules of its own — every point counted,
+ * a failed run's too, a day with a .vbk file a Full, a verdict of its own —
+ * and could call a job fine that 🛡 listed.
+ */
+export const judgementOf = (job: Job, evidence: ScannedEvidence, clock: Clock, thresholds: ProtectionThresholds): JobJudgement => {
+  const standing = standingOf(job, evidence);
+  const excused = excuseFor(job, evidence) ?? undefined;
+  const points = pointsOf(standing);
+  return {
+    ...(excused ? { excused } : { verdict: verdictOf(standing, clock, thresholds) }),
+    ...(points ? { points } : {}),
+    byRuns: standing.byRuns,
   };
 };
 

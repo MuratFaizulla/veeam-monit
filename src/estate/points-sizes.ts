@@ -34,19 +34,21 @@ export interface PointSizes {
   increment?: RunSize & { runs: number };
 }
 
-/** Undefined when the job has no files to say anything with. */
-export const sizesOf = (files: VeeamBackupFile[], runs: RetainedRun[]): PointSizes | undefined => {
-  if (files.length === 0) return undefined;
+/**
+ * What each retained run's files take up, a file put in the run whose points
+ * it names. A run no file names is not in it. The Job report's chain is told
+ * by it too; it used to put a file in the day it was written, and call that
+ * day a Full when the file was a .vbk — which a machine added to the job
+ * writes on an incremental night.
+ */
+export const runSizesOf = (files: VeeamBackupFile[], runs: RetainedRun[]): Map<RetainedRun, RunSize> => {
   const runOfPoint = new Map<string, RetainedRun>();
   for (const run of runs) for (const id of run.pointIds) runOfPoint.set(id, run);
 
   // A file whose points the scan does not know — written since, or by a run
-  // whose points were set aside — still takes up its space, and is counted in
-  // the total only.
+  // whose points were set aside — is nobody's here.
   const byRun = new Map<RetainedRun, RunSize>();
-  let onDisk = 0;
   for (const file of files) {
-    onDisk += file.backupSize ?? 0;
     const run = (file.restorePointIds ?? []).map((id) => runOfPoint.get(id)).find(Boolean);
     if (!run) continue;
     const size = byRun.get(run) ?? { data: 0, disk: 0 };
@@ -54,6 +56,15 @@ export const sizesOf = (files: VeeamBackupFile[], runs: RetainedRun[]): PointSiz
     size.disk += file.backupSize ?? 0;
     byRun.set(run, size);
   }
+  return byRun;
+};
+
+/** Undefined when the job has no files to say anything with. */
+export const sizesOf = (files: VeeamBackupFile[], runs: RetainedRun[]): PointSizes | undefined => {
+  if (files.length === 0) return undefined;
+  // A file nobody's run holds still takes up its space, and is counted in the total only.
+  const onDisk = files.reduce((sum, file) => sum + (file.backupSize ?? 0), 0);
+  const byRun = runSizesOf(files, runs);
 
   const written = (full: boolean) =>
     [...byRun].filter(([run, size]) => run.full === full && size.data > 0).sort(([a], [b]) => b.at - a.at);

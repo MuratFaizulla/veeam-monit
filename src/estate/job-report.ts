@@ -1,9 +1,12 @@
-import { plural } from '../telegram/time';
+import { Clock, plural } from '../telegram/time';
 import { durationOf, fromServerClock, instantOf, Job } from '../veeam/estate';
 import { linesOf, saidOf } from '../veeam/session-text';
-import { VeeamBackupFile, VeeamJob, VeeamRepositoryState, VeeamRestorePoint, VeeamTaskSession } from '../veeam/types';
+import { VeeamBackupFile, VeeamJob, VeeamRepositoryState, VeeamTaskSession } from '../veeam/types';
+import { PendingEvidence } from './evidence';
 import { dayIn, describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from './full-schedule';
 import { JobHistory } from './job-reads';
+import { JobJudgement, Severity, Trouble, Verdict, verdictWords } from './job-standing';
+import { RunSize, runSizesOf, sizesOf } from './points-sizes';
 import { localClock, shortOf, STAGE_NAMES, Status } from './repository-report';
 import { Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
@@ -11,10 +14,11 @@ import { describeRetry, describeSchedule } from './schedule-planner';
 
 /**
  * What the Job report finds about one job over a month — every run, every
- * machine by run, the chain on disk, what Veeam said went wrong, who else
- * writes to the repository meanwhile — and the verdict its caption opens
- * with. The file under the caption is the job's sessions as Veeam's own
- * report prints them: `./session-report`.
+ * machine by run, what Veeam said went wrong, who else writes to the
+ * repository meanwhile — and the verdict its caption opens with. Its points,
+ * how far back they go, the chain and the verdict 🛡 lists the job by are the
+ * server's Evidence's, as /points has them. The file under the caption is the
+ * job's sessions as Veeam's own report prints them: `./session-report`.
  *
  * Here is what it says, from what was read; nothing here asks Veeam. The
  * reading is `./job-reports`, and the job's month in it the Job reads'.
@@ -38,7 +42,11 @@ export interface JobReading extends Omit<JobHistory, 'missing'> {
   job: Job;
   repository?: VeeamRepositoryState;
   files: VeeamBackupFile[];
-  points: VeeamRestorePoint[];
+  /**
+   * The job as its server's Evidence judges it — the verdict 🛡 lists it by,
+   * its points as /points tells them — or why there is no Evidence yet.
+   */
+  evidence: ({ status: 'ready' } & JobJudgement) | PendingEvidence;
   /** The other jobs that write to the same repository. */
   neighbours: Array<{ id: string; name: string }>;
   /** Their sessions around the job's newest run. */
@@ -75,9 +83,6 @@ export interface ReportMachine {
   tookPart: number;
   succeeded: number;
   lastSaved?: number;
-  points: number;
-  oldestPoint?: number;
-  newestPoint?: number;
   /** Its usual time when saved, minutes. */
   minutes?: number;
   /** Bytes sent when it was last saved. */
@@ -106,14 +111,15 @@ export interface ErrorGroup {
   last: number;
 }
 
-/** The files written on one day. */
+/** The retained runs of one day, as the Evidence has them, and what their files take up. */
 export interface ChainDay {
   /** The calendar day, as its `Date.UTC` midnight. */
   day: number;
-  full: boolean;
-  disk: number;
-  data: number;
-  files: number;
+  /** A run of the day was a Full; absent where Veeam did not say which points are full. */
+  full?: boolean;
+  /** Bytes of their files on disk, and of the data in them; absent when no file names their points. */
+  disk?: number;
+  data?: number;
 }
 
 /** A job on the chart of who writes to the repository while the job's newest run does. */
@@ -167,8 +173,12 @@ export interface JobReport {
   disk: number;
   data: number;
   newestPoint?: number;
-  /** How far back a typical saved machine can be restored. */
+  /** How far back each machine can be restored: the moments retained, as /points counts them, and the oldest. */
   depth?: { points: number; oldest: number };
+  /** Where the job stands by 🛡's verdict; absent when it is excused, or there is no Evidence yet. */
+  standing?: Verdict;
+  /** Why there is no Evidence to say its points from, as the Job card says it. */
+  pointsUnavailable?: string;
   /** The usual first attempt, minutes. */
   usual: number;
   longest?: JobRun;
@@ -176,7 +186,8 @@ export interface JobReport {
   /** The stage Veeam blamed most often in the newest runs. */
   bottleneck?: Stage;
   nextFull?: { day: number; kind: FullSchedule['kind'] };
-  lastFull?: ChainDay;
+  /** The newest Full that has written its data, and when it began. */
+  lastFull?: RunSize & { at: number };
   findings: Finding[];
   steps: Step[];
   partial?: string;
@@ -209,6 +220,24 @@ const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'frida
  * The report
  * ------------------------------------------------------------------ */
 
+/**
+ * The month's attempts as Runs, newest first, by the one rule in runs.ts:
+ * what the first page and the Session report both fold, so the two halves of
+ * the file cannot tell a retry apart differently. They did: the sessions knew
+ * that Veeam does not retry a job only a hand starts, and the first page
+ * folded its failure and the start after it into a run a retry saved.
+ */
+export const runsOfMonth = (reading: Pick<JobReading, 'attempts' | 'configured'>) =>
+  runsOf(
+    reading.attempts.map((attempt) => ({
+      ...attempt,
+      startedAt: attempt.session.creationTime,
+      endedAt: attempt.session.endTime,
+      result: attempt.session.result?.result,
+    })),
+    retryWindowOf(reading.configured?.schedule),
+  );
+
 export const jobReportOf = (reading: JobReading, timezone: string): JobReport => {
   const { at, days } = reading;
   const from = at - days * DAY;
@@ -217,14 +246,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const local = localClock(timezone);
 
   // Runs, oldest first.
-  const attempts = reading.attempts.map(({ session, tasks, unread }) => ({
-    startedAt: session.creationTime,
-    endedAt: session.endTime,
-    result: session.result?.result,
-    tasks,
-    unread,
-  }));
-  const runs = runsOf(attempts, retryWindowOf(schedule))
+  const runs = runsOfMonth(reading)
     .map((run) => {
       const oldestFirst = [...run.attempts].reverse();
       const read = oldestFirst.every((attempt) => attempt.tasks !== undefined);
@@ -257,11 +279,6 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   // A machine none of the runs read took on may have been in one Veeam would not give.
   const partly = runs.some((run) => run.unread);
   const names = [...new Set([...listed.map((object) => object.name as string), ...withTasks.flatMap((run) => [...run.machines.keys()])])];
-  const pointsOf = new Map<string, number[]>();
-  for (const point of reading.points) {
-    const when = instantOf(point.creationTime, timezone);
-    if (point.name && when !== undefined) pointsOf.set(point.name, [...(pointsOf.get(point.name) ?? []), when]);
-  }
   const byDay = withTasks.length > 31;
   const columns = byDay
     ? [...new Set(withTasks.map((run) => dayIn(run.start, timezone)))].map((day) => withTasks.filter((run) => dayIn(run.start, timezone) === day))
@@ -281,7 +298,6 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
     );
     const last = bad.at(-1);
     const newest = good.at(-1);
-    const points = (pointsOf.get(name) ?? []).sort((a, b) => a - b);
     const durations = good.flatMap(({ task }) => durationOf(task.progress?.duration) ?? []).map((ms) => ms / MINUTE);
     return {
       name,
@@ -290,9 +306,6 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
       tookPart: finals.length,
       succeeded: good.length,
       lastSaved: newest?.run.start,
-      points: points.length,
-      oldestPoint: points[0],
-      newestPoint: points.at(-1),
       minutes: durations.length ? median(durations) : undefined,
       transferred: newest?.task.progress?.transferredSize ?? undefined,
       error: last ? saidOf(last.task.result?.message) : undefined,
@@ -326,30 +339,30 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
 
   const missed = missedStarts(runs, schedule, from, at, timezone);
 
-  // The chain, a day a row.
-  const files = reading.files.flatMap((file) => {
-    const written = instantOf(file.creationTime, timezone);
-    return written === undefined ? [] : [{ at: written, full: /\.vbk$/i.test(file.name ?? ''), disk: file.backupSize ?? 0, data: file.dataSize ?? 0 }];
-  });
+  // The points are the Evidence's, as /points has them: a failed run's point of a machine that failed in it is none.
+  const judged = reading.evidence.status === 'ready' ? reading.evidence : undefined;
+  const points = judged?.points;
+  // The chain, a day a row: the retained runs, a Full where most of a run's points are, and the files that hold them.
+  const retained = points?.retained ?? [];
+  const sizes = runSizesOf(reading.files, retained);
   const chainDays = new Map<number, ChainDay>();
-  for (const file of files) {
-    const day = dayIn(file.at, timezone);
-    const entry = chainDays.get(day) ?? { day, full: false, disk: 0, data: 0, files: 0 };
-    entry.full ||= file.full;
-    entry.disk += file.disk;
-    entry.data += file.data;
-    entry.files += 1;
+  for (const run of retained) {
+    const day = dayIn(run.at, timezone);
+    const entry = chainDays.get(day) ?? { day };
+    if (run.full !== undefined) entry.full = Boolean(entry.full) || run.full;
+    const size = sizes.get(run);
+    if (size) {
+      entry.disk = (entry.disk ?? 0) + size.disk;
+      entry.data = (entry.data ?? 0) + size.data;
+    }
     chainDays.set(day, entry);
   }
   const chain = [...chainDays.values()].sort((a, b) => b.day - a.day);
-  const disk = files.reduce((sum, file) => sum + file.disk, 0);
-  const data = files.reduce((sum, file) => sum + file.data, 0);
+  const disk = reading.files.reduce((sum, file) => sum + (file.backupSize ?? 0), 0);
+  const data = reading.files.reduce((sum, file) => sum + (file.dataSize ?? 0), 0);
 
-  const withPoints = machines.filter((machine) => machine.points);
-  const newestPoint = withPoints.length ? Math.max(...withPoints.map((machine) => machine.newestPoint as number)) : undefined;
-  const depth = withPoints.length
-    ? { points: median(withPoints.map((machine) => machine.points)), oldest: median(withPoints.map((machine) => machine.oldestPoint as number)) }
-    : undefined;
+  const newestPoint = points?.newest;
+  const depth = points?.oldest !== undefined ? { points: points.runs, oldest: points.oldest } : undefined;
 
   const usual = median(runs.filter((run) => run.end !== undefined).map((run) => run.pieces[0].minutes));
   const longest = [...runs].sort((a, b) => b.minutes - a.minutes)[0];
@@ -384,7 +397,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
 
   const fullSchedules = fullSchedulesOf(configured?.storage);
   const nextFull = fullSchedules?.length ? nextFullDay(fullSchedules, at, timezone) : undefined;
-  const lastFull = chain.find((day) => day.full);
+  const lastFull = sizesOf(reading.files, retained)?.full;
 
   const repositoryName = reading.repository?.name;
   const repository = reading.repository && repositoryName
@@ -430,6 +443,8 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
     data,
     newestPoint,
     depth,
+    ...(judged?.verdict ? { standing: judged.verdict } : {}),
+    ...(reading.evidence.status === 'pending' ? { pointsUnavailable: reading.evidence.reason } : {}),
     usual,
     neighbours,
     bottleneck,
@@ -441,7 +456,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   report.findings = findingsOf(report, schedule, timezone);
   report.steps = stepsOf(report, schedule, timezone);
   report.status = report.findings.some((finding) => finding.severity === 'crit') ? 'crit' : report.findings.length ? 'warn' : 'ok';
-  report.verdict = verdictOf(report);
+  report.verdict = headlineOf(report);
   return report;
 };
 
@@ -511,6 +526,8 @@ const findingsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone:
   const retried = runs.filter((run) => run.pieces.length > 1 && run.pieces[0].result === 'failed' && saved(run.result));
   const firstFailure = report.errors.find((group) => group.failed);
 
+  // What 🛡 says of the job comes first, in its words: whoever opens the file from there reads it again here.
+  if (report.standing?.trouble) findings.push(standingFinding(report.standing, { now: new Date(report.at), timezone }));
   if (!report.runs.length && schedule?.runAutomatically !== false) {
     findings.push({ severity: 'crit', icon: 'alert', title: `За ${days} дней ни одного запуска`, detail: report.schedule ? `по расписанию — ${report.schedule}` : 'расписание не прочитано' });
   }
@@ -593,6 +610,21 @@ const findingsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone:
   return findings;
 };
 
+/** 🛡's 🔴 is the page's; its 🟠 and 🟡 are the page's only other colour. */
+const SEVERITY_OF: Record<Severity, Finding['severity']> = { critical: 'crit', warning: 'warn', notice: 'warn' };
+const ICON_OF: Record<Trouble, FindingIcon> = { none: 'alert', stale: 'clock', failing: 'fail', fullMissed: 'layers' };
+
+/** The verdict 🛡 lists the job by, as a finding: what is wrong, and the facts to check it by. */
+const standingFinding = (verdict: Verdict, clock: Clock): Finding => {
+  const { problem, facts } = verdictWords(verdict, clock);
+  return {
+    severity: SEVERITY_OF[verdict.severity ?? 'notice'],
+    icon: ICON_OF[verdict.trouble ?? 'none'],
+    title: `${problem.charAt(0).toUpperCase()}${problem.slice(1)}`,
+    detail: facts.join(' · '),
+  };
+};
+
 /** What to do about it, the most urgent first. */
 const stepsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: string): Step[] => {
   const steps: Step[] = [];
@@ -655,7 +687,7 @@ const stepsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: st
     steps.push({
       severity: tight ? 'warn' : 'ok',
       title: tight ? `Освободить место на ${repository.short} до ${calendarLabel(report.nextFull.day)}` : `Следующий ${report.nextFull.kind === 'active' ? 'Active' : 'Synthetic'} Full — ${calendarLabel(report.nextFull.day)}`,
-      detail: `Последний Full (${calendarLabel(report.lastFull.day)}) занял ${sizeOf(report.lastFull.disk)} на диске. На ${repository.short} свободно ${sizeOf(free)}${share}${tight ? ' — меньше трёх таких Full, а туда пишут и другие задачи.' : ' — места хватает.'}`,
+      detail: `Последний Full (${dayLabel(report.lastFull.at, timezone)}) занял ${sizeOf(report.lastFull.disk)} на диске. На ${repository.short} свободно ${sizeOf(free)}${share}${tight ? ' — меньше трёх таких Full, а туда пишут и другие задачи.' : ' — места хватает.'}`,
       tags: [],
     });
   }
@@ -720,7 +752,12 @@ const failureStep = (group: ErrorGroup | undefined, run: JobRun, timezone: strin
   };
 };
 
-const verdictOf = (report: JobReport): string => {
+/**
+ * What the caption and the page open with: the first two findings, 🛡's
+ * verdict first when it has one. Not a verdict of the report's own — that one
+ * said «норма» of a job 🛡 listed.
+ */
+const headlineOf = (report: JobReport): string => {
   const [first, second] = report.findings;
   if (first) return second ? `${first.title}; ${second.title.charAt(0).toLowerCase()}${second.title.slice(1)}` : first.title;
   if (!report.runs.length) return `Запусков за ${report.days} дней не было`;

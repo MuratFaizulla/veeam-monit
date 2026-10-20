@@ -61,6 +61,7 @@ const summary = (report: JobReport, timezone: string, stamp: string): string => 
   <table class="js-hd" style="--band:${BAND[report.status]};--ink:${INK[report.status]}"><tr><td>Задание: ${esc(report.name)}<div class="js-d">${facts.map((fact) => esc(String(fact))).join(' · ')}</div></td><td class="js-s">${STATUS_WORD[report.status]}<div class="js-d">${esc(report.server)} · ${stamp} · за ${report.days} дней</div></td></tr></table>
   <table class="js-t"><tr><td class="js-verdict">${esc(report.verdict)}.</td></tr></table>
   ${report.partial ? `<div class="js-partial">Прочитано не всё: ${esc(report.partial.slice(0, 220))}</div>` : ''}
+  ${report.pointsUnavailable ? `<div class="js-partial">${esc(report.pointsUnavailable)}</div>` : ''}
   <div><div class="js-band">Сводка</div>${numbers(report, timezone, replica)}</div>
   <div class="js-two">
     <div class="js-col">
@@ -83,18 +84,20 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
   const good = runs.filter((run) => run.result === 'success' || run.result === 'warning').length;
   const failed = runs.filter((run) => run.result === 'failed').length;
   const going = runs.filter((run) => run.result === 'none' && run.end === undefined).length;
-  // A replica is told by its runs: a machine none of the runs read took on is not one without a good run.
-  const judged = replica ? machines.filter((machine) => !machine.unread) : machines;
+  // A machine is told by its runs, a replica's and a backup's alike: one none of the runs read took on is not one without a good run.
+  const judged = machines.filter((machine) => !machine.unread);
   const total = judged.length;
-  const saved = judged.filter((machine) => (replica ? machine.lastSaved !== undefined : machine.points)).length;
+  const saved = judged.filter((machine) => machine.lastSaved !== undefined).length;
   const newest = replica ? Math.max(...machines.map((machine) => machine.lastSaved ?? -Infinity)) : report.newestPoint ?? -Infinity;
+  // Until the scan has read them, nothing is said of the points: not even that there are none.
+  const unknown = !replica && report.pointsUnavailable !== undefined;
   const sent = machines.reduce((sum, machine) => sum + (machine.transferred ?? 0), 0);
   const bad = (text: string, when: boolean) => (when ? `<span class="js-bad">${text}</span>` : text);
   const cell = (label: string, value: string) => `<td class="k">${label}</td><td class="v">${value}</td>`;
   const rows = [
     [
       cell('Запуски', bad(`${good} успешно из ${runs.length}`, runs.length > 0 && good === 0)),
-      cell(replica ? 'Последняя удачная' : 'Последняя точка', Number.isFinite(newest) ? `${dayLabel(newest, timezone)} ${timeOf(newest, timezone)}` : bad(replica ? 'не было' : 'точек нет', true)),
+      cell(replica ? 'Последняя удачная' : 'Последняя точка', Number.isFinite(newest) ? `${dayLabel(newest, timezone)} ${timeOf(newest, timezone)}` : unknown ? '—' : bad(replica ? 'не было' : 'точек нет', true)),
       cell('Обычно идёт', report.usual ? spanOf(report.usual) : '—'),
     ],
     [
@@ -106,7 +109,7 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
     ],
     [
       cell(replica ? 'Машины реплицированы' : 'Машины сохранены', total ? bad(`${saved} из ${total}`, saved < total) : '—'),
-      cell(replica ? 'Без удачной' : 'Без точек', total ? bad(String(total - saved), saved < total) : '—'),
+      cell(replica ? 'Без удачной' : 'Не сохранены', total ? bad(String(total - saved), saved < total) : '—'),
       replica
         ? cell('Узкое место', report.bottleneck ? STAGE_NAMES[report.bottleneck] : '—')
         : cell('На диске', report.disk ? `${sizeOf(report.disk)}${report.data ? ` · данных ${sizeOf(report.data)}` : ''}` : '—'),
@@ -208,14 +211,15 @@ const errorsTable = (report: JobReport, timezone: string): string => `<div class
     .map((group) => `<tr><td><div class="js-err">${esc(group.text.slice(0, 160))}</div></td><td class="v">${group.machines.length}</td><td class="v">${dayLabel(group.last, timezone)} · ${group.runs} ${runsWord(group.runs)}</td></tr>`)
     .join('')}</table>`;
 
+/** The retained runs a day a row, as the Evidence has them; "—" where Veeam did not type a point, or no file names it. */
 const chainTable = (report: JobReport): string => `<div class="js-band">Цепочка на диске</div>
   <table class="js-t"><tr class="th"><td>День</td><td>Файл</td><td>На диске</td><td>Данных</td></tr>${
     report.chain.length
       ? report.chain
           .slice(0, CHAIN_ROWS)
-          .map((day) => `<tr><td class="v">${calendarLabel(day.day)}</td><td class="v">${day.full ? 'Full' : 'инкремент'}</td><td class="v">${sizeOf(day.disk)}</td><td class="v">${day.data ? sizeOf(day.data) : '—'}</td></tr>`)
+          .map((day) => `<tr><td class="v">${calendarLabel(day.day)}</td><td class="v">${day.full === undefined ? '—' : day.full ? 'Full' : 'инкремент'}</td><td class="v">${day.disk !== undefined ? sizeOf(day.disk) : '—'}</td><td class="v">${day.data ? sizeOf(day.data) : '—'}</td></tr>`)
           .join('')
-      : '<tr><td colspan="4" class="js-dim">Файлов бэкапа не найдено.</td></tr>'
+      : `<tr><td colspan="4" class="js-dim">${esc(report.pointsUnavailable ?? 'У задания нет ни одной точки восстановления.')}</td></tr>`
   }</table>`;
 
 /* ------------------------------------------------------------------ *

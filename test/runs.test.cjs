@@ -240,6 +240,19 @@ test('a run ends with the attempt that finished it, and a success is nobody\'s r
   assert.deepEqual(runs.map((run) => [run.result, run.attempts.length]), [['success', 2], ['success', 1]]);
 });
 
+test('a job only a hand starts is never retried: a failure and the start after it are two runs', () => {
+  // Veeam retries only the runs it starts itself. Started again five minutes
+  // after it failed, it was started again by somebody, whatever its retry
+  // settings say.
+  const night = [attempt('03:35', '03:50', 'Success'), attempt('03:00', '03:30', 'Failed')];
+  const byHand = retryWindowOf({ ...RETRY_POLICY, runAutomatically: false });
+
+  assert.deepEqual(runsOf(night, byHand).map((run) => [run.result, run.attempts.length]), [['success', 1], ['failed', 1]]);
+  assert.equal(attemptOf(night, byHand), 1);
+  // The same night of a job Veeam starts is one run, which its retry saved.
+  assert.deepEqual(runsOf(night, WINDOW).map((run) => [run.result, run.attempts.length]), [['success', 2]]);
+});
+
 test('a gap wider than the window starts a new run', () => {
   const runs = runsOf([attempt('05:00', '05:10', 'Failed'), attempt('03:00', '03:30', 'Failed')], WINDOW);
   assert.equal(runs.length, 2);
