@@ -85,7 +85,9 @@ test('a running job is shown with its progress, elapsed time and next run', asyn
   assert.match(text, /идёт 22 мин/);
   // While something is running, the next run belongs to the schedule slot only.
   assert.ok(!/Ближайший запуск/.test(text));
-  const schedule = w.api.sent().find((m) => /Upcoming runs|Сегодня|расписан/.test(m.text)).text;
+  // Three hours ahead is tomorrow after 21:00, and 📅 then says «На сегодня
+  // запусков больше нет» with the job as the next one: still the schedule slot.
+  const schedule = w.api.sent().find((m) => /Upcoming runs|сегодня|расписан/i.test(m.text)).text;
   assert.match(schedule, /SQL Daily/);
 });
 
