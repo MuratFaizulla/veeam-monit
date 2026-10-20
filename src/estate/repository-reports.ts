@@ -209,7 +209,7 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
     reading.attempts = sessions.map((session) => ({
       jobId: session.jobId,
       startedAt: session.creationTime,
-      endedAt: endOf(session),
+      endedAt: session.endTime,
       result: session.result?.result ?? '',
     }));
 
@@ -217,7 +217,7 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
     const measured = new Map<string, typeof sessions>();
     for (const session of sessions) {
       const list = measured.get(session.jobId) ?? [];
-      if (endOf(session) && list.length < LOAD_ATTEMPTS) measured.set(session.jobId, [...list, session]);
+      if (session.endTime && list.length < LOAD_ATTEMPTS) measured.set(session.jobId, [...list, session]);
     }
     const asked = [...measured.values()].flat();
     const loads = await pooled(asked, async (session) => loadOf((await reader.sessionLog(session.id)).map((record) => record.title ?? '')));
@@ -259,10 +259,6 @@ const noSuch = (asked: string, report: RepositoryReport): Answer => ({
     `Есть: ${report.repositories.map((repository) => escapeHtml(repository.short)).join(', ')}.`,
   ].join('\n'),
 });
-
-/** When a session ended; a session still going has none, or Veeam's year-1900 placeholder. */
-const endOf = (session: VeeamSession): string | undefined =>
-  session.endTime && Date.parse(session.endTime) > Date.UTC(2000, 0, 1) ? session.endTime : undefined;
 
 /** `work` over `items`, `POOL` at a time. One that fails leaves its place empty. */
 const pooled = async <T, R>(items: T[], work: (item: T) => Promise<R>): Promise<Array<R | undefined>> => {

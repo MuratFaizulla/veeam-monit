@@ -234,3 +234,71 @@ test('a job is translated once: an id, one name, one spelling of its result', ()
   // Nothing can address it, remember it or match a session to it.
   assert.equal(jobOf({ name: 'no id' }), undefined);
 });
+
+/* ------------------------------------------------------------------ *
+ * Veeam's times, translated once
+ *
+ * A session's time carries its offset; a task's and a backup file's carry
+ * none and are the Veeam server's own clock; "not yet" is written three ways.
+ * Each reader used to decode them for itself, and the Session report took a
+ * machine's end of 0001-01-01 — the REST API's own example of one still
+ * going — for a real one.
+ * ------------------------------------------------------------------ */
+
+test('a time Veeam wrote is an instant: an offset-less one is the server\'s clock in its zone, and a placeholder is none', () => {
+  const { instantOf } = require('../dist/veeam/estate');
+  const ZONE = 'Asia/Qyzylorda'; // +05:00, no summer time
+
+  assert.equal(instantOf('2026-10-13T04:00:00+05:00', ZONE), Date.parse('2026-10-12T23:00:00Z'));
+  assert.equal(instantOf('2026-10-12T23:00:00.4170000Z', ZONE), Date.parse('2026-10-12T23:00:00.417Z'));
+  // A task's or a backup file's: 22:30 on the server's clock is 17:30 UTC, still the 12th.
+  assert.equal(instantOf('2026-10-12T22:30:00', ZONE), Date.parse('2026-10-12T17:30:00Z'));
+  assert.equal(instantOf('2024-11-09T18:00:30.407023', ZONE), Date.parse('2024-11-09T13:00:30.407Z'));
+  // Summer time is the zone's, whatever zone the bot's own process runs in.
+  assert.equal(instantOf('2026-07-01T03:00:00', 'Europe/Berlin'), Date.parse('2026-07-01T01:00:00Z'));
+  assert.equal(instantOf('2026-12-01T03:00:00', 'Europe/Berlin'), Date.parse('2026-12-01T02:00:00Z'));
+  // "Not yet": nothing at all, the 0001 the REST API documents, the 1900 some builds write.
+  for (const none of [undefined, null, '', '0001-01-01T00:00:00', '1900-01-01T00:00:00', '1900-01-01T00:00:00Z', 'soon']) {
+    assert.equal(instantOf(none, ZONE), undefined, String(none));
+  }
+});
+
+test('how long Veeam says a machine took is read as it spells it, days and all, to the second', () => {
+  const { durationOf } = require('../dist/veeam/estate');
+  const SECOND = 1000;
+
+  assert.equal(durationOf('00:02:00'), 120 * SECOND);
+  assert.equal(durationOf('04:40:31'), (4 * 3600 + 40 * 60 + 31) * SECOND);
+  // Past a day, .NET puts the days before a dot.
+  assert.equal(durationOf('1.02:03:04'), (26 * 3600 + 3 * 60 + 4) * SECOND);
+  // The part of a second dropped, as Veeam's console drops it.
+  assert.equal(durationOf('00:00:09.8470000'), 9 * SECOND);
+  for (const none of [undefined, null, '', 'n/a']) assert.equal(durationOf(none), undefined, String(none));
+});
+
+test('a session or a task the reader hands out has an end only once it has ended, however Veeam writes "not yet"', async () => {
+  const reader = new VeeamEstateReader(
+    veeamFake({
+      '/api/v1/sessions': { data: [
+        { id: 's3', jobId: '1', creationTime: '2026-10-14T04:00:00+05:00', endTime: '0001-01-01T00:00:00', state: 'Working', result: { result: 'None' } },
+        { id: 's2', jobId: '1', creationTime: '2026-10-13T04:00:00+05:00', endTime: '1900-01-01T00:00:00Z', state: 'Working', result: { result: 'None' } },
+        { id: 's1', jobId: '1', creationTime: '2026-10-12T04:00:00+05:00', endTime: '2026-10-12T04:30:00+05:00', result: { result: 'Failed' } },
+      ] },
+      '/api/v1/sessions/s3/taskSessions': { data: [
+        { name: 'db-01', creationTime: '2026-10-14T04:01:00', endTime: '0001-01-01T00:00:00', result: { result: 'None' } },
+        { name: 'web-01', creationTime: '2026-10-14T04:01:00', endTime: '2026-10-14T04:11:00', result: { result: 'Success' } },
+      ] },
+    }),
+    { getAccessToken: async () => 'tok', rejectToken: () => true },
+  );
+
+  assert.deepEqual((await reader.recentSessions('1', 30)).map((s) => [s.id, s.endTime, s.result.result]), [
+    ['s3', undefined, 'none'],
+    ['s2', undefined, 'none'],
+    ['s1', '2026-10-12T04:30:00+05:00', 'failed'],
+  ]);
+  assert.deepEqual((await reader.taskSessions('s3')).map((t) => [t.name, t.endTime, t.result.result]), [
+    ['db-01', undefined, 'none'],
+    ['web-01', '2026-10-14T04:11:00', 'success'],
+  ]);
+});

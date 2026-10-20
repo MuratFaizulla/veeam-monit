@@ -1,3 +1,4 @@
+import { durationOf, instantOf } from '../veeam/estate';
 import { VeeamTaskSession } from '../veeam/types';
 
 /**
@@ -76,6 +77,8 @@ export interface RunRecord {
    * which reports the machines' bytes over again.
    */
   cloud: boolean;
+  /** The zone the Veeam server's clock is in: a task's times carry no offset. */
+  timezone: string;
 }
 
 const LOAD = /(?:Load|Busy): Source (\d+)% > Proxy (\d+)% > Network (\d+)% > Target (\d+)%/;
@@ -87,18 +90,20 @@ const VAPP = /^(vApp processing started|Waiting for all VM backup tasks)/;
 const OWNER = /^VM owner: (.+)$/;
 const STAGES: readonly Stage[] = ['source', 'proxy', 'network', 'target'];
 
-/** The longest of a session's tasks first: the ones whose logs are worth reading. */
-export const byLongest = (a: VeeamTaskSession, b: VeeamTaskSession): number =>
-  (taskMs(b) ?? -1) - (taskMs(a) ?? -1);
+/** The longest of a session's tasks first, their times read in `timezone`: the ones whose logs are worth reading. */
+export const byLongest =
+  (timezone: string) =>
+  (a: VeeamTaskSession, b: VeeamTaskSession): number =>
+    (taskMs(b, timezone) ?? -1) - (taskMs(a, timezone) ?? -1);
 
 /**
  * The run, or nothing when Veeam has nothing to say about its speed — a run
  * that never reached a machine reads 0 bytes and blames no stage.
  */
 export const speedOf = (run: RunRecord): RunSpeed | undefined => {
-  const startedAt = Date.parse(run.startedAt ?? '');
-  if (!Number.isFinite(startedAt)) return undefined;
-  const endedAt = Date.parse(run.endedAt ?? '');
+  const startedAt = instantOf(run.startedAt, run.timezone);
+  if (startedAt === undefined) return undefined;
+  const endedAt = instantOf(run.endedAt, run.timezone);
 
   // A vApp's task is told apart by its log, or by a machine's naming it its owner.
   const owners = new Set([...run.machineLogs.values()].flatMap((log) => log.flatMap((line) => OWNER.exec(line)?.[1] ?? [])));
@@ -130,7 +135,7 @@ export const speedOf = (run: RunRecord): RunSpeed | undefined => {
 
   return {
     startedAt,
-    took: Number.isFinite(endedAt) && endedAt >= startedAt ? endedAt - startedAt : undefined,
+    took: endedAt !== undefined && endedAt >= startedAt ? endedAt - startedAt : undefined,
     fulls: machines.filter((task) => task.algorithm?.toLowerCase() === 'full').length,
     increments: machines.filter((task) => task.algorithm?.toLowerCase() === 'increment').length,
     read: counted ? read : undefined,
@@ -142,7 +147,7 @@ export const speedOf = (run: RunRecord): RunSpeed | undefined => {
     gateways: [...gateways],
     slowest: machines
       .flatMap((task) => {
-        const ms = taskMs(task);
+        const ms = taskMs(task, run.timezone);
         return task.name && ms !== undefined ? [{ name: task.name, ms }] : [];
       })
       .sort((a, b) => b.ms - a.ms),
@@ -172,16 +177,10 @@ const sum = (tasks: VeeamTaskSession[], key: 'readSize' | 'transferredSize'): nu
   return values.length > 0 ? values.reduce((a, b) => a + b, 0) : undefined;
 };
 
-/**
- * How long one machine took: Veeam's own "04:40:31" or "1.02:03:04", else the
- * span between its times, which carry no offset but share one.
- */
-const taskMs = (task: VeeamTaskSession): number | undefined => {
-  const spelled = /^(?:(\d+)\.)?(\d+):(\d{2}):(\d{2})/.exec(task.progress?.duration ?? '');
-  if (spelled) {
-    const [days, hours, minutes, seconds] = spelled.slice(1).map((part) => Number(part ?? 0));
-    return (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
-  }
-  const span = Date.parse(task.endTime ?? '') - Date.parse(task.creationTime ?? '');
+/** How long one machine took: Veeam's own "04:40:31" or "1.02:03:04", else the span between its times. */
+const taskMs = (task: VeeamTaskSession, timezone: string): number | undefined => {
+  const spelled = durationOf(task.progress?.duration);
+  if (spelled !== undefined) return spelled;
+  const span = (instantOf(task.endTime, timezone) ?? NaN) - (instantOf(task.creationTime, timezone) ?? NaN);
   return Number.isFinite(span) && span >= 0 ? span : undefined;
 };

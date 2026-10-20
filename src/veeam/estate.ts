@@ -43,13 +43,94 @@ export const jobOf = (state: VeeamJobState): Job | undefined =>
     : undefined;
 
 /**
- * The same item with its result lower-cased, for anything shaped like a
- * session. Veeam writes `Failed`, `failed` or `FAILED` depending on the build.
+ * A session or a task as the reader hands it out: its result lower-cased —
+ * Veeam writes `Failed`, `failed` or `FAILED` depending on the build — and an
+ * end only once it has one.
+ *
+ * Veeam writes "not yet" as nothing, as `0001-01-01T00:00:00` or as a day in
+ * 1900. Each reader used to decide that for itself: the Session report took a
+ * machine's 0001 for an end, and the Job reads and the Session history passed
+ * either on as one, so to an alert or a Job card a session still going could
+ * have ended in 1900.
  */
-export const withResultLowered = <T extends { result?: { result?: string } }>(item: T): T =>
-  item.result?.result === undefined
-    ? item
-    : { ...item, result: { ...item.result, result: item.result.result.toLowerCase() } };
+export const sessionOf = <T extends { result?: { result?: string }; endTime?: string | null }>({ endTime, ...item }: T): T =>
+  ({
+    ...item,
+    ...(item.result?.result !== undefined ? { result: { ...item.result, result: item.result.result.toLowerCase() } } : {}),
+    // Whether it is a time at all does not depend on the zone it is read in.
+    ...(instantOf(endTime, 'UTC') !== undefined ? { endTime } : {}),
+  }) as T;
+
+/*
+ * Veeam's times, read once: every reader of a session's, a task's or a
+ * file's time asks `instantOf`, and of a duration `durationOf`. They used to
+ * decode them each for itself — four copies between the Job report, the
+ * Session report, the Repository report and the Job card's speed.
+ */
+
+/**
+ * A time Veeam wrote before this means "not yet": .NET's least date,
+ * `0001-01-01T00:00:00`, which the REST API documents for a session still
+ * going, or a day in 1900, which some builds write instead. No Veeam ran then.
+ */
+const NOT_YET = Date.UTC(2000, 0, 1);
+
+/** The end of a time that says its own offset, as a session's does. */
+const OFFSET = /(?:[zZ]|[+-]\d\d:?\d\d)$/;
+
+/**
+ * The instant a time Veeam wrote names, epoch ms; undefined when it names
+ * none — nothing, a placeholder for "not yet", or no time at all.
+ *
+ * A session's time carries its offset. A task's and a backup file's carry
+ * none: they are the Veeam server's own clock, which is in `timezone` — read
+ * as the process's local time instead, a file written at 22:00 would land on
+ * the next day.
+ */
+export const instantOf = (text: string | null | undefined, timezone: string): number | undefined => {
+  if (!text) return undefined;
+  const offset = OFFSET.test(text);
+  const written = Date.parse(offset ? text : `${text}Z`);
+  if (!Number.isFinite(written) || written <= NOT_YET) return undefined;
+  return offset ? written : fromServerClock(written, timezone);
+};
+
+/**
+ * The instant the Veeam server's clock reads `wall`, which is that reading
+ * taken as if it were UTC, epoch ms. The server's clock is taken to be in the
+ * bot's zone, `timezone`: nothing Veeam says names its own.
+ */
+export const fromServerClock = (wall: number, timezone: string): number =>
+  wall - offsetAt(wall - offsetAt(wall, timezone), timezone);
+
+/**
+ * How long Veeam says something took, ms, as it spells it — "04:40:31", and
+ * past a day "1.02:03:04" — to the whole second, as its console shows it;
+ * undefined when it does not say.
+ */
+export const durationOf = (text: string | null | undefined): number | undefined => {
+  const spelled = /^(?:(\d+)\.)?(\d+):(\d{2}):(\d{2})/.exec(text?.trim() ?? '');
+  if (!spelled) return undefined;
+  const [days, hours, minutes, seconds] = spelled.slice(1).map((part) => Number(part ?? 0));
+  return (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
+};
+
+/** Built once per zone: a report reads a time for every machine of every session. */
+const clocks = new Map<string, Intl.DateTimeFormat>();
+
+/** How far `timezone` is ahead of UTC at `at`, in milliseconds. */
+const offsetAt = (at: number, timezone: string): number => {
+  let clock = clocks.get(timezone);
+  if (!clock) {
+    clock = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone || undefined,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    });
+    clocks.set(timezone, clock);
+  }
+  const parts = Object.fromEntries(clock.formatToParts(new Date(at)).map((part) => [part.type, Number(part.value)]));
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(at / 1000) * 1000;
+};
 
 /**
  * Session states that mean "running right now", lower-cased.

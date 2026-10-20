@@ -333,7 +333,7 @@ export class JobQueryService {
       const [log, tasks] = await Promise.all([this.reader.sessionLog(sessionId), this.tasksOf(sessionId)]);
       const longest = tasks
         .filter((task): task is VeeamTaskSession & { id: string } => Boolean(task.id))
-        .sort(byLongest)
+        .sort(byLongest(this.config.timezone))
         .slice(0, MACHINE_LOGS);
       const machineLogs = new Map<string, string[]>();
       // A few at a time: thirty requests at once is a burst Veeam has no need of.
@@ -355,6 +355,7 @@ export class JobQueryService {
         tasks,
         machineLogs,
         cloud: /clouddirector/i.test(job.type ?? ''),
+        timezone: this.config.timezone,
       });
     } catch (error) {
       this.logger.debug(`No speed for session ${sessionId}: ${(error as Error).message}`);

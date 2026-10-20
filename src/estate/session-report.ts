@@ -1,5 +1,7 @@
+import { instantOf } from '../veeam/estate';
+import { linesOf, sessionLines } from '../veeam/session-text';
 import { VeeamBackupFile, VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
-import { endOf, JobReading, veeamTime } from './job-report';
+import { JobReading } from './job-report';
 import { retryWindowOf, runsOf } from './runs';
 
 /**
@@ -104,13 +106,9 @@ const statusOf = (result: string | undefined, state: string | undefined): Sessio
   return /working|starting|resuming|postprocessing|stopping/i.test(state ?? '') ? 'In progress' : 'Pending';
 };
 
-/** Veeam's words as lines: no blank ones, none longer than a reader reads. */
-const linesOf = (text: string | undefined): string[] =>
-  String(text ?? '')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .map((line) => (line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS - 1)}…` : line));
+/** Veeam's lines, none longer than a reader reads. */
+const clipped = (lines: string[]): string[] =>
+  lines.map((line) => (line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS - 1)}…` : line));
 
 /**
  * What a machine's log says that was not a success; Veeam's report shows only
@@ -125,24 +123,23 @@ const detailsOf = (task: VeeamTaskSession, log: VeeamLogRecord[] | undefined, st
     ? log.filter((record) => !/^succeeded$/i.test(record.status ?? '')).map((record) => record.title)
     : [/^success$/i.test(task.result?.message ?? '') ? '' : task.result?.message];
   const prefix = `Processing ${task.name ?? ''} `;
-  const lines = [...new Set(said.flatMap((text) => linesOf(text)).map((line) => (line.startsWith(prefix) ? line.slice(prefix.length) : line)))];
+  const lines = [...new Set(said.flatMap((text) => clipped(linesOf(text))).map((line) => (line.startsWith(prefix) ? line.slice(prefix.length) : line)))];
   return lines.length > DETAIL_LINES ? [...lines.slice(0, DETAIL_LINES - 1), lines.at(-1) as string] : lines;
 };
 
 const machineOf = (task: VeeamTaskSession, log: VeeamLogRecord[] | undefined, at: number, timezone: string): SessionMachine => {
   const status = statusOf(task.result?.result, task.state);
-  const start = veeamTime(task.creationTime, timezone);
-  const ended = task.endTime && !task.endTime.startsWith('19') ? veeamTime(task.endTime, timezone) : NaN;
-  const end = Number.isFinite(ended) ? ended : undefined;
+  const start = instantOf(task.creationTime, timezone);
+  const end = instantOf(task.endTime, timezone);
   return {
     name: task.name ?? '—',
     status,
-    ...(Number.isFinite(start) ? { start } : {}),
+    ...(start !== undefined ? { start } : {}),
     ...(end !== undefined ? { end } : {}),
     ...(task.progress?.processedSize != null ? { size: task.progress.processedSize } : {}),
     ...(task.progress?.readSize != null ? { read: task.progress.readSize } : {}),
     ...(task.progress?.transferredSize != null ? { transferred: task.progress.transferredSize } : {}),
-    ...(Number.isFinite(start) && (end !== undefined || status === 'In progress') ? { minutes: Math.max(0, ((end ?? at) - start) / MINUTE) } : {}),
+    ...(start !== undefined && (end !== undefined || status === 'In progress') ? { minutes: Math.max(0, ((end ?? at) - start) / MINUTE) } : {}),
     details: detailsOf(task, log, status),
   };
 };
@@ -150,8 +147,7 @@ const machineOf = (task: VeeamTaskSession, log: VeeamLogRecord[] | undefined, at
 /** "Processing vm-01 Error: …" is two lines in Veeam's report: which machine, then what. */
 const notesOf = (status: SessionStatus, message: string | undefined, end: number | undefined, progress: number | undefined, clock: (at: number) => string): string[] => {
   if (status === 'In progress') return [`Processing${progress !== undefined ? ` (${progress}% done)` : ''}`];
-  // A machine's name may hold spaces, "db-01 (4f2e…)": what follows it starts with Veeam's verdict.
-  const said = /^success$/i.test(message ?? '') ? [] : linesOf(String(message ?? '').replace(/^(Processing .+?)\s+(?=(?:Error|Warning):)/, '$1\n'));
+  const said = /^success$/i.test(message ?? '') ? [] : clipped(sessionLines(message));
   const verdict = status === 'Error' ? 'error' : status === 'Warning' ? 'warning' : '';
   return [...said.slice(0, NOTE_LINES), ...(verdict && end !== undefined ? [`Job finished with ${verdict} at ${clock(end)}`] : [])];
 };
@@ -183,14 +179,17 @@ export const sessionReportOf = (reading: JobReading, timezone: string): SessionR
       .format(new Date(moment))
       .replace(',', '')
       .replace(/[  ]/g, ' ');
-  const files = reading.files.map((file) => ({ ...file, at: veeamTime(file.creationTime, timezone) })).filter((file) => Number.isFinite(file.at));
+  const files = reading.files.flatMap((file) => {
+    const written = instantOf(file.creationTime, timezone);
+    return written === undefined ? [] : [{ ...file, at: written }];
+  });
   // Files are kept as long as the chain is: before the oldest, a session's files are gone, not unwritten.
   const oldestFile = files.length ? Math.min(...files.map((file) => file.at)) : Infinity;
 
   // Which attempt of its run each session was, by the rule the alerts count with. Veeam retries
   // only the runs it starts itself: a job started by hand that is started again was started again.
   const schedule = reading.configured?.schedule;
-  const attempts = reading.attempts.map((attempt) => ({ ...attempt, startedAt: attempt.session.creationTime, endedAt: endOf(attempt.session), result: attempt.session.result?.result }));
+  const attempts = reading.attempts.map((attempt) => ({ ...attempt, startedAt: attempt.session.creationTime, endedAt: attempt.session.endTime, result: attempt.session.result?.result }));
   const retryOf = new Map<string, number>();
   if (schedule?.runAutomatically !== false) {
     for (const run of runsOf(attempts, retryWindowOf(schedule))) {
@@ -202,10 +201,9 @@ export const sessionReportOf = (reading: JobReading, timezone: string): SessionR
 
   const sessions = reading.attempts
     .map(({ session, tasks }): SessionBlock | undefined => {
-      const start = Date.parse(session.creationTime ?? '');
-      if (!Number.isFinite(start)) return undefined;
-      const ended = endOf(session);
-      const end = ended ? Date.parse(ended) : undefined;
+      const start = instantOf(session.creationTime, timezone);
+      if (start === undefined) return undefined;
+      const end = instantOf(session.endTime, timezone);
       const status = statusOf(session.result?.result, session.state);
       const progress = status === 'In progress' ? session.progressPercent : undefined;
       // In the order Veeam took them on, as its report lists them.

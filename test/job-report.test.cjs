@@ -257,6 +257,41 @@ test('a machine\'s details are what its log says went wrong, each line once, the
   assert.equal(machine.minutes, 20);
 });
 
+test('the connection parameters Veeam writes after an error never reach the file, from a session, a machine or a line of its log', () => {
+  const LOGON = 'Logon attempt with parameters [VC/ESX: [vc01.example.com];Port: 443;Login: [svc-backup@example.com];VMX Spec: [moref=vm-31466]]';
+  const reading = edgeReading({
+    attempts: [{
+      session: {
+        id: 'k1', creationTime: '2026-10-13T04:00:00+05:00', endTime: '2026-10-13T04:30:00+05:00',
+        result: { result: 'failed', message: `Processing db-01 Error: Cannot get service content.\r\n${LOGON}` },
+      },
+      tasks: [
+        // Its log is read, and says it on a line of its own.
+        { ...task('db-01', 'failed', 'Getting VM info from vSphere'), id: 't-db' },
+        // Its log is not: its own message is all there is, and opens with them.
+        task('app-01', 'failed', `${LOGON}\r\nFailed to open disk for read.`),
+        // A build that writes it all on one line.
+        task('web-01', 'warning', `Failed to open VDDK disk ${LOGON} Failed to upload disk.`),
+      ],
+    }],
+    taskLogs: { 't-db': [
+      { status: 'Failed', title: 'Getting VM info from vSphere' },
+      { status: 'Failed', title: `Error: Cannot get service content.\r\n${LOGON}` },
+      { status: 'Failed', title: LOGON },
+    ] },
+  });
+
+  const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
+
+  assert.doesNotMatch(html, /Logon attempt|Login:|svc-backup@example\.com|moref/);
+  // And everything else Veeam said is still said, on both halves of the file.
+  assert.match(html, /class="note">Processing db-01<br>Error: Cannot get service content\.<br>Job finished with error at /);
+  assert.match(html, /<td class="note">Getting VM info from vSphere<br>Error: Cannot get service content\.<\/td>/);
+  assert.match(html, /<td class="note">Failed to open disk for read\.<\/td>/);
+  assert.match(html, /<td class="note">Failed to open VDDK disk Failed to upload disk\.<\/td>/);
+  assert.match(html, /<div class="js-err">Failed to open disk for read\./);
+});
+
 test('past midnight is "(+N)" by whole days since the session started, as Veeam counts it, and seconds are not rounded up', () => {
   const html = (start, minutes) => sessionReportPage(sessionReportOf(edgeReading({ attempts: [attempt('l1', start, minutes, 'failed', [])] }), TZ), TZ);
 
@@ -286,9 +321,10 @@ test('a replica\'s backup size is what a good session sent and nothing for a fai
 });
 
 test('a session still going says how far it has got, and its machines still going have no end', () => {
+  // Neither has an end: however Veeam writes "not yet", the reader hands out none.
   const running = {
-    session: { id: 'r1', creationTime: '2026-10-14T04:00:00+05:00', endTime: '1900-01-01T00:00:00Z', state: 'Working', progressPercent: 62, result: { result: 'None' } },
-    tasks: [{ name: 'db-01', state: 'Working', result: { result: 'None' }, creationTime: '2026-10-14T04:01:00', endTime: '1900-01-01T00:00:00', progress: { processedSize: 40 * GB, readSize: 10 * GB, transferredSize: 2 * GB } }],
+    session: { id: 'r1', creationTime: '2026-10-14T04:00:00+05:00', state: 'Working', progressPercent: 62, result: { result: 'none' } },
+    tasks: [{ name: 'db-01', state: 'Working', result: { result: 'none' }, creationTime: '2026-10-14T04:01:00', progress: { processedSize: 40 * GB, readSize: 10 * GB, transferredSize: 2 * GB } }],
   };
   const report = sessionReportOf(edgeReading({ attempts: [running] }), TZ);
   const [session] = report.sessions;
@@ -365,7 +401,7 @@ test('a replica is told by its runs, not by restore points the bot cannot see', 
 
 test('a run still going leaves "all failed" to the ones that ended, and a machine no run took on is said', () => {
   const going = {
-    session: { id: 'g1', creationTime: '2026-10-14T04:00:00+05:00', endTime: '1900-01-01T00:00:00Z', state: 'Working', result: { result: 'None' } },
+    session: { id: 'g1', creationTime: '2026-10-14T04:00:00+05:00', state: 'Working', result: { result: 'none' } },
     tasks: [task('db-01', 'none')],
   };
   const reading = edgeReading({

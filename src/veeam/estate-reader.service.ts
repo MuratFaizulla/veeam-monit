@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { VeeamApiError } from './api.error';
-import { InventoryNames, Job, jobOf, withResultLowered, WorkingSessions, workingOf } from './estate';
+import { InventoryNames, Job, jobOf, sessionOf, WorkingSessions, workingOf } from './estate';
 import { RawRequest, VeeamHttpService } from './http.service';
 import { VeeamMonitorAuthService } from './monitor-auth.service';
 import { allPages } from './pages';
@@ -67,7 +67,11 @@ export interface MachineResult {
  * nothing, so a token replaced once is used by everything after.
  *
  * What comes back is translated once, here: a job has an id, one name and one
- * spelling of its result, and every session's result is lower-cased.
+ * spelling of its result, and every session's and task's result is
+ * lower-cased and its end there only once it has ended. The times themselves
+ * are left as Veeam wrote them, for `instantOf` to read where they are used: a
+ * task's and a file's carry no offset, and are read in the zone the caller
+ * takes the server's clock to be in.
  *
  * Every read throws when Veeam does not answer; what a failure means is the
  * caller's decision.
@@ -100,7 +104,7 @@ export class VeeamEstateReader {
       ...NEWEST_FIRST,
       jobIdFilter: jobId,
     });
-    return (response.data ?? []).map(withResultLowered);
+    return (response.data ?? []).map(sessionOf);
   }
 
   /**
@@ -109,13 +113,13 @@ export class VeeamEstateReader {
    */
   async workingSessions(): Promise<WorkingSessions> {
     const sessions = await this.pages<VeeamSession>(SESSIONS, { stateFilter: 'Working', ...NEWEST_FIRST });
-    return workingOf(sessions.map(withResultLowered));
+    return workingOf(sessions.map(sessionOf));
   }
 
   /** The per-object tasks of one session: which machine, and how it went. */
   async taskSessions(sessionId: string): Promise<VeeamTaskSession[]> {
     const path = `${SESSIONS}/${encodeURIComponent(sessionId)}/taskSessions`;
-    return (await this.pages<VeeamTaskSession>(path)).map(withResultLowered);
+    return (await this.pages<VeeamTaskSession>(path)).map(sessionOf);
   }
 
   /**
@@ -199,13 +203,13 @@ export class VeeamEstateReader {
 
   /** Every session Veeam still keeps, newest first — the Evidence's history. */
   async sessions(): Promise<VeeamSession[]> {
-    return (await this.pages<VeeamSession>(SESSIONS, NEWEST_FIRST, SCAN_PAGE)).map(withResultLowered);
+    return (await this.pages<VeeamSession>(SESSIONS, NEWEST_FIRST, SCAN_PAGE)).map(sessionOf);
   }
 
   /** The sessions begun after `since`, newest first: what a history read then is missing. */
   async sessionsCreatedAfter(since: Date): Promise<VeeamSession[]> {
     const params = { createdAfterFilter: since.toISOString(), ...NEWEST_FIRST };
-    return (await this.pages<VeeamSession>(SESSIONS, params, SCAN_PAGE)).map(withResultLowered);
+    return (await this.pages<VeeamSession>(SESSIONS, params, SCAN_PAGE)).map(sessionOf);
   }
 
   /** The names behind repository and proxy ids — what the Inventory keeps. */

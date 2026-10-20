@@ -746,6 +746,7 @@ const cloudRun = (over = {}) => ({
     ['m3', diskLog('VMware Backup Proxy', 'nbd', 'housing_city_vApp')],
   ]),
   cloud: true,
+  timezone: 'Asia/Qyzylorda',
   ...over,
 });
 
@@ -787,7 +788,7 @@ test('without Veeam naming a stage, the busiest one is the bottleneck; with noth
     startedAt: '2026-10-06T06:04:26+05:00', endedAt: '2026-10-06T06:16:11+05:00',
     log: ['Job finished with error at 06.10.2026 6:16:11'],
     tasks: [machineTask('t', 'vc01', { algorithm: 'None', progress: { bottleneck: 'NotDefined', readSize: 0, transferredSize: 0 } })],
-    machineLogs: new Map(), cloud: false,
+    machineLogs: new Map(), cloud: false, timezone: 'Asia/Qyzylorda',
   });
   assert.equal(nothing, undefined);
 });

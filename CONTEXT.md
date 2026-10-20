@@ -471,6 +471,14 @@ list once carried "Logon attempt with parameters […] Login: […]" into the
 chat. A machine the session blames takes the session's reason over its own
 task's, which may say no more than the step it stopped at.
 
+Whatever else shows Veeam's words has them from there too: the **Job report**
+says what went wrong by the first line worth reading (`saidOf`), and its
+Session report prints a session's message and a machine's log a line each
+(`linesOf`). The connection parameters are cut from every line, wherever in
+it Veeam put them. Both reports used to cut Veeam's words by rules of their
+own, without that one, and the PDF in the chat could carry the service
+account.
+
 Distinct from the remembered result, which is what stops the repeats: a job
 reports `none` while a retry runs, and recording that over `failed` made the
 next failure look like a new one. `none` is not a result — see
@@ -726,8 +734,18 @@ recent sessions, the Working sessions, a session's tasks, one job's
 configuration and all of them, repository states, backups, restore points,
 every session (the **Evidence**'s), and the **Inventory** names. The paths, the
 parameters, paging and the monitor account's token are inside; no caller builds
-a path or holds a token. What it hands out is translated once — a **Job**, and
-every session's result lower-cased.
+a path or holds a token. What it hands out is translated once — a **Job**; a
+session's and a task's result lower-cased, and its end there only once it has
+ended.
+
+Veeam's times are read by one rule, `instantOf`: a session's carries its
+offset; a task's and a backup file's carry none and are the Veeam server's own
+clock, taken to be in `TELEGRAM_TIMEZONE`; and "not yet" is nothing,
+`0001-01-01T00:00:00` — the REST API's own example — or a day in 1900. How
+long Veeam says a machine took is `durationOf`. Each reader used to decode
+them for itself: the Session report took a machine's end of 0001 for a real
+one, and the Job reads and the Session history passed any placeholder on as
+an end, which an alert and a Job card read as a session that was over.
 
 Every request asks the auth service for its token, which is cached. The token
 used to be a string fetched at the start of a cycle and passed from reader to
@@ -741,8 +759,8 @@ request refused alongside one that got there first uses the token that one is
 fetching. Exactly one retry. The monitor still decides, once a cycle, whether
 the account signs in at all, and passes that on as a yes or no.
 
-Owned by `src/veeam/estate-reader.service.ts`; what it hands out is
-`src/veeam/estate.ts`.
+Owned by `src/veeam/estate-reader.service.ts`; what it hands out, and how
+Veeam's times are read, is `src/veeam/estate.ts`.
 
 ## Job
 

@@ -1,5 +1,6 @@
 import { plural } from '../telegram/time';
-import { Job } from '../veeam/estate';
+import { durationOf, fromServerClock, instantOf, Job } from '../veeam/estate';
+import { linesOf, saidOf } from '../veeam/session-text';
 import {
   VeeamBackupFile,
   VeeamJob,
@@ -101,7 +102,7 @@ export interface ReportMachine {
 /** One thing Veeam said went wrong, and to which machines. */
 export interface ErrorGroup {
   text: string;
-  /** Veeam's message as written: a rule may need its second line. */
+  /** Veeam's message, every line of it worth showing: a rule may need its second line. */
   raw: string;
   failed: boolean;
   machines: string[];
@@ -193,17 +194,6 @@ const runsWord = (count: number) => plural(count, 'запуск', 'запуск�
 const ofRuns = (count: number) => plural(count, 'запуска', 'запусков', 'запусков');
 const ofMachines = (count: number) => plural(count, 'машины', 'машин', 'машин');
 
-/** Veeam's message as worth reading: no "Processing <machine>", no "Error:", its first line. */
-export const saidOf = (message: string | undefined): string =>
-  (String(message ?? '')
-    // A machine's name may hold spaces, "db-01 (4f2e…)": what follows it starts with Veeam's verdict.
-    .replace(/^Processing .+?\s+(?=(?:Error|Warning):)/, '')
-    .replace(/^Processing \S+\s*/, '')
-    .replace(/^Error:\s*/, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean) ?? '').replace(/\s+/g, ' ');
-
 const outcomeOf = (result: string | undefined): Outcome => {
   const lower = (result ?? '').toLowerCase();
   return lower === 'success' || lower === 'warning' || lower === 'failed' ? lower : 'none';
@@ -211,47 +201,9 @@ const outcomeOf = (result: string | undefined): Outcome => {
 const saved = (outcome: Outcome) => outcome === 'success' || outcome === 'warning';
 const WORST: Record<Outcome, number> = { failed: 3, warning: 2, success: 1, none: 0 };
 
-/** When a session ended; one still going has none, or Veeam's year-1900 placeholder. */
-export const endOf = (session: { endTime?: string }): string | undefined =>
-  session.endTime && Date.parse(session.endTime) > Date.UTC(2000, 0, 1) ? session.endTime : undefined;
-
-/** "00:02:00" or "1.02:03:04", in minutes. */
-const minutesOf = (text: string | null | undefined): number | undefined => {
-  const parts = /(?:(\d+)\.)?(\d+):(\d+):(\d+)/.exec(text ?? '');
-  return parts ? Number(parts[1] ?? 0) * 1440 + Number(parts[2]) * 60 + Number(parts[3]) + Number(parts[4]) / 60 : undefined;
-};
-
 const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : 0;
-};
-
-/** How far `timezone` is ahead of UTC at `at`, in milliseconds. */
-const offsetAt = (at: number, timezone: string): number => {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
-      .formatToParts(new Date(at))
-      .map((part) => [part.type, Number(part.value)]),
-  );
-  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(at / 1000) * 1000;
-};
-
-/** The instant `minute` past midnight of `day` (a `Date.UTC` midnight) is in `timezone`. */
-const instantOf = (day: number, minute: number, timezone: string): number => {
-  const guess = day + minute * MINUTE;
-  return guess - offsetAt(guess - offsetAt(guess, timezone), timezone);
-};
-
-/**
- * A time Veeam wrote. A task's or a backup file's carries no offset: it is the
- * Veeam server's own clock, taken to be in the bot's zone — read as the
- * process's local time instead, a file written at 22:00 would land on the next day.
- */
-export const veeamTime = (text: string | undefined, timezone: string): number => {
-  if (!text) return NaN;
-  if (/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(text)) return Date.parse(text);
-  const wall = Date.parse(`${text}Z`);
-  return Number.isFinite(wall) ? wall - offsetAt(wall - offsetAt(wall, timezone), timezone) : NaN;
 };
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -270,7 +222,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   // Runs, oldest first.
   const attempts = reading.attempts.map(({ session, tasks }) => ({
     startedAt: session.creationTime,
-    endedAt: endOf(session),
+    endedAt: session.endTime,
     result: session.result?.result,
     tasks,
   }));
@@ -282,13 +234,13 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
       const machines = new Map<string, VeeamTaskSession>();
       for (const attempt of oldestFirst) for (const task of attempt.tasks ?? []) if (task.name) machines.set(task.name, task);
       const pieces = oldestFirst.map((attempt) => {
-        const start = Date.parse(attempt.startedAt ?? '');
-        const end = attempt.endedAt ? Date.parse(attempt.endedAt) : at;
+        const start = instantOf(attempt.startedAt, timezone) ?? NaN;
+        const end = instantOf(attempt.endedAt, timezone) ?? at;
         return { result: outcomeOf(attempt.result), minutes: Math.max(0, (end - start) / MINUTE) };
       });
       return {
-        start: Date.parse(oldestFirst[0].startedAt ?? ''),
-        end: run.attempts[0].endedAt ? Date.parse(run.attempts[0].endedAt) : undefined,
+        start: instantOf(oldestFirst[0].startedAt, timezone) ?? NaN,
+        end: instantOf(run.attempts[0].endedAt, timezone),
         result: outcomeOf(run.result),
         pieces,
         minutes: pieces.reduce((sum, piece) => sum + piece.minutes, 0),
@@ -306,8 +258,8 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const names = [...new Set([...listed.map((object) => object.name as string), ...withTasks.flatMap((run) => [...run.machines.keys()])])];
   const pointsOf = new Map<string, number[]>();
   for (const point of reading.points) {
-    const when = Date.parse(point.creationTime ?? '');
-    if (point.name && Number.isFinite(when)) pointsOf.set(point.name, [...(pointsOf.get(point.name) ?? []), when]);
+    const when = instantOf(point.creationTime, timezone);
+    if (point.name && when !== undefined) pointsOf.set(point.name, [...(pointsOf.get(point.name) ?? []), when]);
   }
   const byDay = withTasks.length > 31;
   const columns = byDay
@@ -329,7 +281,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
     const last = bad.at(-1);
     const newest = good.at(-1);
     const points = (pointsOf.get(name) ?? []).sort((a, b) => a - b);
-    const durations = good.map(({ task }) => minutesOf(task.progress?.duration)).filter((value): value is number => value !== undefined);
+    const durations = good.flatMap(({ task }) => durationOf(task.progress?.duration) ?? []).map((ms) => ms / MINUTE);
     return {
       name,
       size: listed.find((object) => object.name === name)?.size,
@@ -357,7 +309,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
       const text = saidOf(task.result?.message);
       if ((outcome !== 'failed' && outcome !== 'warning') || !text || !task.name) continue;
       const key = text.replace(/vm-\d+/g, 'vm').replace(/\[[^\]]*\]/g, '[]').slice(0, 90);
-      const group = groups.get(key) ?? { text, raw: task.result?.message ?? text, failed: false, machines: [], runs: 0, last: 0, runSet: new Set(), machineSet: new Set() };
+      const group = groups.get(key) ?? { text, raw: linesOf(task.result?.message).join('\n'), failed: false, machines: [], runs: 0, last: 0, runSet: new Set(), machineSet: new Set() };
       group.failed ||= outcome === 'failed';
       group.machineSet.add(task.name);
       group.runSet.add(run.start);
@@ -372,9 +324,10 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const missed = missedStarts(runs, schedule, from, at, timezone);
 
   // The chain, a day a row.
-  const files = reading.files
-    .map((file) => ({ at: veeamTime(file.creationTime, timezone), full: /\.vbk$/i.test(file.name ?? ''), disk: file.backupSize ?? 0, data: file.dataSize ?? 0 }))
-    .filter((file) => Number.isFinite(file.at));
+  const files = reading.files.flatMap((file) => {
+    const written = instantOf(file.creationTime, timezone);
+    return written === undefined ? [] : [{ at: written, full: /\.vbk$/i.test(file.name ?? ''), disk: file.backupSize ?? 0, data: file.dataSize ?? 0 }];
+  });
   const chainDays = new Map<number, ChainDay>();
   for (const file of files) {
     const day = dayIn(file.at, timezone);
@@ -404,7 +357,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const window = newest ? { start: newest.start, end: newest.end ?? at } : undefined;
   const overlapping = window
     ? reading.neighbourRuns
-        .map((run) => ({ name: named.get(run.jobId), start: Date.parse(run.start), end: run.end ? Date.parse(run.end) : at }))
+        .map((run) => ({ name: named.get(run.jobId), start: instantOf(run.start, timezone) ?? NaN, end: instantOf(run.end, timezone) ?? at }))
         .filter((run): run is { name: string; start: number; end: number } => Boolean(run.name) && run.start < window.end && run.end > window.start)
         .sort((a, b) => a.start - b.start)
     : [];
@@ -504,7 +457,7 @@ const missedStarts = (runs: Array<{ start: number }>, schedule: VeeamJob['schedu
   const today = dayIn(at, timezone);
   for (let day = first; day < today; day += DAY) {
     if (!allowed.includes(WEEKDAYS[new Date(day).getUTCDay()])) continue;
-    const due = instantOf(day, hour * 60 + minute, timezone);
+    const due = fromServerClock(day + (hour * 60 + minute) * MINUTE, timezone);
     // Late is not missing: a start queued for hours, past midnight even, still came.
     if (!runs.some((run) => run.start >= due - 2 * 3_600_000 && run.start < due + 12 * 3_600_000)) missed.push(due);
   }

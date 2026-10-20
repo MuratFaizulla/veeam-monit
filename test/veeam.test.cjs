@@ -508,6 +508,12 @@ test('a session\'s message is shown as a machine and its reason, never with the 
   assert.equal(sessionText('   '), undefined);
   assert.equal(sessionText(undefined), undefined);
   for (const text of [VDDK, DNS].map(sessionText)) assert.doesNotMatch(text, /Logon attempt|svc@example\.com|DataTransfer/);
+  // A message that is nothing but the parameters says nothing; inside a line, they are cut out of it.
+  assert.equal(sessionText('Logon attempt with parameters [VC/ESX: [vc01.example.com];Port: 443;Login: [svc@example.com]]'), undefined);
+  assert.equal(
+    sessionText('Error: Failed to open VDDK disk Logon attempt with parameters [VC/ESX: [192.0.2.194];Login: [svc@example.com]] Failed to open disk for read.'),
+    'Failed to open VDDK disk Failed to open disk for read.',
+  );
 });
 
 test('a session blames a machine only when it names one and says why', () => {

@@ -5,7 +5,7 @@ import { escapeHtml } from '../telegram/format';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamLogRecord } from '../veeam/types';
 import { Answer } from './answer';
-import { endOf, JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
+import { JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
 import { ReportPrinter } from './report-printer';
 import { stampOf } from './repository-report-page';
 import { ServerEstate } from './server-estates';
@@ -101,7 +101,7 @@ export const readJob = async (server: string, reader: VeeamEstateReader, id: str
   reading.taskLogs = Object.fromEntries(unsaved.flatMap((task, index) => (taskLogs[index] ? [[task.id as string, taskLogs[index] as VeeamLogRecord[]]] : [])));
 
   await step('журналы', async () => {
-    const logs = await pooled(sessions.filter((session) => endOf(session)).slice(0, LOG_SESSIONS), (session) => reader.sessionLog(session.id as string));
+    const logs = await pooled(sessions.filter((session) => session.endTime).slice(0, LOG_SESSIONS), (session) => reader.sessionLog(session.id as string));
     reading.bottlenecks = logs.flatMap((records) => (records ?? []).flatMap((record) => /Primary bottleneck:\s*(\w+)/i.exec(record.title ?? '')?.[1] ?? []));
   });
   const repositoryId = reading.configured?.storage?.backupRepositoryId ?? reading.configured?.jobSettings?.metadataRepositoryId;
@@ -125,7 +125,7 @@ export const readJob = async (server: string, reader: VeeamEstateReader, id: str
     if (!newest || !reading.neighbours.length) return;
     const theirs = new Set(reading.neighbours.map((neighbour) => neighbour.id));
     reading.neighbourRuns = (await reader.sessionsCreatedAfter(new Date(Date.parse(newest) - DAY))).flatMap((session) =>
-      session.jobId && session.creationTime && theirs.has(session.jobId) ? [{ jobId: session.jobId, start: session.creationTime, end: endOf(session) }] : [],
+      session.jobId && session.creationTime && theirs.has(session.jobId) ? [{ jobId: session.jobId, start: session.creationTime, end: session.endTime }] : [],
     );
   });
   if (missing.length) reading.error = missing.join('; ');
