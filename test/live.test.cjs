@@ -190,8 +190,9 @@ test('a live message retired while Telegram could not be reached is deleted on a
   // same, and ▶️ showed two: the new one and the old one, frozen a minute
   // before the swap. Then it met a proxy's error page in place of Telegram's
   // answer, which was read as a refusal, and the old one was written off.
-  // Which replies are "later" is the transport's table; this is what the
-  // live module does with one.
+  // Which replies are "later" is the transport's table, and when a message is
+  // replaced, retried or written off the Posted messages'; this is the live
+  // module handing its own over.
   let failing = false;
   const w = world({ TELEGRAM_LIVE: 'true' }, {
     deleteMessage: () => (failing ? '<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>' : undefined),
@@ -220,25 +221,6 @@ test('a live message retired while Telegram could not be reached is deleted on a
   } finally {
     Date.now = realNow;
   }
-});
-
-test('a live message Telegram refuses to delete is not asked about again', async () => {
-  const w = world({ TELEGRAM_LIVE: 'true' }, {
-    deleteMessage: () => ({ ok: false, error_code: 400, description: "Bad Request: message can't be deleted" }),
-  });
-  await w.live.publish([{ slot: 'running', content: '▶️ первый' }]);
-
-  const realNow = Date.now;
-  Date.now = () => realNow() + 37 * 3_600_000;
-  try {
-    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
-    w.api.reset();
-    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
-  } finally {
-    Date.now = realNow;
-  }
-  assert.deepEqual(w.api.of('deleteMessage'), [], 'a refusal is final: only a person can remove it');
-  assert.deepEqual(w.store.liveMessages.leftovers(CHAT), []);
 });
 
 test('a chat that removed the bot is let go by the live topics, as by the alerts', async () => {
@@ -387,7 +369,7 @@ test('a page posted anew takes the pages after it along, so the topic still read
       payload.message_id === lost ? { ok: false, error_code: 400, description: "Bad Request: message can't be edited" } : undefined,
   });
   await w.live.publish([{ slot: 'protection', content: ['страница 1', 'страница 2', 'страница 3'] }]);
-  const second = w.store.liveMessages.of(CHAT, 'protection#1').messageId;
+  const second = w.store.liveMessages.of(CHAT, 'protection', 1).messageId;
   lost = w.store.liveMessages.of(CHAT, 'protection').messageId;
 
   w.api.reset();
@@ -1081,7 +1063,7 @@ test('the retired 🗂 topic loses its messages, once', async () => {
   const w = monitorWorld(LIVE, [job('1', 'SQL Daily', 'Success')]);
   // What the bot left in 🗂 before it was merged into 🛡: a list of two pages.
   w.store.liveMessages.remember(CHAT, 'restorePoints', { messageId: 9001, hash: 'x', at: Date.now(), createdAt: Date.now() });
-  w.store.liveMessages.remember(CHAT, 'restorePoints#1', { messageId: 9002, hash: 'y', at: Date.now(), createdAt: Date.now() });
+  w.store.liveMessages.remember(CHAT, 'restorePoints', { messageId: 9002, hash: 'y', at: Date.now(), createdAt: Date.now() }, 1);
 
   await w.monitor.check();
   const deleted = w.api.of('deleteMessage').map((payload) => payload.message_id);
@@ -1114,7 +1096,7 @@ test('with the live topics off, the messages they left are taken down and nothin
   const ref = (messageId) => ({ messageId, hash: 'x', at: Date.now(), createdAt: Date.now() });
   w.store.liveMessages.remember(CHAT, 'running', ref(9201));
   w.store.liveMessages.remember(CHAT, 'protection', ref(9202));
-  w.store.liveMessages.remember(CHAT, 'protection#1', ref(9203));
+  w.store.liveMessages.remember(CHAT, 'protection', ref(9203), 1);
 
   await w.live.publish([{ slot: 'running', content: '▶️ сейчас' }]);
 

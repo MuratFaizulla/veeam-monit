@@ -38,7 +38,7 @@ Polling runs at start and then on a timer. Everything the bot must remember acro
 
 - the last results of jobs, and the runs Veeam is still retrying;
 - known chats and topics;
-- the IDs of the live messages;
+- the IDs of the live messages, and of the messages Telegram could not be reached to delete yet;
 - cooldowns.
 
 After every write a copy, `telegram-state.json.bak`, is saved next to it, and if the main file is damaged the state is restored from the copy.

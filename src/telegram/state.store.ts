@@ -2,6 +2,7 @@ import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { LiveMessageRef, LiveMessages } from './live-messages';
+import type { PostedRef } from './posted-messages';
 import { JobMemory, memoryFromFile, RetryingRun } from './job-memory';
 import { ServerMemory, ServerSeen, serversFromFile } from './server-memory';
 import { AnswerLog, AnswerRef } from './answer-log';
@@ -47,8 +48,11 @@ interface TelegramState {
   menus?: Record<string, string | MenuRef>;
   /** dedupeKey -> epoch ms after which the same condition may be reported again. */
   cooldowns: Record<string, number>;
-  /** chat id -> slot -> the one message that slot keeps current. */
-  liveMessages: Record<string, Record<string, LiveMessageRef>>;
+  /**
+   * chat id -> the message each live slot's page keeps current, and the
+   * messages waiting to be deleted; keyed as `LiveMessages` keys them.
+   */
+  liveMessages: Record<string, Record<string, LiveMessageRef | PostedRef>>;
   /** chat id -> answers this bot sent there, oldest first. */
   answers: Record<string, AnswerRef[]>;
 }

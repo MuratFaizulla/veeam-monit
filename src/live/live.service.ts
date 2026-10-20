@@ -2,24 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { AppConfig } from '../config/configuration';
+import { LiveMessageRef } from '../telegram/live-messages';
+import { PostedMessages } from '../telegram/posted-messages';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
-import { outcomeOf, TelegramOutcome, TelegramTransportService } from '../telegram/transport.service';
+import { outcomeOf, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat } from '../telegram/types';
 import { isFooter } from './format';
 import { LIVE_SLOTS, LivePage, LiveSlot, RETIRED_SLOTS, specOf } from './slots';
-import { LiveMessageRef } from '../telegram/live-messages';
-
-/**
- * How long a live slot keeps one message before posting a fresh one.
- *
- * Under Telegram's own limit of roughly 48 hours, with room for a monitor that
- * was down for a few hours and comes back to a message nearly out of time.
- */
-const ROTATE_AFTER_MS = 36 * 3_600_000;
-
-/** Telegram lets a bot delete its own message for 48 hours after sending it. */
-const DELETE_LIMIT_MS = 48 * 3_600_000;
 
 export { LiveSlot };
 
@@ -53,6 +43,7 @@ export class TelegramLiveService {
     private readonly transport: TelegramTransportService,
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
+    private readonly posted: PostedMessages,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
   }
@@ -60,14 +51,15 @@ export class TelegramLiveService {
   /**
    * Makes the live topics say this cycle's pages, in every registered chat, and
    * nothing else: a slot not among them has its messages deleted, once, while
-   * Telegram still lets the bot delete them.
+   * Telegram still lets the bot delete them. First, what earlier cycles could
+   * not delete goes.
    *
    * Never throws: a status message that could not be refreshed must not abort
    * the monitor cycle that produced it.
    */
   async publish(pages: readonly LivePage[]): Promise<void> {
     if (!this.transport.enabled) return;
-    for (const [chatId] of this.store.chats()) await this.inChat(chatId, () => this.clearLeftovers(chatId));
+    for (const [chatId] of this.store.chats()) await this.inChat(chatId, () => this.posted.sweep(chatId));
     const shown = this.config.live ? pages : [];
     for (const { slot, content } of shown) await this.publishSlot(slot, content);
     const given = new Set<string>(shown.map(({ slot }) => slot));
@@ -97,8 +89,8 @@ export class TelegramLiveService {
           // 11:48, its first page at 11:54, and the topic read "— продолжение"
           // above the list it continued for a day and a half at a time.
           let reposted = false;
-          for (const [index, page] of pages.entries()) {
-            reposted = (await this.publishTo(chatId, chat, slot, page, index, reposted)) || reposted;
+          for (const [page, text] of pages.entries()) {
+            reposted = (await this.publishTo(chatId, chat, slot, text, page, reposted)) || reposted;
           }
           // The pages a now-shorter list no longer fills.
           await this.removeFrom(chatId, slot, Math.max(pages.length, 1));
@@ -147,51 +139,23 @@ export class TelegramLiveService {
    */
   private async removeFrom(chatId: string, slot: string, from: number): Promise<number[]> {
     const left: number[] = [];
-    for (let index = from; ; index += 1) {
-      const key = pageKey(slot, index);
-      const ref = this.store.liveMessages.of(chatId, key);
+    for (let page = from; ; page += 1) {
+      const ref = this.store.liveMessages.of(chatId, slot, page);
       if (!ref) return left;
-      this.store.liveMessages.forget(chatId, key);
+      this.store.liveMessages.forget(chatId, slot, page);
       if (!(await this.retire(chatId, ref))) left.push(ref.messageId);
     }
   }
 
   /**
-   * Deletes a message no slot uses any more, and says false only when
-   * Telegram refused, so the message stays for good. A delete that got no
-   * answer that counts is not the end of it: the message is kept as a
-   * leftover and a later cycle deletes it.
+   * Deletes a message no slot uses any more, and says false only when it
+   * stays for good: Telegram refused. One Telegram was not answering for is
+   * deleted on a later cycle (`PostedMessages`). A chat the bot was removed
+   * from is no answer about the message: it ends the chat's part of the cycle
+   * (`inChat`).
    */
   private async retire(chatId: string, ref: LiveMessageRef): Promise<boolean> {
-    const outcome = await this.delete(chatId, ref.messageId);
-    if (outcome === 'later') this.store.liveMessages.leave(chatId, ref);
-    return outcome !== 'refused';
-  }
-
-  /**
-   * Deletes what earlier cycles gave up but could not delete then. One past
-   * Telegram's limit is not asked about again: only a person can remove it.
-   */
-  private async clearLeftovers(chatId: string): Promise<void> {
-    for (const ref of this.store.liveMessages.leftovers(chatId)) {
-      const outcome = Date.now() - (ref.createdAt ?? 0) > DELETE_LIMIT_MS ? 'refused' : await this.delete(chatId, ref.messageId);
-      if (outcome === 'later') continue;
-      this.store.liveMessages.cleared(chatId, ref.messageId);
-      if (outcome === 'refused') {
-        this.logger.warn(`Live message ${ref.messageId} in chat ${chatId} could not be deleted in time: delete it by hand`);
-      }
-    }
-  }
-
-  /**
-   * Deletes one message and says how that ended, as the transport says it. A
-   * chat the bot was removed from is no answer about the message: it ends
-   * the chat's part of the cycle (`inChat`).
-   */
-  private async delete(chatId: string, messageId: number): Promise<TelegramOutcome> {
-    const deleted = await this.transport.deleteMessage(chatId, messageId);
-    if (deleted.outcome === 'chat-gone') throw deleted.error;
-    return deleted.outcome;
+    return (await this.posted.delete(chatId, [ref])).stuck.length === 0;
   }
 
   /**
@@ -204,12 +168,11 @@ export class TelegramLiveService {
     chat: TelegramChat,
     slot: LiveSlot,
     text: string,
-    index = 0,
+    page = 0,
     repost = false,
   ): Promise<boolean> {
-    const key = pageKey(slot, index);
     const hash = this.hash(text);
-    const held = this.store.liveMessages.of(chatId, key);
+    const held = this.store.liveMessages.of(chatId, slot, page);
 
     // Retired while Telegram still answers for it. A slot's message is edited
     // for as long as the slot exists, but the right to edit or delete one's own
@@ -220,10 +183,11 @@ export class TelegramLiveService {
     // is what the ▶️ topic did: two messages, one stuck a day behind. The
     // delete itself can meet a dropped connection too, and a message given up
     // on that one try stayed just the same — ▶️ again, 20.10 at 17:03 — so it
-    // is retried on later cycles until Telegram answers.
-    const previous = held && !repost && !this.expired(held) ? held : undefined;
+    // is retried on later cycles until Telegram answers. When a message is due,
+    // and deleting it until it is gone, are `PostedMessages`'.
+    const previous = held && !repost && !this.posted.due(held) ? held : undefined;
     if (held && !previous) {
-      this.store.liveMessages.forget(chatId, key);
+      this.store.liveMessages.forget(chatId, slot, page);
       if (!(await this.retire(chatId, held))) {
         this.logger.warn(
           `Live "${slot}" left message ${held.messageId} behind in chat ${chatId}: ` +
@@ -242,13 +206,13 @@ export class TelegramLiveService {
     if (current) {
       const outcome = await this.edit(chatId, current.messageId, text);
       if (outcome === 'written') {
-        this.store.liveMessages.remember(chatId, key, {
+        this.store.liveMessages.remember(chatId, slot, {
           messageId: current.messageId,
           hash,
           at: Date.now(),
           createdAt: current.createdAt,
           threadId: current.threadId,
-        });
+        }, page);
         return false;
       }
 
@@ -265,7 +229,7 @@ export class TelegramLiveService {
         return false;
       }
 
-      this.store.liveMessages.forget(chatId, key);
+      this.store.liveMessages.forget(chatId, slot, page);
       // An edit that failed on a message too old to delete leaves it in the
       // chat for good, and only a person can clear it. Said out loud rather
       // than swallowed, because the alternative is somebody reading a stale
@@ -285,27 +249,15 @@ export class TelegramLiveService {
     // name to edit a message — and then produced a second topic the moment a
     // new message was needed. That is how this chat ended up with both
     // "📅 Ближайшие запуски" and "📅 Upcoming runs", one of them empty.
-    const posted = await this.send(chat, slot, text, held?.threadId ?? previous?.threadId);
-    this.store.liveMessages.remember(chatId, key, {
-      messageId: posted.messageId,
+    const sent = await this.send(chat, slot, text, held?.threadId ?? previous?.threadId);
+    this.store.liveMessages.remember(chatId, slot, {
+      messageId: sent.messageId,
       hash,
       at: now,
       createdAt: now,
-      threadId: posted.threadId,
-    });
+      threadId: sent.threadId,
+    }, page);
     return true;
-  }
-
-  /**
-   * Whether this message is close enough to Telegram's two-day limit that the
-   * next edit might fail — or is of unknown age, which amounts to the same.
-   *
-   * Retiring early costs one extra message per slot every day and a half.
-   * Retiring late costs a message nobody can remove, saying something wrong,
-   * for as long as the chat exists.
-   */
-  private expired(ref: LiveMessageRef): boolean {
-    return Date.now() - (ref.createdAt ?? 0) > ROTATE_AFTER_MS;
   }
 
   /**
@@ -366,9 +318,3 @@ export class TelegramLiveService {
     return createHash('sha1').update(meaningful).digest('hex');
   }
 }
-
-/**
- * The store key for one page of a slot. Page 0 keeps the bare slot name so
- * that a slot which never grew past one message keeps the id it already has.
- */
-const pageKey = (slot: string, index: number): string => (index === 0 ? slot : `${slot}#${index}`);

@@ -125,7 +125,7 @@ test('a command is answered with no polling loop or webhook anywhere near it', a
   // all. When interpretation lived in the class that owns the polling loop, a
   // test that started that class on a world like this never finished.
   const w = world();
-  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor(), new TelegramGeneral(w.transport, w.store));
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor(), new TelegramGeneral(w.transport, w.store, w.posted));
 
   await commands.answer({
     update_id: 1,
@@ -322,23 +322,60 @@ test('every Telegram endpoint carries a key guard: the webhook Telegram\'s, the 
  * General: what was said there, the menu kept there, and taking it back
  * ------------------------------------------------------------------ */
 
-test('General takes back what was heard and said in it, and counts what would not go', async () => {
+test('General takes back what was heard and said in it, and what Telegram was not answering for on a later pass', async () => {
   const refused = { ok: false, error_code: 400, description: "Bad Request: message can't be deleted for everyone" };
+  let busy = true;
   const w = world({}, {
     // One message the bot may not delete fails the whole batch, and the rest
     // go one at a time.
     deleteMessages: () => refused,
-    deleteMessage: (payload) => (payload.message_id === 12 ? refused : undefined),
+    deleteMessage: (payload) => {
+      if (payload.message_id === 12) return refused;
+      if (payload.message_id === 13 && busy) {
+        return { ok: false, error_code: 429, description: 'Too Many Requests: retry after 0', parameters: { retry_after: 0 } };
+      }
+      return undefined;
+    },
   });
   const chat = { id: Number(CHAT), type: 'supergroup' };
-  w.general.heard({ message_id: 11, chat });
-  w.general.heard({ message_id: 12, chat });
+  for (const id of [11, 12, 13]) w.general.heard({ message_id: id, chat });
   const answer = await w.general.say({ chatId: CHAT }, { lines: ['ответ'] });
 
   // 11 is the "/clear" itself: taken back, not counted.
-  assert.deepEqual(await w.general.clear({ chatId: CHAT }, 11), { removed: 1, stuck: 1 });
-  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id).sort((a, b) => a - b), [11, 12, answer]);
-  assert.equal(await w.general.clear({ chatId: CHAT }), 'nothing', 'what was tried is not tried again');
+  assert.deepEqual(await w.general.clear({ chatId: CHAT }, 11), { removed: 1, stuck: 1, pending: 1 });
+  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id).sort((a, b) => a - b), [11, 12, 13, answer]);
+  assert.equal(await w.general.clear({ chatId: CHAT }), 'nothing', 'what was tried is not counted again');
+
+  // A 429 used to be counted with the refusals, and the message forgotten.
+  busy = false;
+  w.api.reset();
+  await w.general.keepMenu();
+  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id), [13], 'the refused one is not asked again');
+  w.api.reset();
+  await w.general.keepMenu();
+  assert.deepEqual(w.api.of('deleteMessage'), [], 'and the one gone, not either');
+});
+
+test('a menu of an older layout is deleted on a later pass when Telegram did not answer for it', async () => {
+  // Its deletion was asked once and the answer ignored: one dropped
+  // connection, and the old menu stayed beside the new one for good.
+  let reachable = false;
+  const w = world({}, {
+    deleteMessage: () => {
+      if (!reachable) throw new Error('socket hang up');
+    },
+  });
+  await w.general.keepMenu();
+  const old = w.store.menuOf(CHAT).messageId;
+  w.store.rememberMenu(CHAT, 'a layout of an older version', old);
+
+  await w.general.keepMenu();
+  assert.notEqual(w.store.menuOf(CHAT).messageId, old, 'the new menu is posted');
+  reachable = true;
+  w.api.reset();
+  await w.general.keepMenu();
+  assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id), [old], 'the old one goes next time');
+  assert.deepEqual(w.api.sent(), []);
 });
 
 test('a chat that removed the bot is let go by General, as by the alerts', async () => {

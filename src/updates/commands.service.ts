@@ -473,6 +473,7 @@ export class TelegramCommandsService implements Answers {
    *
    * It ends on the menu, for everybody: the messages that carried it are among
    * what went, and the keyboard lives as long as the message that put it there.
+   * What Telegram was not answering for goes on a later pass, and is said so.
    */
   async clear(asked: Asked): Promise<Reply> {
     // The "/clear" itself goes too, but is not counted as work done.
@@ -489,13 +490,15 @@ export class TelegramCommandsService implements Answers {
       };
     }
 
-    const { removed, stuck } = cleared;
+    const { removed, stuck, pending } = cleared;
     return {
       lines: [
         `🧹 <b>Убрано ${removed} ${plural(removed, 'сообщение', 'сообщения', 'сообщений')}</b>`,
         ...(stuck > 0
           ? ['', `${stuck} не поддались — у меня нет права удалять чужие сообщения, или им больше двух суток.`]
           : []),
+        // Not among the ones above: these go by themselves, on a later pass.
+        ...(pending > 0 ? ['', `${pending} удалю чуть позже — Telegram сейчас не отвечает.`] : []),
         '',
         ...MENU_TEXT,
       ],

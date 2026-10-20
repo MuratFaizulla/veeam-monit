@@ -1,16 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AnswerRef } from '../telegram/answer-log';
 import { CAPTION_LENGTH, truncate } from '../telegram/format';
+import { PostedMessages, PostedRef } from '../telegram/posted-messages';
 import { TelegramStateStore } from '../telegram/state.store';
 import { outcomeOf, TelegramOutcome, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramDestination, TelegramMessage } from '../telegram/types';
 import { Reply } from './commands';
 import { isMenu, isSelective, mainMenu, MENU_SIGNATURE, MENU_TEXT } from './menu';
 
-/** Telegram takes at most 100 message ids in one deleteMessages call. */
-const DELETE_BATCH = 100;
-
-/** What `/clear` came to. */
-export type Cleared = 'nothing' | { removed: number; stuck: number };
+/**
+ * What `/clear` came to: how many messages went, how many will not — refused,
+ * or older than Telegram lets a bot delete — and how many Telegram was not
+ * answering for, which are deleted on a later pass.
+ */
+export type Cleared = 'nothing' | { removed: number; stuck: number; pending: number };
 
 /**
  * General as the bot keeps it: what was said there, so `/clear` can take it
@@ -25,6 +28,7 @@ export type Cleared = 'nothing' | { removed: number; stuck: number };
  * It used to be lodged in the commands module, beside what the commands mean:
  * a timer that keeps the menu, in a module that said nothing in it had a
  * lifecycle, and a deletion protocol of its own beside the live module's copy.
+ * Deleting is `PostedMessages`' now, for both.
  */
 @Injectable()
 export class TelegramGeneral {
@@ -33,6 +37,7 @@ export class TelegramGeneral {
   constructor(
     private readonly transport: TelegramTransportService,
     private readonly store: TelegramStateStore,
+    private readonly posted: PostedMessages,
   ) {}
 
   /**
@@ -76,8 +81,9 @@ export class TelegramGeneral {
   }
 
   /**
-   * Keeps the menu under the input field of every chat. Asked on start and
-   * then every few minutes, by whoever keeps the clock.
+   * Keeps the menu under the input field of every chat, and deletes what an
+   * earlier pass could not. Asked on start and then every few minutes, by
+   * whoever keeps the clock.
    *
    * In a group nobody presses Start: the bot was added once, by one person, and
    * a menu that waited to be asked for would never be seen. The keyboard lives
@@ -89,40 +95,77 @@ export class TelegramGeneral {
    */
   async keepMenu(): Promise<void> {
     for (const [chatId] of this.store.chats()) {
-      const held = this.store.menuOf(chatId);
-      const current = held?.signature === MENU_SIGNATURE ? held.messageId : undefined;
-      if (current !== undefined) {
-        const looked = await this.look(chatId, current);
-        if (looked === 'chat-gone') this.letGo(chatId);
-        // Anything but gone says nothing against the message being there:
-        // the cost of that mistake is one late repost, and the cost of the
-        // other is a second menu.
-        if (looked !== 'gone') continue;
-      }
-      const posted = await this.say({ chatId }, { lines: MENU_TEXT, markup: mainMenu() });
-      // A menu of an older layout is replaced, not left beside the new one.
-      if (posted !== undefined && held?.messageId !== undefined && held.messageId !== current) {
-        await this.transport.deleteMessage(chatId, held.messageId);
-      }
+      await this.inChat(chatId, () => this.keepIn(chatId), undefined);
     }
   }
 
   /**
    * Takes back everything written down in this chat's General, `asked` — the
    * "/clear" itself — included but not counted as work done.
+   *
+   * What Telegram was not answering for is left to be deleted on a later pass.
+   * It used to be forgotten with the rest, and a 429 was counted among the
+   * messages the bot may not delete or that are past two days.
    */
   async clear(destination: TelegramDestination, asked?: number): Promise<Cleared> {
     const { chatId, threadId } = destination;
-    const ids = this.store.answerLog.inTopic(chatId, threadId).filter((id) => id !== asked);
-    if (asked !== undefined) {
-      await this.transport.deleteMessage(chatId, asked);
-      this.store.answerLog.forget(chatId, [asked]);
-    }
-    if (ids.length === 0) return 'nothing';
+    return this.inChat(chatId, async () => {
+      // An earlier /clear's leftovers go first: in a chat with no menu, a
+      // private one, nothing else would ever come back to them.
+      await this.posted.sweep(chatId);
+      const said = this.store.answerLog.inTopic(chatId, threadId);
+      if (asked !== undefined) {
+        await this.posted.delete(chatId, [postedOf(said.find(({ messageId }) => messageId === asked) ?? { messageId: asked })]);
+        this.store.answerLog.forget(chatId, [asked]);
+      }
+      const taken = said.filter(({ messageId }) => messageId !== asked);
+      if (taken.length === 0) return 'nothing';
 
-    const removed = await this.removeAll(chatId, ids);
-    this.store.answerLog.forget(chatId, ids);
-    return { removed, stuck: ids.length - removed };
+      const { deleted, stuck, pending } = await this.posted.delete(chatId, taken.map(postedOf));
+      this.store.answerLog.forget(chatId, taken.map(({ messageId }) => messageId));
+      return { removed: deleted.length, stuck: stuck.length, pending: pending.length };
+    }, 'nothing');
+  }
+
+  /** One chat's menu, after what earlier passes left to delete. */
+  private async keepIn(chatId: string): Promise<void> {
+    await this.posted.sweep(chatId);
+    const held = this.store.menuOf(chatId);
+    const current = held?.signature === MENU_SIGNATURE ? held.messageId : undefined;
+    if (current !== undefined) {
+      const looked = await this.look(chatId, current);
+      if (looked === 'chat-gone') return this.letGo(chatId);
+      // Anything but gone says nothing against the message being there:
+      // the cost of that mistake is one late repost, and the cost of the
+      // other is a second menu.
+      if (looked !== 'gone') return;
+    }
+    const posted = await this.say({ chatId }, { lines: MENU_TEXT, markup: mainMenu() });
+    if (posted === undefined || held?.messageId === undefined || held.messageId === current) return;
+
+    // A menu of an older layout is replaced, not left beside the new one. Its
+    // deletion used to be asked once and its answer ignored: one dropped
+    // connection, and the old menu stayed for good.
+    const old = this.store.answerLog.inTopic(chatId).find(({ messageId }) => messageId === held.messageId);
+    const { stuck } = await this.posted.delete(chatId, [postedOf(old ?? { messageId: held.messageId })]);
+    this.store.answerLog.forget(chatId, [held.messageId]);
+    if (stuck.length > 0) {
+      this.logger.warn(`The menu of an older layout, message ${held.messageId} in chat ${chatId}, was left behind: delete it by hand`);
+    }
+  }
+
+  /**
+   * Does one chat's part. A chat Telegram says the bot is no longer in is let
+   * go, and `otherwise` is the answer; anything else is the caller's.
+   */
+  private async inChat<T>(chatId: string, work: () => Promise<T>, otherwise: T): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      if (outcomeOf(error) !== 'chat-gone') throw error;
+      this.letGo(chatId);
+      return otherwise;
+    }
   }
 
   /**
@@ -144,22 +187,10 @@ export class TelegramGeneral {
     this.store.dropChat(chatId);
     this.logger.warn(`Telegram chat ${chatId} is no longer reachable and was unregistered`);
   }
-
-  /** Deletes in batches, falling back to one at a time. Returns how many went. */
-  private async removeAll(chatId: string, ids: number[]): Promise<number> {
-    let removed = 0;
-    for (let from = 0; from < ids.length; from += DELETE_BATCH) {
-      const batch = ids.slice(from, from + DELETE_BATCH);
-      if ((await this.transport.ask('deleteMessages', { chat_id: chatId, message_ids: batch })).outcome === 'done') {
-        removed += batch.length;
-        continue;
-      }
-      // One undeletable message — too old, or already gone — fails the whole
-      // batch, so the rest is retried individually rather than abandoned.
-      for (const messageId of batch) {
-        if ((await this.transport.deleteMessage(chatId, messageId)).outcome === 'done') removed += 1;
-      }
-    }
-    return removed;
-  }
 }
+
+/** A message said in General as deleting it needs it: with when, where the Answer log wrote that down. */
+const postedOf = ({ messageId, at }: Pick<AnswerRef, 'messageId'> & { at?: number }): PostedRef => ({
+  messageId,
+  createdAt: at,
+});

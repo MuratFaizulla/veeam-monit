@@ -1,3 +1,5 @@
+import { DELETABLE_MS } from './posted-messages';
+
 /**
  * The Answer log: the messages said in General, per chat, so `/clear` has
  * something to take back. Named for what it first held — the bot's answers —
@@ -22,15 +24,12 @@ export interface AnswerRef {
   messageId: number;
   /** The forum topic it was sent to; absent means General. */
   threadId?: number;
-  /** Epoch ms, so answers Telegram will no longer let a bot delete are dropped. */
+  /**
+   * Epoch ms. Telegram refuses to let a bot delete a message after 48 hours,
+   * so an older id is worth neither storing nor trying.
+   */
   at: number;
 }
-
-/**
- * Telegram refuses to let a bot delete its own message after 48 hours, so an
- * older id is worth neither storing nor trying.
- */
-export const DELETABLE_MS = 48 * 3_600_000;
 
 /** Ceiling per chat. A deep backlog is not what anybody is trying to clear. */
 export const ANSWERS_KEPT = 500;
@@ -50,20 +49,23 @@ export class AnswerLog {
   }
 
   /**
-   * The answers still worth deleting in one topic, newest first.
+   * The answers still worth deleting in one topic, newest first, each with
+   * when it was said.
    *
    * Scoped to the thread on purpose: clearing a forum topic must not reach into
    * the others, where somebody may be mid-conversation. `undefined` is General,
    * and is its own scope rather than "everything".
    */
-  inTopic(chatId: string, threadId?: number): number[] {
+  inTopic(chatId: string, threadId?: number): AnswerRef[] {
     return this.fresh(chatId)
       .filter((answer) => answer.threadId === threadId)
-      .map((answer) => answer.messageId)
       .reverse();
   }
 
-  /** Called once the messages are gone, or Telegram says they already were. */
+  /**
+   * Called once the messages were taken back: deleted, refused, or left to
+   * `PostedMessages` to delete on a later pass.
+   */
   forget(chatId: string, messageIds: number[]): void {
     const gone = new Set(messageIds);
     const kept = this.fresh(chatId).filter((answer) => !gone.has(answer.messageId));

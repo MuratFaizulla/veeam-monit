@@ -307,7 +307,8 @@ it is still allowed. Left later, the slot meets an edit that fails and a
 deletion that fails with it, and is left with one message frozen at its last
 good content and a second posted beside it, which is what the ▶️ topic did. A
 ref whose `createdAt` is unknown is retired at once: betting on it being young
-is the same bet that produced the frozen message.
+is the same bet that produced the frozen message. When a message is due, and
+deleting the one it replaces, are the **Posted message**'s.
 
 ## Delivery
 
@@ -345,6 +346,33 @@ by a refusal. A 429 holds every call to that chat, whatever its method, for
 as long as Telegram asked — only the queued messages used to wait.
 
 Owned by `src/telegram/transport.service.ts`.
+
+## Posted message
+
+A message the bot posted, and what Telegram's clock makes of it: a bot may
+edit and delete its own message for about two days after it was *sent*,
+however recently it was written to, and then never again. A message kept
+current — a **Live slot**'s — is **due** for a fresh one 36 hours after it was
+sent, and at once when nobody knows when that was. One the bot no longer wants
+— a slot's replaced message, the **Menu** of an older layout, what /clear
+takes back, people's messages among them — is deleted until it is gone or
+**refused**. One Telegram was not answering for (**later**) is **left**: kept
+in the state file, across restarts, and deleted on a later pass — each cycle
+of the live module, each look at the menu, and the next /clear, which a
+private chat has nothing else to come back with. One still there 48 hours after
+it was sent is **written off**, not asked about again but said in the log, for
+a person to remove.
+
+It used to be three protocols with three answers. The live module kept what it
+could not delete; General asked once to delete the menu it replaced and ignored
+the answer, so one dropped connection left the old menu for good; /clear forgot
+every message it tried, deleted or not, and told a 429 as "no right, or older
+than two days". 48 hours was spelled in two places.
+
+How the slots' messages and the ones left are keyed in the state file is
+`LiveMessages`' alone (`src/telegram/live-messages.ts`).
+
+Owned by `src/telegram/posted-messages.ts`.
 
 ## Update
 
@@ -388,8 +416,10 @@ Intake is owned by `src/updates/updates.service.ts`; commands and Buttons by
 and `/clear` taking it back — is `src/updates/general.ts`, which both use.
 It used to be lodged in the commands module: a timer keeping the menu, in a
 module that said nothing in it had a lifecycle, and a deletion protocol of
-its own beside the live module's copy. Deleting one message, gone already
-counting as gone, is the transport's (`deleteMessage`), for both.
+its own beside the live module's copy. Deleting a message — until it is gone,
+gone already counting as gone, or refused, and on a later pass when Telegram
+was not answering — is the **Posted message**'s, for General and the live
+module both.
 
 ## Attempt
 
@@ -765,7 +795,10 @@ remember.
 
 Scoped by thread: General is its own scope, not "everything".
 
-Newest 500 per chat, entries older than 48 hours dropped on read.
+Newest 500 per chat, entries older than 48 hours dropped on read. What /clear
+takes back leaves the log whatever became of it; one Telegram was not
+answering for is the **Posted message**'s, left to a later pass, and the
+answer says how many are.
 
 Owned by `src/telegram/answer-log.ts`. It is persisted in the state file
 like everything else, but the state store only hands it its part of the file

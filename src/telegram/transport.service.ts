@@ -278,6 +278,17 @@ export class TelegramTransportService implements OnModuleDestroy {
     return deleted.outcome === 'gone' ? { outcome: 'done', result: true } : deleted;
   }
 
+  /**
+   * Deletes up to 100 messages in one call, and says how that ended as
+   * `deleteMessage` does. Telegram skips the ones already gone, but one it
+   * will not delete — too old, or not the bot's — refuses the whole call.
+   * Never throws.
+   */
+  async deleteMessages(chatId: string, messageIds: number[]): Promise<TelegramCall<true>> {
+    const deleted = await this.ask<true>('deleteMessages', { chat_id: chatId, message_ids: messageIds });
+    return deleted.outcome === 'gone' ? { outcome: 'done', result: true } : deleted;
+  }
+
   private queueFor(chatId: string): ChatQueue {
     let queue = this.queues.get(chatId);
     if (!queue) {

@@ -353,6 +353,126 @@ test('a message Telegram refuses is not sent again, one it never answered is', a
 });
 
 /* ------------------------------------------------------------------ *
+ * A message the bot posted: replaced, deleted, written off
+ * ------------------------------------------------------------------ */
+
+const { PostedMessages } = require('../dist/telegram/posted-messages');
+const { LiveMessages } = require('../dist/telegram/live-messages');
+const { TelegramApiError } = require('../dist/telegram/transport.service');
+
+const HOUR = 3_600_000;
+const SENT = Date.UTC(2026, 9, 20, 9);
+
+/**
+ * The transport as the Posted messages see it: each delete ends as the test
+ * says, by message id — one outcome, or a list taken in turn — and `done`
+ * where it says nothing; `batch` is for every deleteMessages call. `asked`
+ * is every id asked about, a batch as one list.
+ */
+const deletions = (outcomes = {}) => {
+  const asked = [];
+  const next = (key) => (Array.isArray(outcomes[key]) ? outcomes[key].shift() : outcomes[key]) ?? 'done';
+  const ended = (method, outcome) =>
+    outcome === 'done' ? { outcome, result: true } : { outcome, error: new TelegramApiError(method, outcome, 'as the test says') };
+  return {
+    asked,
+    deleteMessage: async (chatId, messageId) => {
+      asked.push(messageId);
+      return ended('deleteMessage', next(messageId));
+    },
+    deleteMessages: async (chatId, messageIds) => {
+      asked.push(messageIds);
+      return ended('deleteMessages', next('batch'));
+    },
+  };
+};
+
+/** Posted messages over a plain record, on a clock the test turns. */
+const postedOf = (outcomes, record = {}) => {
+  const clock = { now: SENT };
+  const transport = deletions(outcomes);
+  const posted = new PostedMessages(transport, new LiveMessages(record, () => {}), () => clock.now);
+  return { clock, transport, posted, record };
+};
+
+test('a message is replaced 36 hours after it was sent, and one of unknown age at once', () => {
+  // Telegram stops letting a bot edit or delete its message about two days
+  // after it was sent, however recently it was written to; replaced later
+  // than that, a live slot was left with a frozen message beside its new one.
+  const { clock, posted } = postedOf();
+  clock.now = SENT + 36 * HOUR;
+  assert.equal(posted.due({ messageId: 5, createdAt: SENT }), false, 'not a moment early');
+  clock.now += 1;
+  assert.equal(posted.due({ messageId: 5, createdAt: SENT }), true);
+  // Written before the send time was kept: minutes or weeks old, and betting
+  // on minutes is how the frozen message came about.
+  assert.equal(posted.due({ messageId: 5 }), true);
+});
+
+test('a message Telegram could not be reached to delete is deleted on a later pass, a restart between', async () => {
+  // Given up on after one try that met a dropped connection, a replaced live
+  // message stayed in its topic for good, frozen beside the new one.
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'posted-')), 'state.json');
+  const before = new TelegramStateStore(file, [CHAT]);
+  const transport = deletions({ 5: ['later', 'done'] });
+  const posted = new PostedMessages(transport, before.liveMessages, () => SENT + HOUR);
+  assert.deepEqual(await posted.delete(CHAT, [{ messageId: 5, createdAt: SENT }]), { deleted: [], pending: [5], stuck: [] });
+  before.flush();
+
+  const after = new TelegramStateStore(file, [CHAT]);
+  const restarted = new PostedMessages(transport, after.liveMessages, () => SENT + 2 * HOUR);
+  await restarted.sweep(CHAT);
+  assert.deepEqual(transport.asked, [5, 5], 'asked again after the restart');
+  await restarted.sweep(CHAT);
+  assert.deepEqual(transport.asked, [5, 5], 'and, gone, not asked about again');
+  await new Promise(setImmediate);
+});
+
+test('a message still not deleted 48 hours after it was sent is written off, not asked about', async () => {
+  const { clock, transport, posted } = postedOf({ batch: 'later', 5: 'later' });
+  clock.now = SENT + HOUR;
+  assert.deepEqual((await posted.delete(CHAT, [{ messageId: 5, createdAt: SENT }, { messageId: 6 }])).pending, [5, 6]);
+
+  clock.now = SENT + 48 * HOUR;
+  transport.asked.length = 0;
+  await posted.sweep(CHAT);
+  assert.deepEqual(transport.asked, [5], 'in time it is asked; of an age nobody knows, it is not');
+
+  // Telegram no longer lets a bot delete it: only a person can.
+  clock.now += 1;
+  await posted.sweep(CHAT);
+  await posted.sweep(CHAT);
+  assert.deepEqual(transport.asked, [5], 'past its time');
+});
+
+test('a message Telegram refuses to delete is not asked about again, and a chat that removed the bot is the caller\'s', async () => {
+  const { transport, posted } = postedOf({ 5: 'refused', 6: 'chat-gone' });
+  assert.deepEqual(await posted.delete(CHAT, [{ messageId: 5, createdAt: SENT }]), { deleted: [], pending: [], stuck: [5] });
+  await posted.sweep(CHAT);
+  assert.deepEqual(transport.asked, [5], 'only a person can remove it');
+
+  // No answer about the message: the chat is let go by whoever asked, as
+  // Delivery lets it go.
+  await assert.rejects(posted.delete(CHAT, [{ messageId: 6, createdAt: SENT }]), { outcome: 'chat-gone' });
+});
+
+test('many messages go in one call, the rest one at a time when one of them cannot go', async () => {
+  const sent = (...ids) => ids.map((messageId) => ({ messageId, createdAt: SENT }));
+  assert.deepEqual(await postedOf().posted.delete(CHAT, sent(1, 2, 3)), { deleted: [1, 2, 3], pending: [], stuck: [] });
+
+  // One message the bot may not delete fails the whole call.
+  const one = postedOf({ batch: 'refused', 2: 'refused', 3: 'later' });
+  assert.deepEqual(await one.posted.delete(CHAT, sent(1, 2, 3)), { deleted: [1], pending: [3], stuck: [2] });
+  assert.deepEqual(one.transport.asked, [[1, 2, 3], 1, 2, 3]);
+
+  // Unanswered as a whole, each would be too: all of them wait for a later pass.
+  const none = postedOf({ batch: ['later', 'done'] });
+  assert.deepEqual(await none.posted.delete(CHAT, sent(1, 2, 3)), { deleted: [], pending: [1, 2, 3], stuck: [] });
+  await none.posted.sweep(CHAT);
+  assert.deepEqual(none.transport.asked, [[1, 2, 3], [1, 2, 3]]);
+});
+
+/* ------------------------------------------------------------------ *
  * Update handling
  * ------------------------------------------------------------------ */
 
@@ -798,28 +918,30 @@ test('a damaged Telegram state is restored from the last complete copy', async (
 /* The parts of the state store, on a plain object: no file, no store. */
 
 test('the answer log keeps one topic apart from the next, and forgets what Telegram would refuse', () => {
-  const { AnswerLog, DELETABLE_MS, ANSWERS_KEPT } = require('../dist/telegram/answer-log');
+  const { AnswerLog, ANSWERS_KEPT } = require('../dist/telegram/answer-log');
+  const { DELETABLE_MS } = require('../dist/telegram/posted-messages');
   const record = {};
   let saves = 0;
   const log = new AnswerLog(record, () => { saves += 1; });
+  const ids = (said) => said.map(({ messageId }) => messageId);
 
   log.remember('c', 1);         // General
   log.remember('c', 2, 7);      // topic 7
   log.remember('c', 3, 7);
-  assert.deepEqual(log.inTopic('c', 7), [3, 2], 'newest first, topic 7 only');
-  assert.deepEqual(log.inTopic('c'), [1], 'General is its own scope, not "everything"');
+  assert.deepEqual(ids(log.inTopic('c', 7)), [3, 2], 'newest first, topic 7 only');
+  assert.deepEqual(ids(log.inTopic('c')), [1], 'General is its own scope, not "everything"');
   assert.equal(saves, 3);
 
   // Older than Telegram lets a bot delete: not offered, and dropped on the next write.
   record.c.unshift({ messageId: 0, at: Date.now() - DELETABLE_MS - 1 });
-  assert.deepEqual(log.inTopic('c'), [1]);
+  assert.deepEqual(ids(log.inTopic('c')), [1]);
 
   log.forget('c', [1, 2, 3]);
   assert.equal(record.c, undefined, 'an emptied chat leaves nothing behind');
 
   for (let id = 0; id < ANSWERS_KEPT + 20; id += 1) log.remember('d', id);
   assert.equal(record.d.length, ANSWERS_KEPT);
-  assert.equal(log.inTopic('d')[0], ANSWERS_KEPT + 19, 'the ceiling drops the oldest');
+  assert.equal(ids(log.inTopic('d'))[0], ANSWERS_KEPT + 19, 'the ceiling drops the oldest');
 });
 
 test('a cooldown is armed only when asked, and clears itself when it runs out', () => {

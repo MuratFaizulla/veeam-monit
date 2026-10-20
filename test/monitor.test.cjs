@@ -1412,25 +1412,33 @@ test('/clear with nothing to remove says so instead of claiming work', async () 
   assert.match(w.api.sent().at(-1).text, /Нечего убирать/);
 });
 
-test('one undeletable message does not cost the whole batch', async () => {
+test('/clear says what went, what will not, and what it deletes once Telegram answers', async () => {
+  const refused = { ok: false, error_code: 400, description: "Bad Request: message can't be deleted" };
   const w = monitorWorld({}, [], {}, {
-    // Telegram fails the call outright when any id in it cannot be deleted.
-    deleteMessages: () => { throw new Error('Bad Request: message can\'t be deleted'); },
-    deleteMessage: (payload) => {
-      if (payload.message_id === 1002) throw new Error('Bad Request: message to delete not found');
-      return { ok: true, result: true };
-    },
+    // One message the bot may not delete fails the whole call, and the rest
+    // go one at a time.
+    deleteMessages: () => refused,
+    deleteMessage: (payload) => ({
+      1001: { ok: false, error_code: 400, description: 'Bad Request: message to delete not found' },
+      1002: refused,
+      1003: '<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>',
+    })[payload.message_id],
   });
   await said(w, '/status');
   await said(w, '/help');
   await said(w, '/topics');
+  await said(w, '/digest');
   w.api.reset();
 
   await said(w, '/clear');
 
-  // Three answers, one of them already gone by hand: the other two still go.
-  assert.match(w.api.sent().at(-1).text, /Убрано 2 сообщения/);
-  assert.match(w.api.sent().at(-1).text, /1 не поддал/);
+  // Four answers: one deleted, one somebody deleted by hand, one the bot may
+  // not delete, and one Telegram did not answer for — which used to be counted
+  // with the third, and forgotten.
+  const answer = w.api.sent().at(-1).text;
+  assert.match(answer, /Убрано 2 сообщения/);
+  assert.match(answer, /\n1 не поддались — у меня нет права удалять чужие сообщения, или им больше двух суток\./);
+  assert.match(answer, /\n1 удалю чуть позже — Telegram сейчас не отвечает\./);
 });
 
 test('answers older than Telegram allows are never offered for deletion', () => {
@@ -1976,51 +1984,6 @@ test('an alert names a Full and a retry the way Veeam\'s console names the sessi
   await alerts.check([jobOf({ id: '1', name: 'OPS_Files', type: 'Backup', status: 'Inactive', lastResult: 'Failed' })], { status: 'ready', schedulesByJob: new Map([['1', RETRY_FOUR]]) });
   // Two machines of three took a Full: the run was one.
   assert.equal(sent[0].title, 'OPS_Files (Full) — failed');
-});
-
-/* ------------------------------------------------------------------ *
- * Live slots outliving Telegram's edit window
- * ------------------------------------------------------------------ */
-
-test('a live message is retired before Telegram stops answering for it', async () => {
-  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
-  await w.monitor.check();
-  const first = w.store.liveMessages.of(CHAT, 'health');
-  assert.ok(first.createdAt, 'дата отправки запомнена');
-
-  // Two days on. Telegram would refuse both the edit and the deletion, and the
-  // slot would be left with a frozen message and a second one beside it.
-  w.store.liveMessages.remember(CHAT, 'health', {
-    ...first,
-    createdAt: Date.now() - 40 * 3_600_000,
-  });
-  w.api.reset();
-  await w.monitor.check();
-
-  assert.deepEqual(
-    w.api.of('deleteMessage').map((c) => c.message_id),
-    [first.messageId],
-    'старое убрано, пока это ещё разрешено',
-  );
-  const now = w.store.liveMessages.of(CHAT, 'health');
-  assert.notEqual(now.messageId, first.messageId, 'слот ведёт уже новое сообщение');
-  assert.ok(now.createdAt > Date.now() - 60_000, 'и отсчёт пошёл заново');
-});
-
-test('a message of unknown age is retired rather than edited on faith', async () => {
-  const w = monitorWorld({ TELEGRAM_LIVE: 'true' }, [job('1', 'SQL Daily', 'Success')]);
-  await w.monitor.check();
-  const first = w.store.liveMessages.of(CHAT, 'health');
-
-  // A ref persisted before createdAt existed: it may be minutes or weeks old,
-  // and betting on minutes is how the stuck message appeared.
-  const { createdAt, ...ageless } = first;
-  w.store.liveMessages.remember(CHAT, 'health', ageless);
-  w.api.reset();
-  await w.monitor.check();
-
-  assert.equal(w.api.of('deleteMessage').length, 1);
-  assert.notEqual(w.store.liveMessages.of(CHAT, 'health').messageId, first.messageId);
 });
 
 test('a job alert says when the job ran and runs next as people write it, in the operator\'s zone', async () => {

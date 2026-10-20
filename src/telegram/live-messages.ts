@@ -1,7 +1,16 @@
+import type { PostedRef } from './posted-messages';
+
 /**
- * The message each live slot owns, per chat. Surviving a restart is the whole
- * point: without the id, every start would post a fresh "current state"
- * message next to the previous one, which is exactly the pile this replaces.
+ * The messages the bot answers for, per chat: the one each page of a live
+ * slot owns, and those waiting to be deleted (`PostedMessages`). Surviving a
+ * restart is the whole point: without the id, every start would post a fresh
+ * "current state" message next to the previous one, which is exactly the pile
+ * this replaces; and a message that could not be deleted would stay for good.
+ *
+ * How they are keyed in the record is this module's alone: a slot's first
+ * page under the slot's name, the next ones as `slot#1`, `slot#2`, and a
+ * message waiting to be deleted as `~id`. The state file keeps them so, which
+ * older versions read too.
  *
  * Holds a record owned by the state store and calls `save` after each change;
  * it knows nothing about files. A test hands it a plain object.
@@ -45,41 +54,49 @@ export interface LiveMessageRef {
  */
 const LEFTOVER = '~';
 
+/**
+ * The key of one page of a slot. Page 0 keeps the bare slot name, so that a
+ * slot which never grew past one message keeps the id it already has.
+ */
+const pageKey = (slot: string, page: number): string => (page === 0 ? slot : `${slot}#${page}`);
+
 export class LiveMessages {
   constructor(
-    private readonly byChat: Record<string, Record<string, LiveMessageRef>>,
+    /** A slot's page holds a whole ref, a leftover only what deleting it needs. */
+    private readonly byChat: Record<string, Record<string, LiveMessageRef | PostedRef>>,
     private readonly save: () => void,
   ) {}
 
-  of(chatId: string, slot: string): LiveMessageRef | undefined {
-    return this.byChat[chatId]?.[slot];
+  /** The message this page of the slot owns in this chat. */
+  of(chatId: string, slot: string, page = 0): LiveMessageRef | undefined {
+    // A page's key is only ever written by `remember`, with a whole ref.
+    return this.byChat[chatId]?.[pageKey(slot, page)] as LiveMessageRef | undefined;
   }
 
-  remember(chatId: string, slot: string, ref: LiveMessageRef): void {
-    (this.byChat[chatId] ??= {})[slot] = ref;
+  remember(chatId: string, slot: string, ref: LiveMessageRef, page = 0): void {
+    (this.byChat[chatId] ??= {})[pageKey(slot, page)] = ref;
     this.save();
   }
 
-  /** Called when Telegram no longer holds the message, so the next pass resends. */
-  forget(chatId: string, slot: string): void {
-    if (this.byChat[chatId]?.[slot] === undefined) return;
-    delete this.byChat[chatId][slot];
-    this.save();
+  /** Called when the page no longer owns its message, so the next pass posts one. */
+  forget(chatId: string, slot: string, page = 0): void {
+    this.drop(chatId, pageKey(slot, page));
   }
 
   /**
-   * A message a slot gave up that Telegram would not delete just then — a
+   * A message the bot gave up that Telegram would not delete just then — a
    * dropped connection, a 429. Remembered, across restarts, for a later
-   * cycle to delete; forgotten at once, it stayed in the topic for good,
-   * frozen at its last content beside the slot's new message.
+   * pass to delete; forgotten at once, a slot's stayed in the topic for
+   * good, frozen at its last content beside the slot's new message.
    */
-  leave(chatId: string, ref: LiveMessageRef): void {
-    (this.byChat[chatId] ??= {})[`${LEFTOVER}${ref.messageId}`] = ref;
+  leave(chatId: string, message: PostedRef): void {
+    const { messageId, createdAt } = message;
+    (this.byChat[chatId] ??= {})[`${LEFTOVER}${messageId}`] = { messageId, createdAt };
     this.save();
   }
 
   /** The messages of this chat still waiting to be deleted. */
-  leftovers(chatId: string): LiveMessageRef[] {
+  leftovers(chatId: string): PostedRef[] {
     return Object.entries(this.byChat[chatId] ?? {})
       .filter(([key]) => key.startsWith(LEFTOVER))
       .map(([, ref]) => ref);
@@ -87,13 +104,19 @@ export class LiveMessages {
 
   /** The leftover is deleted, or never will be. */
   cleared(chatId: string, messageId: number): void {
-    this.forget(chatId, `${LEFTOVER}${messageId}`);
+    this.drop(chatId, `${LEFTOVER}${messageId}`);
   }
 
   /** A chat that removed the bot takes its slots with it. */
   dropChat(chatId: string): void {
     if (this.byChat[chatId] === undefined) return;
     delete this.byChat[chatId];
+    this.save();
+  }
+
+  private drop(chatId: string, key: string): void {
+    if (this.byChat[chatId]?.[key] === undefined) return;
+    delete this.byChat[chatId][key];
     this.save();
   }
 }

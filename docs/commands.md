@@ -64,6 +64,7 @@ The menu lives in the «Меню Veeam Monitor» message in General. The bot che
 - Deletes everything the bot saw in General: commands, key presses, people's messages, its own answers, the menu and events. Last, it posts a fresh menu with a summary.
 - Only messages younger than 48 hours can be deleted, and only those the bot saw itself. Delete older ones by hand.
 - Other people's messages are deleted only if the bot has the administrator right to delete messages. Otherwise the summary says how many messages could not be deleted.
+- When Telegram does not answer at that moment (a dropped connection, a 429), the messages it could not delete are deleted a little later by themselves, and the summary says how many are left for then («2 удалю чуть позже», I will delete 2 a little later).
 - `/clear` leaves the topics with alerts and live messages alone: they are a record of events.
 
 ## Who can talk to the bot

@@ -7,6 +7,7 @@ require('reflect-metadata');
 const { configuration, readConfig } = require('../dist/config/configuration');
 const { TelegramStateStore } = require('../dist/telegram/state.store');
 const { TelegramTransportService } = require('../dist/telegram/transport.service');
+const { PostedMessages } = require('../dist/telegram/posted-messages');
 const { TelegramTopicsService } = require('../dist/telegram/topics.service');
 const { TelegramRoutingService } = require('../dist/telegram/routing.service');
 const { TelegramService } = require('../dist/telegram/telegram.service');
@@ -123,18 +124,19 @@ function world(env = {}, handlers = {}, stateFile) {
   const store = new TelegramStateStore(file, telegram.chatIds, app.veeam.servers[0].key);
   const api = fakeBotApi(handlers);
   const transport = new TelegramTransportService(config, api.fn);
+  const posted = new PostedMessages(transport, store.liveMessages);
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
   // The second adapter of the Monitor seam (src/monitor/monitor.ts), for tests
   // with no Veeam: it says it ran and reports nothing. monitorWorld swaps in
   // the real one below.
-  const { commands, updates, general } = ear({ config, transport, topics, store }, idleMonitor());
-  const live = new TelegramLiveService(config, transport, topics, store);
+  const { commands, updates, general } = ear({ config, transport, topics, store, posted }, idleMonitor());
+  const live = new TelegramLiveService(config, transport, topics, store, posted);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
   return {
-    file, app, config, store, api, transport, topics, routing, service, commands, updates, general, live, telegram,
+    file, app, config, store, api, transport, posted, topics, routing, service, commands, updates, general, live, telegram,
   };
 }
 
@@ -145,7 +147,7 @@ function world(env = {}, handlers = {}, stateFile) {
  * for a test of interpretation with no intake at all.
  */
 function ear(w, monitor) {
-  const general = new TelegramGeneral(w.transport, w.store);
+  const general = new TelegramGeneral(w.transport, w.store, w.posted);
   const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor, general);
   const access = new TelegramChatAccess(w.config, w.transport);
   const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands, access, general);

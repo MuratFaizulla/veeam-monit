@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { PostedMessages } from './posted-messages';
 import { TelegramRoutingService } from './routing.service';
 import { TelegramStateStore } from './state.store';
 import { TelegramService } from './telegram.service';
@@ -37,6 +38,13 @@ import { TelegramTransportService } from './transport.service';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => new TelegramTransportService(config),
     },
+    {
+      // By hand too: its clock is a plain function, which tests hand in.
+      provide: PostedMessages,
+      inject: [TelegramTransportService, TelegramStateStore],
+      useFactory: (transport: TelegramTransportService, store: TelegramStateStore) =>
+        new PostedMessages(transport, store.liveMessages),
+    },
     TelegramTopicsService,
     TelegramRoutingService,
     TelegramService,
@@ -44,6 +52,7 @@ import { TelegramTransportService } from './transport.service';
   exports: [
     TelegramStateStore,
     TelegramTransportService,
+    PostedMessages,
     TelegramTopicsService,
     TelegramRoutingService,
     TelegramService,
