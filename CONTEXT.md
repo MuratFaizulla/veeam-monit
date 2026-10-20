@@ -320,7 +320,31 @@ A **DeliveryReport** names the outcome rather than reducing it to "sent or not":
 reasons an alert never arrived, and an operator asking "why did nothing come"
 needs to be able to tell them apart without reading the log.
 
+A chat that removed the bot is let go the same way by whoever hears it first —
+Delivery, the live module or **General** — rather than written to until an
+alert happens to go there.
+
 Owned by `src/telegram/telegram.service.ts`.
+
+## Call outcome
+
+How one call to Telegram ended, said once, by the transport: **done**;
+**gone** — the message or topic it addressed no longer exists; **refused** —
+Telegram's own answer that asking again changes nothing (too old, no right);
+**later** — no answer that counts: a dropped connection, a 5xx, a 429, or a
+page that is not Telegram's answer at all; and **chat gone** — the bot was
+removed from the chat. Every caller acts on the outcome; none reads Telegram's
+codes or wording.
+
+They used to read them each for itself, and disagreed. A proxy's error page
+carries no code, was read as 0, and the live module took 0 for a refusal: a
+message it should have deleted on a later pass was written off, and ▶️ showed
+two again. Topic creation took any failure for missing rights, and one 429
+sent every new job's alerts to General until a restart; it is shut now only
+by a refusal. A 429 holds every call to that chat, whatever its method, for
+as long as Telegram asked — only the queued messages used to wait.
+
+Owned by `src/telegram/transport.service.ts`.
 
 ## Update
 

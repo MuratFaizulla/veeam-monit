@@ -340,3 +340,24 @@ test('General takes back what was heard and said in it, and counts what would no
   assert.deepEqual(w.api.of('deleteMessage').map((payload) => payload.message_id).sort((a, b) => a - b), [11, 12, answer]);
   assert.equal(await w.general.clear({ chatId: CHAT }), 'nothing', 'what was tried is not tried again');
 });
+
+test('a chat that removed the bot is let go by General, as by the alerts', async () => {
+  // The menu is looked at every few minutes and posted when it is missing; in
+  // a chat the bot was removed from, both are answered 403, for ever.
+  const kicked = { ok: false, error_code: 403, description: 'Forbidden: bot was kicked from the supergroup chat' };
+  for (const [way, menuHeld] of [['posting the menu', false], ['looking at the menu', true]]) {
+    let removed = false;
+    const answer = () => (removed ? kicked : undefined);
+    const w = world({}, { sendMessage: answer, editMessageReplyMarkup: answer });
+    if (menuHeld) await w.general.keepMenu();
+
+    removed = true;
+    w.api.reset();
+    await w.general.keepMenu();
+    assert.deepEqual(w.store.chats(), [], `${way}: the chat is let go`);
+
+    w.api.reset();
+    await w.general.keepMenu();
+    assert.deepEqual(w.api.calls, [], `${way}: and nothing more is asked of it`);
+  }
+});

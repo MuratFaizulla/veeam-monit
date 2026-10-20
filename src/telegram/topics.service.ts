@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { SEVERITY_TOPIC_COLOR, topicName } from './format';
 import { TelegramStateStore } from './state.store';
-import { TelegramApiError, TelegramTransportService } from './transport.service';
+import { outcomeOf, TelegramTransportService } from './transport.service';
 import { NotificationSeverity, TelegramChat, TelegramDestination } from './types';
 
 interface ForumTopic {
@@ -25,7 +25,7 @@ interface ForumTopic {
 export class TelegramTopicsService {
   private readonly logger = new Logger(TelegramTopicsService.name);
   private readonly config: AppConfig['telegram'];
-  /** Chats whose topic creation failed, so one missing right is not retried per event. */
+  /** Chats where Telegram refused to create a topic, so one missing right is not asked again per event. */
   private readonly creationBlocked = new Set<string>();
   /** In-flight createForumTopic calls, keyed by chat+name, to avoid duplicates. */
   private readonly creating = new Map<string, Promise<number | undefined>>();
@@ -64,21 +64,30 @@ export class TelegramTopicsService {
     if (inFlight) return inFlight;
 
     const pending = this.transport
-      .call<ForumTopic>('createForumTopic', {
+      .ask<ForumTopic>('createForumTopic', {
         chat_id: chatId,
         name,
         icon_color: this.iconColor(name),
       })
-      .then((topic) => {
-        this.remember(chatId, name, topic.message_thread_id);
-        this.logger.log(`Created Telegram topic "${name}" (${topic.message_thread_id}) in ${chatId}`);
-        return topic.message_thread_id;
-      })
-      .catch((error: Error) => {
-        this.creationBlocked.add(chatId);
-        this.logger.error(
-          `Cannot create Telegram topics in ${chatId} (${error.message}). Grant the bot "Manage topics" or pre-create them; alerts go to General meanwhile.`,
-        );
+      .then((created) => {
+        if (created.outcome === 'done') {
+          const threadId = created.result.message_thread_id;
+          this.remember(chatId, name, threadId);
+          this.logger.log(`Created Telegram topic "${name}" (${threadId}) in ${chatId}`);
+          return threadId;
+        }
+        // Only a refusal shuts creation in the chat: rights missing, or not a
+        // forum, which stays so until somebody changes it. Any failure used
+        // to, and one 429 sent every new job's alerts to General until a
+        // restart. A chat the bot was removed from is the sender's to let go.
+        if (created.outcome === 'refused') {
+          this.creationBlocked.add(chatId);
+          this.logger.error(
+            `Cannot create Telegram topics in ${chatId} (${created.error.message}). Grant the bot "Manage topics" or pre-create them; alerts go to General meanwhile.`,
+          );
+        } else {
+          this.logger.warn(`Telegram topic "${name}" was not created in ${chatId} (${created.error.message}); this message goes to General, the next one tries again`);
+        }
         return undefined;
       })
       .finally(() => this.creating.delete(key));
@@ -128,7 +137,7 @@ export class TelegramTopicsService {
     try {
       return { messageId: await this.transport.sendMessage(destination, text), threadId: destination.threadId };
     } catch (error) {
-      if (!(error instanceof TelegramApiError) || !error.isMissingThread) throw error;
+      if (outcomeOf(error) !== 'gone') throw error;
       const name = destination.topic ? topicName(destination.topic) : undefined;
       if (name && this.store.threadId(destination.chatId, name) === destination.threadId) {
         this.forget(destination.chatId, name);

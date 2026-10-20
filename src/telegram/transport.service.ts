@@ -12,59 +12,57 @@ export interface TelegramApiResponse<T> {
   parameters?: { retry_after?: number; migrate_to_chat_id?: number };
 }
 
-/** The seam the tests replace: one Bot API call, no retries, no queueing. */
+/**
+ * The seam the tests replace: one Bot API call, no retries, no queueing. It
+ * resolves with what came back — Telegram's JSON, or whatever a proxy put in
+ * its place — and rejects when nothing did.
+ */
 export type TelegramTransportFn = <T>(
   method: string,
   payload: Record<string, unknown>,
-) => Promise<TelegramApiResponse<T>>;
+) => Promise<TelegramApiResponse<T> | unknown>;
 
+/**
+ * How one Bot API call ended. Every caller acts on this, and none reads
+ * Telegram's codes or wording:
+ *
+ * - `done`: Telegram did it. An edit that would leave the message as it is
+ *   counts — the message already says what was wanted.
+ * - `gone`: what the call addressed, a message or a topic, no longer exists.
+ * - `refused`: Telegram's own answer that it will not, and asking again
+ *   changes nothing — too old, no right, a request it cannot take.
+ * - `later`: no answer that counts — a dropped connection, a 5xx, a 429, or a
+ *   page that is not Telegram's answer at all. Asking again may work.
+ * - `chat-gone`: the bot was removed from the chat, or the chat is not there.
+ */
+export type TelegramOutcome = 'done' | 'gone' | 'refused' | 'later' | 'chat-gone';
+
+/** What a call came to: its result, or how it did not get one. */
+export type TelegramCall<T> =
+  | { outcome: 'done'; result: T }
+  | { outcome: Exclude<TelegramOutcome, 'done'>; error: TelegramApiError };
+
+/** A call that did not end in `done`: how it ended, and what the log says of it. */
 export class TelegramApiError extends Error {
   constructor(
     readonly method: string,
-    readonly code: number,
-    readonly description: string,
+    readonly outcome: Exclude<TelegramOutcome, 'done'>,
+    reason: string,
+    /** Seconds Telegram asked this chat to be left alone for, after a 429. */
     readonly retryAfter?: number,
   ) {
-    super(`${method} -> ${code} ${description}`);
+    super(`${method} -> ${reason}`);
     this.name = 'TelegramApiError';
   }
-
-  /** The topic was deleted or never existed; the cached thread id is stale. */
-  get isMissingThread(): boolean {
-    return /thread not found|TOPIC_DELETED|topic_deleted/i.test(this.description);
-  }
-
-  /** The bot was removed from the chat or blocked; stop addressing it. */
-  get isChatGone(): boolean {
-    return this.code === 403 || /chat not found/i.test(this.description);
-  }
-
-  get isRateLimited(): boolean {
-    return this.code === 429;
-  }
-
-  /**
-   * An edit that would leave the message exactly as it is. Telegram refuses
-   * it, but the message already says what was wanted — for a caller that
-   * asked for a state rather than a change, this is success.
-   */
-  get isUnchanged(): boolean {
-    return /message is not modified/i.test(this.description);
-  }
-
-  /** The message this call addressed no longer exists — deleted by somebody. */
-  get isMessageGone(): boolean {
-    return /message to (edit|delete) not found/i.test(this.description);
-  }
-
-  /**
-   * Telegram will not let this message be edited any more: it is too old.
-   * Unlike a 429 or a 5xx, asking again later changes nothing.
-   */
-  get isUneditable(): boolean {
-    return /message can't be edited/i.test(this.description);
-  }
 }
+
+/**
+ * How a call that threw ended: as the transport said, or `later` for what
+ * never reached Telegram — a message dropped from a full queue, or one the
+ * stopping service gave up on.
+ */
+export const outcomeOf = (error: unknown): Exclude<TelegramOutcome, 'done'> =>
+  error instanceof TelegramApiError ? error.outcome : 'later';
 
 /** A file to send, by name and contents. */
 export interface TelegramFile {
@@ -90,7 +88,7 @@ interface QueuedMessage {
 interface ChatQueue {
   items: QueuedMessage[];
   draining: boolean;
-  /** Epoch ms before which this chat must not be written to again. */
+  /** Epoch ms before which the next message is not sent: the spacing, or the backoff after a failure. */
   nextAt: number;
 }
 
@@ -102,8 +100,12 @@ const MAX_ATTEMPTS = 4;
  * Per-job routing multiplies the message count, and Telegram answers a burst
  * with 429 plus a `retry_after` hint rather than queueing for us. So messages
  * are serialised per chat, spaced by a configurable minimum interval, and a
- * 429 parks that chat's queue for exactly as long as Telegram asked. One slow
- * chat never blocks another because each chat drains independently.
+ * 429 — to a message or to any other call — holds every call to that chat for
+ * exactly as long as Telegram asked. One slow chat never blocks another
+ * because each chat drains independently.
+ *
+ * It is also the one place that says how a call ended (`TelegramOutcome`):
+ * callers act on that, and none of them reads Telegram's codes.
  */
 @Injectable()
 export class TelegramTransportService implements OnModuleDestroy {
@@ -112,6 +114,8 @@ export class TelegramTransportService implements OnModuleDestroy {
   private readonly client: AxiosInstance | null;
   private readonly transport: TelegramTransportFn | null;
   private readonly queues = new Map<string, ChatQueue>();
+  /** Epoch ms before which a chat is not called at all, as a 429 asked. */
+  private readonly held = new Map<string, number>();
   private stopping = false;
   private dropped = 0;
 
@@ -155,12 +159,63 @@ export class TelegramTransportService implements OnModuleDestroy {
     return { pending, dropped: this.dropped };
   }
 
-  /** Direct Bot API call, used for everything that is not a chat message. */
+  /**
+   * Direct Bot API call, for a caller that wants the result: throws a
+   * `TelegramApiError`, which says how the call ended, when there is none.
+   */
   async call<T>(method: string, payload: Record<string, unknown> = {}): Promise<T> {
-    if (this.transport) return this.unwrap(method, await this.transport<T>(method, payload));
-    if (!this.client) throw new Error('Telegram is not configured');
-    const response = await this.client.post<TelegramApiResponse<T>>(`/${method}`, carriesFile(payload) ? formOf(payload) : payload);
-    return this.unwrap(method, response.data);
+    const called = await this.ask<T>(method, payload);
+    if (called.outcome !== 'done') throw called.error;
+    return called.result;
+  }
+
+  /**
+   * Direct Bot API call that says how it ended rather than throwing. Never
+   * throws.
+   *
+   * A chat Telegram asked to be left alone (a 429, on any method) is not
+   * called again until its `retry_after` has passed: the call waits. Only the
+   * queued messages used to, and the live topics' edits and deletes went on
+   * at once into the same chat, each earning another 429.
+   */
+  async ask<T>(method: string, payload: Record<string, unknown> = {}): Promise<TelegramCall<T>> {
+    const chatId = payload.chat_id === undefined ? undefined : String(payload.chat_id);
+    const wait = chatId === undefined ? 0 : (this.held.get(chatId) ?? 0) - Date.now();
+    if (wait > 0) await this.sleep(wait);
+    const called = await this.exchange<T>(method, payload);
+    if (chatId !== undefined && called.outcome === 'later' && called.error.retryAfter !== undefined) {
+      this.hold(chatId, called.error.retryAfter * 1000);
+    }
+    return called;
+  }
+
+  private hold(chatId: string, pause: number): void {
+    const until = Date.now() + pause;
+    if (until <= (this.held.get(chatId) ?? 0)) return;
+    this.held.set(chatId, until);
+    this.logger.warn(`Telegram rate limit on chat ${chatId}, holding its calls for ${pause}ms`);
+  }
+
+  /** One call, read into how it ended; no waiting, no retries. */
+  private async exchange<T>(method: string, payload: Record<string, unknown>): Promise<TelegramCall<T>> {
+    let reply: unknown;
+    let status: number | undefined;
+    try {
+      if (this.transport) {
+        reply = await this.transport<T>(method, payload);
+      } else if (this.client) {
+        const response = await this.client.post(`/${method}`, carriesFile(payload) ? formOf(payload) : payload);
+        reply = response.data;
+        status = response.status;
+      } else {
+        return { outcome: 'refused', error: new TelegramApiError(method, 'refused', 'Telegram is not configured') };
+      }
+    } catch (error) {
+      // Nothing came back: a dropped connection, a timeout, a name that did
+      // not resolve. Its message only: the axios error's config holds the token.
+      return { outcome: 'later', error: new TelegramApiError(method, 'later', (error as Error).message) };
+    }
+    return endOf<T>(method, reply, status);
   }
 
   /** Queues a message and resolves with its message_id once Telegram took it. */
@@ -212,18 +267,15 @@ export class TelegramTransportService implements OnModuleDestroy {
   }
 
   /**
-   * Deletes one message, and says whether it is gone — gone already counts:
-   * deleted by somebody, or with its topic, is what was wanted. False is an
-   * answer, not a failure: older than Telegram lets a bot delete, not the
-   * bot's to delete, or the call itself failed. Never throws.
+   * Deletes one message, and says how that ended: `done` once it is gone —
+   * gone already counts: deleted by somebody, or with its topic, is what was
+   * wanted. `refused` is older than Telegram lets a bot delete, or not the
+   * bot's to delete; `later`, a call that got no answer that counts;
+   * `chat-gone`, a chat the bot is no longer in. Never throws.
    */
-  async deleteMessage(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
-      return true;
-    } catch (error) {
-      return error instanceof TelegramApiError && error.isMessageGone;
-    }
+  async deleteMessage(chatId: string, messageId: number): Promise<TelegramCall<true>> {
+    const deleted = await this.ask<true>('deleteMessage', { chat_id: chatId, message_id: messageId });
+    return deleted.outcome === 'gone' ? { outcome: 'done', result: true } : deleted;
   }
 
   private queueFor(chatId: string): ChatQueue {
@@ -244,29 +296,27 @@ export class TelegramTransportService implements OnModuleDestroy {
         const wait = queue.nextAt - Date.now();
         if (wait > 0) await this.sleep(wait);
         const item = queue.items[0];
-        try {
-          const common = {
-            chat_id: item.destination.chatId,
-            message_thread_id: item.destination.threadId,
-            parse_mode: 'HTML',
-            reply_markup: item.markup,
-            // Sent anyway if the message it answers is gone by then.
-            reply_parameters:
-              item.replyTo === undefined
-                ? undefined
-                : { message_id: item.replyTo, allow_sending_without_reply: true },
-          };
-          const message = item.document
-            ? await this.call<{ message_id: number }>('sendDocument', { ...common, caption: item.text, document: item.document })
-            : await this.call<{ message_id: number }>('sendMessage', { ...common, text: item.text, disable_web_page_preview: true });
+        const common = {
+          chat_id: item.destination.chatId,
+          message_thread_id: item.destination.threadId,
+          parse_mode: 'HTML',
+          reply_markup: item.markup,
+          // Sent anyway if the message it answers is gone by then.
+          reply_parameters:
+            item.replyTo === undefined
+              ? undefined
+              : { message_id: item.replyTo, allow_sending_without_reply: true },
+        };
+        const sent = item.document
+          ? await this.ask<{ message_id: number }>('sendDocument', { ...common, caption: item.text, document: item.document })
+          : await this.ask<{ message_id: number }>('sendMessage', { ...common, text: item.text, disable_web_page_preview: true });
+        if (sent.outcome === 'done') {
           queue.items.shift();
           queue.nextAt = Date.now() + this.config.sendIntervalMs;
-          item.resolve(message.message_id);
-        } catch (error) {
-          if (this.giveUp(queue, item, error)) {
-            queue.items.shift();
-            item.reject(error as Error);
-          }
+          item.resolve(sent.result.message_id);
+        } else if (this.giveUp(queue, item, sent.error)) {
+          queue.items.shift();
+          item.reject(sent.error);
         }
       }
     } finally {
@@ -275,48 +325,26 @@ export class TelegramTransportService implements OnModuleDestroy {
   }
 
   /** Returns true when the message must be given up on and rejected. */
-  private giveUp(queue: ChatQueue, item: QueuedMessage, error: unknown): boolean {
+  private giveUp(queue: ChatQueue, item: QueuedMessage, error: TelegramApiError): boolean {
+    // A missing topic, a dead chat or a refusal cannot be fixed by retrying;
+    // the caller decides whether to re-create the topic.
+    if (error.outcome !== 'later') return true;
+
+    // Telegram states exactly how long to wait, and the chat is held for it;
+    // guessing would only earn another 429. Rate limiting does not count
+    // against the attempt budget.
+    if (error.retryAfter !== undefined) return false;
+
     item.attempts += 1;
-
-    if (error instanceof TelegramApiError) {
-      if (error.isRateLimited) {
-        // Telegram states exactly how long to wait; guessing would only earn
-        // another 429. Rate limiting does not count against the attempt budget.
-        const pause = (error.retryAfter ?? 5) * 1000;
-        item.attempts -= 1;
-        queue.nextAt = Date.now() + pause;
-        this.logger.warn(
-          `Telegram rate limit on chat ${item.destination.chatId}, waiting ${pause}ms`,
-        );
-        return false;
-      }
-      // A missing topic, a dead chat or a malformed request cannot be fixed by
-      // retrying; the caller decides whether to re-create the topic.
-      if (error.isMissingThread || error.isChatGone || error.code === 400) return true;
-    }
-
     if (item.attempts >= MAX_ATTEMPTS) {
       this.logger.error(
-        `Telegram message to ${item.destination.chatId} gave up after ${item.attempts} attempts: ${(error as Error).message}`,
+        `Telegram message to ${item.destination.chatId} gave up after ${item.attempts} attempts: ${error.message}`,
       );
       return true;
     }
 
     queue.nextAt = Date.now() + this.config.sendIntervalMs * 2 ** item.attempts;
     return false;
-  }
-
-  private unwrap<T>(method: string, body: TelegramApiResponse<T> | undefined): T {
-    if (!body || !body.ok) {
-      throw new TelegramApiError(
-        method,
-        body?.error_code ?? 0,
-        // Never log the axios request config: it keeps the bot token in the URL.
-        body?.description ?? 'no response body',
-        body?.parameters?.retry_after,
-      );
-    }
-    return body.result as T;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -326,6 +354,40 @@ export class TelegramTransportService implements OnModuleDestroy {
     });
   }
 }
+
+/**
+ * How a call ended, from what came back. The one reading of Telegram's codes
+ * and wording in the service.
+ *
+ * Only Telegram's own JSON with a 4xx is a refusal. The client takes any HTTP
+ * status, so that a refusal's reason is read from its body; a proxy's error
+ * page then arrives where the JSON should be, with no code at all, and used
+ * to be read as code 0 — which the live module took for a refusal, writing
+ * off a message it should have deleted on a later pass.
+ */
+const endOf = <T>(method: string, reply: unknown, status?: number): TelegramCall<T> => {
+  const failed = (outcome: Exclude<TelegramOutcome, 'done'>, reason: string, retryAfter?: number): TelegramCall<T> =>
+    ({ outcome, error: new TelegramApiError(method, outcome, reason, retryAfter) });
+  if (typeof reply !== 'object' || reply === null || typeof (reply as TelegramApiResponse<T>).ok !== 'boolean') {
+    // The page itself is not worth a log line, and may be a long one.
+    return failed('later', `${status === undefined ? '' : `HTTP ${status}, `}not a Bot API answer`);
+  }
+  const answer = reply as TelegramApiResponse<T>;
+  if (answer.ok) return { outcome: 'done', result: answer.result as T };
+
+  const code = answer.error_code;
+  const description = answer.description ?? '';
+  const reason = `${code ?? 'no code'} ${description}`.trim();
+  // Telegram states how long to wait; the transport holds the chat for it.
+  if (code === 429) return failed('later', reason, answer.parameters?.retry_after ?? 5);
+  if (code === undefined || code < 400 || code >= 500) return failed('later', reason);
+  // Refused, but the message already says what the edit wanted it to: for a
+  // caller that asked for a state rather than a change, this is success.
+  if (/message is not modified/i.test(description)) return { outcome: 'done', result: true as T };
+  if (/message to (edit|delete) not found|thread not found|TOPIC_DELETED/i.test(description)) return failed('gone', reason);
+  if (code === 403 || /chat not found/i.test(description)) return failed('chat-gone', reason);
+  return failed('refused', reason);
+};
 
 const isFile = (value: unknown): value is TelegramFile =>
   typeof value === 'object' && value !== null && Buffer.isBuffer((value as TelegramFile).content);

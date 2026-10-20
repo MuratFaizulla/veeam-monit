@@ -26,6 +26,31 @@ test('a deleted thread does not take a different, living topic of the same name 
   assert.equal(w.store.threadId(CHAT, '📅 Upcoming runs'), 301);
 });
 
+test('a topic Telegram could not create for a moment is created with the next message, one it refused is not asked again', async () => {
+  // Any failure used to shut topic creation in the chat until a restart: one
+  // 429 sent every new job's alerts to General for good.
+  const replies = [
+    ['a moment', { ok: false, error_code: 429, description: 'Too Many Requests: retry after 0', parameters: { retry_after: 0 } }, 2, true],
+    ['for good', { ok: false, error_code: 400, description: 'Bad Request: not enough rights to create a topic' }, 1, false],
+  ];
+  for (const [name, reply, asked, inTopic] of replies) {
+    let failing = true;
+    const w = world({}, {
+      createForumTopic: () => {
+        if (!failing) return undefined;
+        failing = false;
+        return reply;
+      },
+    });
+
+    await w.topics.send(FORUM, 'SQL Daily', 'первое');
+    assert.equal(w.api.sent().at(-1).message_thread_id, undefined, `${name}: meanwhile in General`);
+    await w.topics.send(FORUM, 'SQL Daily', 'второе');
+    assert.equal(w.api.of('createForumTopic').length, asked, `${name}: asked ${asked}`);
+    assert.equal(w.api.sent().at(-1).message_thread_id !== undefined, inTopic, `${name}: the next message in its topic`);
+  }
+});
+
 test('a deleted thread its name pointed at is forgotten and re-created', async () => {
   const w = world({}, {
     sendMessage: (payload) => (payload.message_thread_id === 77 ? THREAD_GONE : undefined),

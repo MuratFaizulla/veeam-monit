@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CAPTION_LENGTH, truncate } from '../telegram/format';
 import { TelegramStateStore } from '../telegram/state.store';
-import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
+import { outcomeOf, TelegramOutcome, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramDestination, TelegramMessage } from '../telegram/types';
 import { Reply } from './commands';
 import { isMenu, isSelective, mainMenu, MENU_SIGNATURE, MENU_TEXT } from './menu';
@@ -69,7 +69,8 @@ export class TelegramGeneral {
       }
       return messageId;
     } catch (error) {
-      this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
+      if (outcomeOf(error) === 'chat-gone' && this.store.isConfigured(destination.chatId)) this.letGo(destination.chatId);
+      else this.logger.error(`Telegram reply failed: ${(error as Error).message}`);
       return undefined;
     }
   }
@@ -90,7 +91,14 @@ export class TelegramGeneral {
     for (const [chatId] of this.store.chats()) {
       const held = this.store.menuOf(chatId);
       const current = held?.signature === MENU_SIGNATURE ? held.messageId : undefined;
-      if (current !== undefined && (await this.present(chatId, current))) continue;
+      if (current !== undefined) {
+        const looked = await this.look(chatId, current);
+        if (looked === 'chat-gone') this.letGo(chatId);
+        // Anything but gone says nothing against the message being there:
+        // the cost of that mistake is one late repost, and the cost of the
+        // other is a second menu.
+        if (looked !== 'gone') continue;
+      }
       const posted = await this.say({ chatId }, { lines: MENU_TEXT, markup: mainMenu() });
       // A menu of an older layout is replaced, not left beside the new one.
       if (posted !== undefined && held?.messageId !== undefined && held.messageId !== current) {
@@ -118,21 +126,23 @@ export class TelegramGeneral {
   }
 
   /**
-   * Whether Telegram still holds this message, asked without changing it.
-   *
-   * An empty markup edit is refused for a message that is there — "not
-   * modified", or "can't be edited" for one that carries the menu — and
-   * answered "not found" for one that is gone. Anything else says nothing
-   * about the message and is read as "still there": the cost of that mistake
-   * is one late repost, and the cost of the other is a second menu.
+   * Looks at a message without changing it, and says how that ended. An
+   * empty markup edit is done ("not modified") or refused ("can't be edited",
+   * for one that carries the menu) for a message that is there, and gone for
+   * one that is not.
    */
-  private async present(chatId: string, messageId: number): Promise<boolean> {
-    try {
-      await this.transport.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId });
-      return true;
-    } catch (error) {
-      return !(error instanceof TelegramApiError && error.isMessageGone);
-    }
+  private async look(chatId: string, messageId: number): Promise<TelegramOutcome> {
+    return (await this.transport.ask('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId })).outcome;
+  }
+
+  /**
+   * A chat Telegram says the bot is no longer in, let go as Delivery lets it
+   * go — forgotten with its topics, menu and what was said there — rather
+   * than looked at and posted to every few minutes for ever.
+   */
+  private letGo(chatId: string): void {
+    this.store.dropChat(chatId);
+    this.logger.warn(`Telegram chat ${chatId} is no longer reachable and was unregistered`);
   }
 
   /** Deletes in batches, falling back to one at a time. Returns how many went. */
@@ -140,15 +150,14 @@ export class TelegramGeneral {
     let removed = 0;
     for (let from = 0; from < ids.length; from += DELETE_BATCH) {
       const batch = ids.slice(from, from + DELETE_BATCH);
-      try {
-        await this.transport.call('deleteMessages', { chat_id: chatId, message_ids: batch });
+      if ((await this.transport.ask('deleteMessages', { chat_id: chatId, message_ids: batch })).outcome === 'done') {
         removed += batch.length;
-      } catch {
-        // One undeletable message — too old, or already gone — fails the whole
-        // batch, so the rest is retried individually rather than abandoned.
-        for (const messageId of batch) {
-          if (await this.transport.deleteMessage(chatId, messageId)) removed += 1;
-        }
+        continue;
+      }
+      // One undeletable message — too old, or already gone — fails the whole
+      // batch, so the rest is retried individually rather than abandoned.
+      for (const messageId of batch) {
+        if ((await this.transport.deleteMessage(chatId, messageId)).outcome === 'done') removed += 1;
       }
     }
     return removed;

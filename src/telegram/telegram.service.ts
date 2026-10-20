@@ -4,7 +4,7 @@ import { AppConfig } from '../config/configuration';
 import { renderEvent } from './format';
 import { TelegramRoutingService } from './routing.service';
 import { TelegramStateStore } from './state.store';
-import { TelegramApiError, TelegramTransportService } from './transport.service';
+import { outcomeOf, TelegramTransportService } from './transport.service';
 import { TelegramTopicsService } from './topics.service';
 import { NotificationEvent, TelegramChat } from './types';
 
@@ -154,7 +154,7 @@ export class TelegramService {
   }
 
   private onDeliveryFailure(chatId: string, error: unknown): void {
-    if (error instanceof TelegramApiError && error.isChatGone) {
+    if (outcomeOf(error) === 'chat-gone') {
       this.store.dropChat(chatId);
       this.logger.warn(`Telegram chat ${chatId} is no longer reachable and was unregistered`);
       return;

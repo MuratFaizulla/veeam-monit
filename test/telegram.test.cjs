@@ -247,6 +247,112 @@ test('messages are cut to Telegram’s 4096-character limit', async () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * The transport: how a call ended
+ * ------------------------------------------------------------------ */
+
+/** A transport on its own, over a fake Bot API answering with `handlers`. */
+const transportOf = (handlers = {}) => {
+  const api = fakeBotApi(handlers);
+  const config = configService(appConfig({ TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_SEND_INTERVAL_MS: '0' }));
+  return { api, transport: new TelegramTransportService(config, api.fn) };
+};
+
+const refusal = (code, description, parameters) => ({ ok: false, error_code: code, description, parameters });
+
+test('the transport says how a call ended, whatever came back', async () => {
+  // Each caller used to read Telegram's codes for itself, and they disagreed.
+  // A proxy's error page carries no code, was read as 0, and the live module
+  // took 0 < 500 for a refusal: the message it should have deleted on a
+  // later pass was written off, and ▶️ showed two again.
+  const replies = [
+    ['taken', 'deleteMessage', () => undefined, 'done'],
+    ['an edit that would change nothing', 'editMessageText', () => refusal(400, 'Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message'), 'done'],
+    ['deleted by somebody', 'deleteMessage', () => refusal(400, 'Bad Request: message to delete not found'), 'gone'],
+    ['deleted before the edit', 'editMessageText', () => refusal(400, 'Bad Request: message to edit not found'), 'gone'],
+    ['a topic deleted', 'sendMessage', () => refusal(400, 'Bad Request: message thread not found'), 'gone'],
+    ['too old to delete', 'deleteMessage', () => refusal(400, "Bad Request: message can't be deleted"), 'refused'],
+    ['too old to edit', 'editMessageText', () => refusal(400, "Bad Request: message can't be edited"), 'refused'],
+    ['no right to make topics', 'createForumTopic', () => refusal(400, 'Bad Request: not enough rights to create a topic'), 'refused'],
+    ['the bot removed', 'deleteMessage', () => refusal(403, 'Forbidden: bot was kicked from the supergroup chat'), 'chat-gone'],
+    ['a chat that is not there', 'editMessageText', () => refusal(400, 'Bad Request: chat not found'), 'chat-gone'],
+    ['rate limited', 'deleteMessage', () => refusal(429, 'Too Many Requests: retry after 0', { retry_after: 0 }), 'later'],
+    ['Telegram overloaded', 'deleteMessage', () => refusal(502, 'Bad Gateway'), 'later'],
+    ["a proxy's error page", 'deleteMessage', () => '<html><head><title>502 Bad Gateway</title></head><body><center>nginx</center></body></html>', 'later'],
+    ['a dropped connection', 'deleteMessage', () => { throw new Error('socket hang up'); }, 'later'],
+  ];
+  for (const [name, method, reply, outcome] of replies) {
+    const { transport } = transportOf({ [method]: reply });
+    const ended = await transport.ask(method, { chat_id: CHAT, message_id: 5 });
+    assert.equal(ended.outcome, outcome, name);
+    if (outcome === 'done') continue;
+    // What the log says of it: the method and Telegram's words, never a page.
+    assert.match(ended.error.message, new RegExp(`^${method} -> `), name);
+    assert.doesNotMatch(ended.error.message, /<html/, name);
+    // A caller that wants the result is told the same, by what it throws.
+    await assert.rejects(transportOf({ [method]: reply }).transport.call(method, { chat_id: CHAT }), { outcome }, name);
+  }
+
+  const created = await transportOf().transport.ask('createForumTopic', { chat_id: CHAT, name: 'A' });
+  assert.deepEqual(created, { outcome: 'done', result: { message_thread_id: 101, name: 'A' } });
+});
+
+test('a 429 on any call holds that chat\'s later calls, queued or not, for as long as Telegram asked', async (t) => {
+  // Only the queued messages used to wait. The live module's edits and
+  // deletes went on at once into a chat Telegram had asked to be left alone,
+  // and each earned another 429.
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.UTC(2026, 9, 20, 12) });
+  const settle = async () => {
+    for (let i = 0; i < 10; i += 1) await new Promise(setImmediate);
+  };
+  let limited = true;
+  const { api, transport } = transportOf({
+    editMessageText: () => {
+      if (!limited) return undefined;
+      limited = false;
+      return refusal(429, 'Too Many Requests: retry after 30', { retry_after: 30 });
+    },
+  });
+
+  assert.equal((await transport.ask('editMessageText', { chat_id: CHAT, message_id: 5, text: 'a' })).outcome, 'later');
+  const deleted = transport.deleteMessage(CHAT, 5);
+  const sent = transport.sendMessage({ chatId: CHAT }, 'b');
+  await transport.deleteMessage('-1009876543210', 6);
+  await settle();
+  assert.deepEqual(
+    api.calls.map((call) => [call.method, call.payload.chat_id]),
+    [['editMessageText', CHAT], ['deleteMessage', '-1009876543210']],
+    'another chat is not held',
+  );
+
+  t.mock.timers.tick(29_999);
+  await settle();
+  assert.equal(api.calls.length, 2, 'not a moment early');
+
+  t.mock.timers.tick(1);
+  assert.equal((await deleted).outcome, 'done');
+  await sent;
+  assert.deepEqual(api.calls.slice(2).map((call) => call.method).sort(), ['deleteMessage', 'sendMessage']);
+});
+
+test('a message Telegram refuses is not sent again, one it never answered is', async () => {
+  // Only a 400 used to end it: any other refusal was sent four times over.
+  let pages = 0;
+  const { api, transport } = transportOf({
+    sendMessage: (payload) => {
+      if (payload.text === 'refused') return refusal(401, 'Unauthorized');
+      if (payload.text === 'unanswered' && pages++ === 0) return '<html><body>502 Bad Gateway</body></html>';
+      return undefined;
+    },
+  });
+
+  await assert.rejects(transport.sendMessage({ chatId: CHAT }, 'refused'), { outcome: 'refused' });
+  assert.equal(api.sent().length, 1, 'asking again changes nothing');
+  api.reset();
+  assert.equal(typeof (await transport.sendMessage({ chatId: CHAT }, 'unanswered')), 'number');
+  assert.equal(api.sent().length, 2, 'tried again, and taken');
+});
+
+/* ------------------------------------------------------------------ *
  * Update handling
  * ------------------------------------------------------------------ */
 
@@ -687,29 +793,6 @@ test('a damaged Telegram state is restored from the last complete copy', async (
   await new Promise(setImmediate);
   fs.rmSync(file, { force: true });
   fs.rmSync(`${file}.bak`, { force: true });
-});
-
-test('a Telegram error says what it means, so nobody else reads its text', () => {
-  // The exact wording Telegram sends. Matching it is this class's job alone:
-  // a caller that parses `description` itself is a second place to update the
-  // day Telegram rewords one of them.
-  const { TelegramApiError } = require('../dist/telegram/transport.service');
-  const error = (code, description) => new TelegramApiError('editMessageText', code, description);
-
-  const unchanged = error(400, 'Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message');
-  assert.equal(unchanged.isUnchanged, true);
-  assert.equal(unchanged.isMessageGone, false);
-
-  for (const text of ['Bad Request: message to edit not found', 'Bad Request: message to delete not found']) {
-    assert.equal(error(400, text).isMessageGone, true, text);
-    assert.equal(error(400, text).isUnchanged, false, text);
-    assert.equal(error(400, text).isChatGone, false, text);
-  }
-
-  // Too old to delete is not gone: the message is still in the chat, which is
-  // exactly why a person has to remove it.
-  assert.equal(error(400, "Bad Request: message can't be deleted").isMessageGone, false);
-  assert.equal(error(400, 'Bad Request: message thread not found').isMessageGone, false);
 });
 
 /* The parts of the state store, on a plain object: no file, no store. */

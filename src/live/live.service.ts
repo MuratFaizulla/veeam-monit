@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { AppConfig } from '../config/configuration';
 import { TelegramStateStore } from '../telegram/state.store';
 import { TelegramTopicsService } from '../telegram/topics.service';
-import { TelegramApiError, TelegramTransportService } from '../telegram/transport.service';
+import { outcomeOf, TelegramOutcome, TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat } from '../telegram/types';
 import { isFooter } from './format';
 import { LIVE_SLOTS, LivePage, LiveSlot, RETIRED_SLOTS, specOf } from './slots';
@@ -67,7 +67,7 @@ export class TelegramLiveService {
    */
   async publish(pages: readonly LivePage[]): Promise<void> {
     if (!this.transport.enabled) return;
-    for (const [chatId] of this.store.chats()) await this.clearLeftovers(chatId);
+    for (const [chatId] of this.store.chats()) await this.inChat(chatId, () => this.clearLeftovers(chatId));
     const shown = this.config.live ? pages : [];
     for (const { slot, content } of shown) await this.publishSlot(slot, content);
     const given = new Set<string>(shown.map(({ slot }) => slot));
@@ -90,17 +90,19 @@ export class TelegramLiveService {
 
     for (const [chatId, chat] of this.store.chats()) {
       try {
-        // A page posted anew lands at the bottom of the topic, under the pages
-        // after it, so those are posted again too. Each page used to be
-        // retired on its own clock: 🗂's continuation was replaced at 11:48,
-        // its first page at 11:54, and the topic read "— продолжение" above
-        // the list it continued for a day and a half at a time.
-        let reposted = false;
-        for (const [index, page] of pages.entries()) {
-          reposted = (await this.publishTo(chatId, chat, slot, page, index, reposted)) || reposted;
-        }
-        // The pages a now-shorter list no longer fills.
-        await this.removeFrom(chatId, slot, Math.max(pages.length, 1));
+        await this.inChat(chatId, async () => {
+          // A page posted anew lands at the bottom of the topic, under the
+          // pages after it, so those are posted again too. Each page used to
+          // be retired on its own clock: 🗂's continuation was replaced at
+          // 11:48, its first page at 11:54, and the topic read "— продолжение"
+          // above the list it continued for a day and a half at a time.
+          let reposted = false;
+          for (const [index, page] of pages.entries()) {
+            reposted = (await this.publishTo(chatId, chat, slot, page, index, reposted)) || reposted;
+          }
+          // The pages a now-shorter list no longer fills.
+          await this.removeFrom(chatId, slot, Math.max(pages.length, 1));
+        });
       } catch (error) {
         this.logger.error(
           `Live "${slot}" was not refreshed in chat ${chatId}: ${(error as Error).message}`,
@@ -115,9 +117,27 @@ export class TelegramLiveService {
    */
   private async takeDown(slot: string): Promise<void> {
     for (const [chatId] of this.store.chats()) {
-      for (const messageId of await this.removeFrom(chatId, slot, 0)) {
-        this.logger.warn(`Live "${slot}" left message ${messageId} behind in chat ${chatId}: delete it by hand`);
-      }
+      await this.inChat(chatId, async () => {
+        for (const messageId of await this.removeFrom(chatId, slot, 0)) {
+          this.logger.warn(`Live "${slot}" left message ${messageId} behind in chat ${chatId}: delete it by hand`);
+        }
+      });
+    }
+  }
+
+  /**
+   * Does one chat's part of a cycle. A chat Telegram says the bot is no
+   * longer in is let go as Delivery lets it go — forgotten with its topics
+   * and live messages — rather than asked again, every slot every cycle,
+   * until an alert happened to go there. Anything else is the caller's.
+   */
+  private async inChat(chatId: string, work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (error) {
+      if (outcomeOf(error) !== 'chat-gone') throw error;
+      this.store.dropChat(chatId);
+      this.logger.warn(`Telegram chat ${chatId} is no longer reachable and was unregistered`);
     }
   }
 
@@ -138,13 +158,13 @@ export class TelegramLiveService {
 
   /**
    * Deletes a message no slot uses any more, and says false only when
-   * Telegram refused, so the message stays for good. A delete that merely
-   * failed is not the end of it: the message is kept as a leftover and a
-   * later cycle deletes it.
+   * Telegram refused, so the message stays for good. A delete that got no
+   * answer that counts is not the end of it: the message is kept as a
+   * leftover and a later cycle deletes it.
    */
   private async retire(chatId: string, ref: LiveMessageRef): Promise<boolean> {
     const outcome = await this.delete(chatId, ref.messageId);
-    if (outcome === 'failed') this.store.liveMessages.leave(chatId, ref);
+    if (outcome === 'later') this.store.liveMessages.leave(chatId, ref);
     return outcome !== 'refused';
   }
 
@@ -155,7 +175,7 @@ export class TelegramLiveService {
   private async clearLeftovers(chatId: string): Promise<void> {
     for (const ref of this.store.liveMessages.leftovers(chatId)) {
       const outcome = Date.now() - (ref.createdAt ?? 0) > DELETE_LIMIT_MS ? 'refused' : await this.delete(chatId, ref.messageId);
-      if (outcome === 'failed') continue;
+      if (outcome === 'later') continue;
       this.store.liveMessages.cleared(chatId, ref.messageId);
       if (outcome === 'refused') {
         this.logger.warn(`Live message ${ref.messageId} in chat ${chatId} could not be deleted in time: delete it by hand`);
@@ -164,22 +184,14 @@ export class TelegramLiveService {
   }
 
   /**
-   * Deletes one message and says what became of it: `deleted` (or already
-   * gone), `refused` when Telegram will not — too old, or not the bot's to
-   * delete — or `failed` when the call did not get an answer that counts: a
-   * dropped connection, a 429, a 5xx.
+   * Deletes one message and says how that ended, as the transport says it. A
+   * chat the bot was removed from is no answer about the message: it ends
+   * the chat's part of the cycle (`inChat`).
    */
-  private async delete(chatId: string, messageId: number): Promise<'deleted' | 'refused' | 'failed'> {
-    try {
-      await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
-      return 'deleted';
-    } catch (error) {
-      if (error instanceof TelegramApiError) {
-        if (error.isMessageGone) return 'deleted';
-        if (!error.isRateLimited && error.code < 500) return 'refused';
-      }
-      return 'failed';
-    }
+  private async delete(chatId: string, messageId: number): Promise<TelegramOutcome> {
+    const deleted = await this.transport.deleteMessage(chatId, messageId);
+    if (deleted.outcome === 'chat-gone') throw deleted.error;
+    return deleted.outcome;
   }
 
   /**
@@ -298,29 +310,24 @@ export class TelegramLiveService {
 
   /**
    * Writes `text` into the existing message and says what became of it:
-   * `written`, `lost` when Telegram says the message is deleted or too old to
-   * edit — the only answers a new message fixes — or the error of a call that
-   * merely failed, with the message still there.
+   * `written`, `lost` when Telegram says the message is gone or will not take
+   * the edit however often it is asked — too old to edit — which only a new
+   * message fixes, or the error of a call that got no answer that counts,
+   * with the message still there.
    */
   private async edit(chatId: string, messageId: number, text: string): Promise<'written' | 'lost' | Error> {
-    try {
-      await this.transport.call('editMessageText', {
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      });
-      return 'written';
-    } catch (error) {
-      if (error instanceof TelegramApiError) {
-        // Telegram refuses a no-op edit. The message already says what we
-        // wanted it to say, so the slot is current either way.
-        if (error.isUnchanged) return 'written';
-        if (error.isMessageGone || error.isUneditable) return 'lost';
-      }
-      return error as Error;
-    }
+    const edited = await this.transport.ask('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+    if (edited.outcome === 'done') return 'written';
+    if (edited.outcome === 'gone' || edited.outcome === 'refused') return 'lost';
+    // Not an answer about the message: it ends the chat's part of the cycle.
+    if (edited.outcome === 'chat-gone') throw edited.error;
+    return edited.error;
   }
 
   /**

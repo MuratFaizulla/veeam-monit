@@ -48,7 +48,7 @@ A server outside the domain does not know a domain account at all: give it a loc
 
 **Every alert comes twice**, and the log shows **`Telegram polling error: getUpdates -> 409 Conflict: terminated by other getUpdates request`**: two instances of the bot share one token, say Docker and PM2, or an old container. Stop all but one.
 
-**Topics are not created**, and the log says **`Cannot create Telegram topics in … Grant the bot "Manage topics" or pre-create them`**: make the bot an administrator of the group with **Manage topics**. Until then its messages go to General.
+**Topics are not created**, and the log says **`Cannot create Telegram topics in … Grant the bot "Manage topics" or pre-create them`**: make the bot an administrator of the group with **Manage topics**. Until then its messages go to General. **`Telegram topic "…" was not created in … the next one tries again`** is a moment's failure instead, a 429 or a dropped connection: that one message goes to General, and the next creates the topic.
 
 **The bot does not answer commands:**
 
