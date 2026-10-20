@@ -11,7 +11,7 @@ const {
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
-  announcement, probe, capacities, capacityOf, jobReadsOf,
+  announcement, probe, capacities, capacityOf, jobReadsOf, serverOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
 
@@ -833,62 +833,92 @@ test('proxies of one network are folded into ranges', () => {
   assert.match(card, /^Чтение: NBD \(по сети через ESXi\), прокси 192\.0\.2\.20–22, 24, 27, 198\.51\.100\.162$/mu);
 });
 
-/** A job whose one finished run has its logs and tasks where /job will look for them. */
-const timedJob = (taskRoutes) =>
-  monitorWorld({}, [job('1', 'OPS_Billing_Prod', 'Success')], {
-    '/api/v1/sessions': { data: [{
-      id: 'night', jobId: '1', creationTime: '2026-10-01T22:00:00+05:00', endTime: '2026-10-01T22:37:00+05:00',
-      result: { result: 'Success' },
-    }] },
-    '/api/v1/sessions/night/logs': { records: [
-      { title: 'Load: Source 14% > Proxy 8% > Network 12% > Target 89%' },
-      { title: 'Primary bottleneck: Target' },
-    ] },
-    ...taskRoutes,
-  });
+/** OPS_Billing_Prod's one finished run, as its Job reads give it. */
+const NIGHT = { id: 'night', startedAt: '2026-10-01T22:00:00+05:00', endedAt: '2026-10-01T22:37:00+05:00', result: 'success' };
+const NIGHT_LOG = ['Load: Source 14% > Proxy 8% > Network 12% > Target 89%', 'Primary bottleneck: Target'];
 
-test('/job reads the last run\'s logs and says what held it back', async () => {
-  const w = timedJob({
-    '/api/v1/sessions/night/taskSessions': { data: [
-      machineTask('t1', 'app-prod-svc-01', { algorithm: 'Increment', progress: { duration: '00:35:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
-      machineTask('t2', 'app-prod-web-02', { algorithm: 'Increment', progress: { duration: '00:29:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
-    ] },
-    '/api/v1/taskSessions/t1/logs': { records: diskLog('192.0.2.21', 'hotadd').map((title) => ({ title })) },
-    '/api/v1/taskSessions/t2/logs': { records: diskLog('192.0.2.22', 'hotadd').map((title) => ({ title })) },
-  });
-
-  await said(w, '/job billing');
-
-  const reply = w.api.sent().at(-1).text;
-  assert.match(reply, /^<b>⚡ Скорость запуска .*<\/b>\nИнкремент · прочитано 140 ГБ за 37 мин — 65 МБ\/с · передано 40 ГБ$/mu);
-  assert.match(reply, /^Узкое место: <b>Target 89%<\/b> — репозиторий или его шлюз не успевают писать$/mu);
-  assert.match(reply, /^Чтение: HotAdd, прокси 192\.0\.2\.21–22$/mu);
-  assert.match(reply, /^Дольше всех: app-prod-svc-01 — 35 мин · app-prod-web-02 — 29 мин$/mu);
-});
-
-test('a server without task sessions still says the stage, from the session\'s own log', async () => {
+test('the Job reads read what Veeam wrote while running an attempt: its log, its machines, and the logs of the thirty longest', async () => {
   const { VeeamApiError } = require('../dist/veeam/api.error');
-  // veeam02, REST API 1.1.
-  const w = timedJob({ '/api/v1/sessions/night/taskSessions': () => { throw new VeeamApiError('Not found', 404); } });
+  const reads = (routes) => serverOf(world(), veeamFake(routes)).reads;
+  const log = { records: [{ title: 'Load: Source 14% > Proxy 8% > Network 12% > Target 89%' }, { title: 'Primary bottleneck:  Target' }] };
+  // Thirty-one machines: vm30 the longest at forty minutes, vm0 the shortest at ten.
+  const tasks = Array.from({ length: 31 }, (_, i) => machineTask(`t${i}`, `vm${i}`, { progress: { duration: `00:${10 + i}:00` } }));
+  const asked = [];
+  const record = await reads({
+    '/api/v1/sessions/night/logs': log,
+    '/api/v1/sessions/night/taskSessions': { data: tasks },
+    ...Object.fromEntries(tasks.map(({ id }) => [`/api/v1/taskSessions/${id}/logs`, () => {
+      asked.push(id);
+      if (id === 't30') throw new Error('socket hang up');
+      return { records: [{ title: 'Using backup proxy 192.0.2.21 for disk Hard disk 1  [hotadd]' }] };
+    }])),
+  }).recordOf(NIGHT);
 
-  await said(w, '/job billing');
+  assert.deepEqual(record.log, NIGHT_LOG, 'a line each, as Veeam breaks none');
+  assert.equal(record.tasks.length, 31);
+  assert.equal(asked.length, 30);
+  assert.ok(!asked.includes('t0'), 'the shortest machine is not worth a request');
+  // A machine whose log Veeam would not give is left out.
+  assert.equal(record.machineLogs.size, 29);
+  assert.deepEqual(record.machineLogs.get('t29'), ['Using backup proxy 192.0.2.21 for disk Hard disk 1 [hotadd]']);
 
-  const reply = w.api.sent().at(-1).text;
-  assert.match(reply, /^Узкое место: <b>Target 89%<\/b>/mu);
-  assert.doesNotMatch(reply, /Чтение:/);
-});
+  // A server whose REST API is 1.1 has no task sessions: the session's own log is all there is.
+  const older = await reads({
+    '/api/v1/sessions/night/logs': log,
+    '/api/v1/sessions/night/taskSessions': () => { throw new VeeamApiError('Not found', 404); },
+  }).recordOf(NIGHT);
+  assert.deepEqual([older.log, older.tasks, older.machineLogs.size], [NIGHT_LOG, [], 0]);
 
-test('a log Veeam would not give leaves the card as it was', async () => {
-  const w = timedJob({
+  // Without the session's log there is nothing to say.
+  const silent = reads({
     '/api/v1/sessions/night/logs': () => { throw new Error('socket hang up'); },
     '/api/v1/sessions/night/taskSessions': { data: [] },
   });
+  assert.equal(await silent.recordOf(NIGHT), undefined);
+});
 
-  await said(w, '/job billing');
+/** /job about OPS_Billing_Prod, whose Job reads say Veeam wrote `record` while running its one finished run. */
+const billingCard = async (record) => {
+  const { JobQueryService } = require('../dist/estate/job-query.service');
+  const w = world();
+  const { reader, auth, evidence, inventory } = serverOf(w, veeamFake({
+    '/api/v1/jobs/states': { data: [job('1', 'OPS_Billing_Prod', 'Success')] },
+    '/api/v1/backupInfrastructure/repositories': { data: [] },
+    '/api/v1/backupInfrastructure/proxies': { data: [] },
+  }));
+  const reads = jobReadsOf({ sessions: [NIGHT], records: record ? { night: record } : {} });
+  return (await new JobQueryService(w.config, reader, auth, evidence, inventory, reads).describeJob('billing')).text;
+};
 
-  const reply = w.api.sent().at(-1).text;
-  assert.match(reply, /OPS_Billing_Prod/);
-  assert.doesNotMatch(reply, /⚡/u);
+test('/job says what held the last run back, from what Veeam wrote while running it', async () => {
+  const card = await billingCard({
+    log: NIGHT_LOG,
+    tasks: [
+      machineTask('t1', 'app-prod-svc-01', { algorithm: 'Increment', progress: { duration: '00:35:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
+      machineTask('t2', 'app-prod-web-02', { algorithm: 'Increment', progress: { duration: '00:29:00', readSize: 70 * GB, transferredSize: 20 * GB } }),
+    ],
+    machineLogs: new Map([['t1', diskLog('192.0.2.21', 'hotadd')], ['t2', diskLog('192.0.2.22', 'hotadd')]]),
+  });
+
+  assert.match(card, /^<b>⚡ Скорость запуска .*<\/b>\nИнкремент · прочитано 140 ГБ за 37 мин — 65 МБ\/с · передано 40 ГБ$/mu);
+  assert.match(card, /^Узкое место: <b>Target 89%<\/b> — репозиторий или его шлюз не успевают писать$/mu);
+  assert.match(card, /^Чтение: HotAdd, прокси 192\.0\.2\.21–22$/mu);
+  assert.match(card, /^Дольше всех: app-prod-svc-01 — 35 мин · app-prod-web-02 — 29 мин$/mu);
+});
+
+test('a run whose machines Veeam does not list still says the stage, from the session\'s own log', async () => {
+  // veeam02, REST API 1.1.
+  const card = await billingCard({ log: NIGHT_LOG, tasks: [], machineLogs: new Map() });
+
+  assert.match(card, /^Узкое место: <b>Target 89%<\/b>/mu);
+  assert.doesNotMatch(card, /Чтение:/);
+});
+
+test('a run Veeam would say nothing about leaves the card as it was', async () => {
+  const card = await billingCard(undefined);
+
+  assert.match(card, /OPS_Billing_Prod/);
+  assert.doesNotMatch(card, /⚡/u);
 });
 
 /* ------------------------------------------------------------------ *
@@ -1569,7 +1599,6 @@ test('the alert says which attempt it is', async () => {
 const { JobAlerts } = require('../dist/monitor/job-alerts');
 const { JobMemory } = require('../dist/telegram/job-memory');
 const { jobOf } = require('../dist/veeam/estate');
-const { serverOf } = require('./world.cjs');
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;

@@ -152,13 +152,7 @@ export class VeeamEstateReader {
     } catch (error) {
       if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;
     }
-    const results = new Map<string, MachineResult>();
-    for (const record of await this.sessionLog(sessionId)) {
-      const { machine, reason } = machineLine(record.title ?? '');
-      const result = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
-      if (machine && result) results.set(machine, { name: machine, result, reason });
-    }
-    return [...results.values()];
+    return loggedResults(await this.sessionLog(sessionId));
   }
 
   /** What Veeam wrote down while running one session, in order. */
@@ -280,6 +274,22 @@ export class VeeamEstateReader {
     return after !== refused ? after : undefined;
   }
 }
+
+/**
+ * How each machine of one session ended, and why, from the session's log: one
+ * record per machine, whose status is the machine's. What `machineResults`
+ * falls back on where a server has no task sessions (REST API 1.1), for
+ * whoever has read that log already.
+ */
+export const loggedResults = (log: VeeamLogRecord[]): MachineResult[] => {
+  const results = new Map<string, MachineResult>();
+  for (const record of log) {
+    const { machine, reason } = machineLine(record.title ?? '');
+    const result = LOG_OUTCOME[(record.status ?? '').toLowerCase()];
+    if (machine && result) results.set(machine, { name: machine, result, reason });
+  }
+  return [...results.values()];
+};
 
 const byId = (rows: VeeamNamedResource[]): Map<string, string> =>
   new Map(

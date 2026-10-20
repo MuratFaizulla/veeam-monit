@@ -1,13 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount } = require('./world.cjs');
+const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount, jobReadsOf } = require('./world.cjs');
 const { jobReportOf } = require('../dist/estate/job-report');
 const { jobReportPage } = require('../dist/estate/job-report-page');
 const { sessionReportOf } = require('../dist/estate/session-report');
 const { sessionReportPage, veeamSize, veeamDuration } = require('../dist/estate/session-report-page');
 const { readJob } = require('../dist/estate/job-reports');
+const { VeeamJobReads } = require('../dist/estate/job-reads');
 const { VeeamEstateReader } = require('../dist/veeam/estate-reader.service');
+const { VeeamApiError } = require('../dist/veeam/api.error');
 const { encode, decode } = require('../dist/updates/keyboard');
 
 /* ------------------------------------------------------------------ *
@@ -68,7 +70,8 @@ const edgeReading = (over = {}) => ({
     attempt('a2', '2026-10-10T04:45:00+05:00', 8, 'failed', [task('edge-01', 'failed', NSX, 2), task('db-01', 'success')]),
     attempt('a1', '2026-10-10T04:00:00+05:00', 32, 'failed', [task('edge-01', 'failed', NSX, 2), task('db-01', 'failed', TIMEOUT), task('web-01', 'success')]),
   ],
-  bottlenecks: ['Target', 'Target', 'Source'],
+  // As the Job reads give them, by the rule the card's ⚡ reads its run by.
+  bottlenecks: ['target', 'target', 'source'],
   repository: { id: 'r1', name: 'NAS01_SHARE_BKP03', type: 'Smb', capacityGB: 100 * 1024, freeGB: 15 * 1024 },
   files: [
     // A backup file's time is the Veeam server's own clock, with no offset: 22:30 on the 12th is the 12th.
@@ -159,7 +162,9 @@ test('who else writes to the repository is whoever was writing while the newest 
   assert.equal(report.neighbours.jobs, 1);
   assert.equal(report.neighbours.of, 2);
   assert.equal(local(report.neighbours.origin), '12.10, 12:00', 'the chart starts at the noon before');
-  assert.equal(report.bottleneck, 'Target');
+  assert.equal(report.bottleneck, 'target');
+  // Said in Veeam's word for the stage, as its console says it.
+  assert.match(jobReportPage(report, sessionReportOf(edgeReading(), TZ), TZ), /1 из 2 заданий · узкое место Target</);
 });
 
 test('a first attempt a retry makes good every time is a warning, and a Full that will not fit is said', () => {
@@ -416,6 +421,45 @@ test('a run still going leaves "all failed" to the ones that ended, and a machin
   assert.deepEqual(report.steps[0].tags, ['gone-01']);
 });
 
+test('machines Veeam would not give are not called never saved, nor gone from vCenter: the page says what it could not read', () => {
+  const NOT_READ = 'The Veeam server did not respond within 30000 ms';
+  const page = (reading) => jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
+  const machinesOf = (html) => html.slice(html.indexOf('js-vms'), html.indexOf('</table>', html.indexOf('js-vms')));
+
+  // Not one session's machines: every machine of the job is unknown, not unsaved.
+  const none = page(edgeReading({
+    attempts: edgeReading().attempts.map(({ session }) => ({ session, unread: true })),
+    error: `машины 6 сессий из 6: ${NOT_READ}`,
+  }));
+  assert.match(none, new RegExp(`Прочитано не всё: машины 6 сессий из 6: ${NOT_READ}`));
+  assert.doesNotMatch(machinesOf(none), /никогда|0 из 0/);
+  assert.equal(machinesOf(none).match(/нет сведений/g).length, 3);
+  // Nor its configuration, which names them: there is nobody to list.
+  const nobody = page(edgeReading({ configured: undefined, attempts: edgeReading().attempts.map(({ session }) => ({ session, unread: true })) }));
+  assert.match(nobody, /Сведений по машинам нет: запусков не было, или Veeam их не отдал\./);
+
+  // The newest night's: app-01, which no run read took on, may have been in it.
+  const listed = edgeReading().configured.virtualMachines.includes;
+  const newestReading = edgeReading({
+    configured: { ...edgeReading().configured, virtualMachines: { includes: [...listed, { type: 'VirtualMachine', name: 'app-01' }] } },
+    attempts: edgeReading().attempts.map((attempt) => (attempt.session.id.startsWith('c') ? { session: attempt.session, unread: true } : attempt)),
+    error: `машины 2 сессий из 6: ${NOT_READ}`,
+  });
+  const newest = page(newestReading);
+  assert.match(machinesOf(newest), /app-01<\/td><td><div class="js-hist">(<i [^>]+><\/i>)+<\/div><\/td><td class="v"><span class="js-dim">—<\/span><\/td><td class="v"><span class="js-dim">нет сведений<\/span>/);
+  // Last: a machine never saved is the one to look at first.
+  assert.deepEqual(jobReportOf(newestReading, TZ).machines.map((machine) => machine.name), ['edge-01', 'db-01', 'web-01', 'app-01']);
+  assert.doesNotMatch(newest, /ни один запуск не обработал|Найти в vCenter/);
+
+  // A replica is told by its runs: a machine none of them read is not one without a good run.
+  const replica = page(edgeReading({
+    job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
+    attempts: edgeReading().attempts.map(({ session }) => ({ session, unread: true })),
+  }));
+  assert.match(replica, /Машины реплицированы<\/td><td class="v">—</);
+  assert.match(replica, /Без удачной<\/td><td class="v">—</);
+});
+
 test('sizes and durations are written as Veeam writes them', () => {
   assert.deepEqual([0, 512, 1.5 * 1024 ** 2, 9 * 1024 ** 4, 40.3 * 1024 ** 4].map(veeamSize), ['0 B', '512 B', '1.5 MB', '9 TB', '40.3 TB']);
   assert.equal(veeamSize(undefined), '—');
@@ -428,14 +472,79 @@ test('sizes and durations are written as Veeam writes them', () => {
  * ------------------------------------------------------------------ */
 
 const NOW = Date.now();
+const DAY = 86_400_000;
 const recent = (hoursAgo) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
+const EDGE = { id: 'j1', name: 'OPS_Edge', type: 'Backup', status: 'Stopped', result: 'failed' };
 
-/** A server with OPS_Edge, its sessions — one of them with machines Veeam cannot list — its backup and a neighbour. */
+test('the Job reads read a job\'s month: its attempts, their machines — from the log where there are no task sessions — and what Veeam would not give', async () => {
+  const asked = [];
+  const reads = (routes) => new VeeamJobReads(new VeeamEstateReader(veeamFake(routes), monitorAccount()), TZ);
+  const sessions = (data) => (req) => {
+    asked.push(req.params);
+    return { data };
+  };
+
+  const month = await reads({
+    '/api/v1/jobs/j1': edgeReading().configured,
+    '/api/v1/sessions': sessions([
+      { id: 's3', jobId: 'j1', creationTime: recent(1), state: 'Working', result: { result: 'None' } },
+      { id: 's2', jobId: 'j1', creationTime: recent(24), endTime: recent(23.5), result: { result: 'Failed' } },
+      { id: 's1', jobId: 'j1', creationTime: recent(48), endTime: recent(47.5), result: { result: 'Success' } },
+      // Before the month: not read.
+      { id: 's0', jobId: 'j1', creationTime: recent(24 * 40), endTime: recent(24 * 40 - 1), result: { result: 'Success' } },
+    ]),
+    '/api/v1/sessions/s3/taskSessions': { data: [task('web-01', 'None')] },
+    '/api/v1/sessions/s2/taskSessions': { data: [{ ...task('db-01', 'Failed', 'Getting VM info from vSphere'), id: 'tf' }, { ...task('web-01', 'Success'), id: 'ts' }] },
+    '/api/v1/sessions/s1/taskSessions': () => { throw new Error('The Veeam server did not respond within 30000 ms'); },
+    // Only a machine that did not end in a success has its log read: its own outcome says only the step.
+    '/api/v1/taskSessions/tf/logs': { records: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] },
+    // The newest finished ones say what held them back; the one still going has not said yet.
+    '/api/v1/sessions/s2/logs': { records: [{ title: 'Load: Source 3% > Proxy 0% > Network 7% > Target 97%' }, { title: 'Primary bottleneck: Target' }] },
+    '/api/v1/sessions/s1/logs': { records: [{ title: 'Primary bottleneck: Source' }] },
+  }).historyOf(EDGE, NOW - 30 * DAY);
+
+  assert.deepEqual(asked.map(({ jobIdFilter, limit }) => [jobIdFilter, limit]), [['j1', 500]]);
+  assert.equal(month.configured.storage.backupRepositoryId, 'r1');
+  assert.deepEqual(month.attempts.map(({ session, tasks, unread }) => [session.id, tasks?.length, unread]), [['s3', 1, undefined], ['s2', 2, undefined], ['s1', undefined, true]]);
+  assert.deepEqual(month.taskLogs, { tf: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] });
+  assert.deepEqual(month.bottlenecks, ['target', 'source']);
+  // Machines Veeam would not give are not known, rather than none: that is said.
+  assert.deepEqual(month.missing, ['машины 1 сессии из 3: The Veeam server did not respond within 30000 ms']);
+
+  // A server whose REST API is 1.1 has no task sessions: each machine's outcome is in the session's log, read once.
+  const logged = [];
+  const older = await reads({
+    '/api/v1/jobs/j1': () => { throw new Error('socket hang up'); },
+    '/api/v1/sessions': sessions([{ id: 'o1', jobId: 'j1', creationTime: recent(24), endTime: recent(23.5), result: { result: 'Failed' } }]),
+    '/api/v1/sessions/o1/taskSessions': () => { throw new VeeamApiError('Not found', 404); },
+    '/api/v1/sessions/o1/logs': () => {
+      logged.push('o1');
+      return { records: [
+        { status: 'Failed', title: 'Processing db-01 Error: Cannot get service content.' },
+        { status: 'Succeeded', title: 'Processing web-01' },
+        { status: 'Succeeded', title: 'Primary bottleneck: Target' },
+      ] };
+    },
+  }).historyOf(EDGE, NOW - 30 * DAY);
+
+  assert.deepEqual(older.attempts[0].tasks, [
+    { name: 'db-01', result: { result: 'failed', message: 'Cannot get service content.' } },
+    { name: 'web-01', result: { result: 'success' } },
+  ]);
+  assert.deepEqual(older.bottlenecks, ['target']);
+  assert.deepEqual(logged, ['o1']);
+  assert.deepEqual(older.missing, ['настройки: socket hang up']);
+});
+
+/**
+ * OPS_Edge's server, for what its report reads beside the month: the job, its
+ * repository, its backup with its files and points, and a neighbour with its
+ * sessions. `asked` keeps what the sessions were asked with.
+ */
 const edgeServer = (over = {}) => {
   const asked = [];
   const veeam = veeamFake({
     '/api/v1/jobs/states': { data: [{ id: 'j1', name: 'OPS_Edge', type: 'Backup', status: 'Stopped', lastResult: 'Failed' }] },
-    '/api/v1/jobs/j1': edgeReading().configured,
     '/api/v1/jobs': { data: [
       { id: 'j1', name: 'OPS_Edge', storage: { backupRepositoryId: 'r1' } },
       { id: 'n1', name: 'OPS_Files', storage: { backupRepositoryId: 'r1' } },
@@ -443,22 +552,11 @@ const edgeServer = (over = {}) => {
     ] },
     '/api/v1/sessions': (req) => {
       asked.push(req.params);
-      if (req.params?.jobIdFilter === 'j1') return { data: [
-        { id: 's2', jobId: 'j1', creationTime: recent(24), endTime: recent(23.5), result: { result: 'Failed' } },
-        { id: 's1', jobId: 'j1', creationTime: recent(48), endTime: recent(47.5), result: { result: 'Success' } },
-        // Before the month: not read.
-        { id: 's0', jobId: 'j1', creationTime: recent(24 * 40), endTime: recent(24 * 40 - 1), result: { result: 'Success' } },
-      ] };
       return { data: [
         { id: 'x1', jobId: 'n1', creationTime: recent(24.2), endTime: recent(23), result: { result: 'Success' } },
         { id: 'x2', jobId: 'n9', creationTime: recent(24.2), endTime: recent(23), result: { result: 'Success' } },
       ] };
     },
-    '/api/v1/sessions/s1/taskSessions': { data: [task('db-01', 'Success')] },
-    // A server whose REST API predates task sessions.
-    '/api/v1/sessions/s2/taskSessions': () => { throw new Error('HTTP 404'); },
-    '/api/v1/sessions/s1/logs': { records: [{ title: 'Primary bottleneck: Target' }] },
-    '/api/v1/sessions/s2/logs': { records: [{ title: 'Primary bottleneck: Source' }] },
     '/api/v1/backupInfrastructure/repositories/states': { data: [edgeReading().repository] },
     '/api/v1/backups': { data: [{ id: 'b1', name: 'OPS_Edge', jobId: 'j1' }, { id: 'b2', name: 'OPS_Other', jobId: 'j2' }] },
     '/api/v1/backups/b1/backupFiles': { data: edgeReading().files },
@@ -468,44 +566,48 @@ const edgeServer = (over = {}) => {
   return { veeam, asked };
 };
 
-test('a job is read for its month: its sessions and their machines, its files and points, and its neighbours', async () => {
-  const { veeam } = edgeServer();
-  const reading = await readJob('veeam01-backup-a', new VeeamEstateReader(veeam, monitorAccount()), 'j1', NOW);
+/** OPS_Edge's month, as its Job reads give it: a night that failed after one that did not. */
+const edgeMonth = (history = {}) => jobReadsOf({
+  configuration: edgeReading().configured,
+  history: {
+    attempts: [
+      { session: { id: 's2', jobId: 'j1', creationTime: recent(24), endTime: recent(23.5), result: { result: 'failed' } }, tasks: [task('db-01', 'failed')] },
+      { session: { id: 's1', jobId: 'j1', creationTime: recent(48), endTime: recent(47.5), result: { result: 'success' } }, tasks: [task('db-01', 'success')] },
+    ],
+    bottlenecks: ['target'],
+    ...history,
+  },
+});
+
+test('a job\'s report has its month from the Job reads, and beside it the repository, the files and points, and the neighbours', async () => {
+  const { veeam, asked } = edgeServer();
+  const reading = await readJob({ name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: edgeMonth() }, 'j1', NOW, TZ);
 
   assert.equal(reading.error, undefined);
   assert.equal(reading.job.name, 'OPS_Edge');
-  assert.deepEqual(reading.attempts.map(({ session, tasks }) => [session.id, tasks?.length]), [['s2', undefined], ['s1', 1]]);
-  assert.deepEqual(reading.bottlenecks, ['Source', 'Target']);
+  assert.deepEqual(reading.attempts.map(({ session }) => session.id), ['s2', 's1']);
+  assert.equal(reading.configured.storage.backupRepositoryId, 'r1');
+  assert.deepEqual(reading.bottlenecks, ['target']);
   assert.equal(reading.repository.name, 'NAS01_SHARE_BKP03');
   assert.equal(reading.files.length, 3);
   assert.deepEqual(reading.points.map((point) => point.name), ['db-01']);
   assert.deepEqual(reading.neighbours, [{ id: 'n1', name: 'OPS_Files' }]);
+  // Their sessions from a day before the newest run started.
+  assert.deepEqual(asked.map((params) => params.createdAfterFilter), [recent(48)]);
   assert.deepEqual(reading.neighbourRuns.map((run) => run.jobId), ['n1']);
 });
 
-test('the log of a machine is read only when it did not end in a success: its own outcome says only the step', async () => {
-  const askedLogs = [];
-  const log = (id, records) => () => { askedLogs.push(id); return { records }; };
-  const { veeam } = edgeServer({
-    '/api/v1/sessions/s1/taskSessions': { data: [{ ...task('db-01', 'Failed', 'Getting VM info from vSphere'), id: 'tf' }, { ...task('web-01', 'Success'), id: 'ts' }] },
-    '/api/v1/taskSessions/tf/logs': log('tf', [{ status: 'Failed', title: 'Error: Cannot get service content.' }]),
-    '/api/v1/taskSessions/ts/logs': log('ts', []),
-  });
-  const reading = await readJob('veeam01-backup-a', new VeeamEstateReader(veeam, monitorAccount()), 'j1', NOW);
-
-  assert.deepEqual(askedLogs, ['tf']);
-  assert.deepEqual(reading.taskLogs, { tf: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] });
-});
-
-test('a request after the sessions that fails is said, and the rest is kept; a job that is gone is none', async () => {
+test('what could not be read, of the month or beside it, is said, and the rest is kept; a job that is gone is none', async () => {
   const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
   const reader = new VeeamEstateReader(veeam, monitorAccount());
-  const reading = await readJob('veeam01-backup-a', reader, 'j1', NOW);
+  const estate = { name: 'BAAS', reader, reads: edgeMonth({ missing: ['машины 1 сессии из 2: socket hang up'] }) };
+  const reading = await readJob(estate, 'j1', NOW, TZ);
 
-  assert.match(reading.error, /^бэкапы: .*did not respond/);
+  assert.equal(reading.error, 'машины 1 сессии из 2: socket hang up; бэкапы: The Veeam server did not respond within 30000 ms');
   assert.equal(reading.attempts.length, 2);
+  assert.deepEqual(reading.files, []);
   assert.deepEqual(reading.points, []);
-  assert.equal(await readJob('veeam01-backup-a', reader, 'gone', NOW), undefined);
+  assert.equal(await readJob(estate, 'gone', NOW, TZ), undefined);
 });
 
 /* ------------------------------------------------------------------ *
@@ -522,7 +624,7 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   const w = world();
   const { veeam } = edgeServer();
   const printer = printerOf();
-  const { updates, commands } = ear(w, monitorOfServers(w, [serverOf(w, veeam)], printer));
+  const { updates, commands } = ear(w, monitorOfServers(w, [{ ...serverOf(w, veeam), reads: edgeMonth() }], printer));
 
   await pressed({ updates }, encode({ kind: 'report', id: 'j1', server: SERVER }));
   await commands.settled();

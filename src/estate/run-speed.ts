@@ -14,12 +14,9 @@ import { VeeamTaskSession } from '../veeam/types';
  * disabled. That is what this reads, for one run of one job, when somebody
  * asks about the job.
  *
- * Read on demand only, never by a cycle: the session's log and task list, then
- * the logs of its longest machines, at most `MACHINE_LOGS` of them.
+ * Read on demand only, never by a cycle, by the Job reads: the session's log
+ * and task list, then the logs of its longest machines (`byLongest`).
  */
-
-/** Machines whose own logs are read, the longest first. Billing_Prod, among the largest, has 23. */
-export const MACHINE_LOGS = 30;
 
 /** Veeam's four stages, each as busy as it was, in per cent. */
 export interface Load {
@@ -165,7 +162,12 @@ export const loadOf = (log: string[]): Load | undefined => {
   return { source, proxy, network, target };
 };
 
-const bottleneckOf = (log: string[]): Stage | undefined => {
+/**
+ * The stage Veeam blamed, from the titles of a session's log: "Primary
+ * bottleneck: Target", the last one written. The Job report reads it too; it
+ * used to by a rule of its own, which counted every such line.
+ */
+export const bottleneckOf = (log: string[]): Stage | undefined => {
   const named = [...log].reverse().map((line) => PRIMARY.exec(line)?.[1]?.toLowerCase()).find(Boolean);
   return STAGES.find((stage) => stage === named);
 };

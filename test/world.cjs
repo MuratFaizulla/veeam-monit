@@ -234,7 +234,7 @@ function serverOf(w, veeam, auth = monitorAccount(), evidence, endpoint = w.app.
   const reader = new VeeamEstateReader(veeam, auth);
   const scan = evidence ?? new BackupEvidenceService(w.config, reader);
   const inventory = new VeeamInventoryService(reader);
-  const reads = new VeeamJobReads(reader);
+  const reads = new VeeamJobReads(reader, w.telegram.timezone);
   return {
     key: endpoint.key, name: endpoint.name, baseUrl: veeam.baseUrl,
     http: veeam, auth, reader, inventory, evidence: scan, reads,
@@ -245,10 +245,12 @@ function serverOf(w, veeam, auth = monitorAccount(), evidence, endpoint = w.app.
 /**
  * Job reads that answer what a test says happened, the other adapter at the
  * seam: the job's attempts newest first — a list, or a function asked each
- * time — and each attempt's machines by its id. `asked` counts how often
- * the attempts were read.
+ * time — each attempt's machines and what Veeam wrote while running it, by
+ * its id, and the job's month as its Job report reads it: whatever of
+ * `history` the test says, nothing else read and nothing missing. `asked`
+ * counts how often the attempts were read.
  */
-function jobReadsOf({ sessions = [], machines = {}, configuration } = {}) {
+function jobReadsOf({ sessions = [], machines = {}, records = {}, configuration, history = {} } = {}) {
   const reads = {
     asked: 0,
     async sessionsOf() {
@@ -260,6 +262,12 @@ function jobReadsOf({ sessions = [], machines = {}, configuration } = {}) {
     },
     async machinesOf(attempt) {
       return machines[attempt.id] ?? [];
+    },
+    async recordOf(attempt) {
+      return records[attempt.id];
+    },
+    async historyOf() {
+      return { configured: configuration, attempts: [], taskLogs: {}, bottlenecks: [], missing: [], ...history };
     },
   };
   return reads;

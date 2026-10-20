@@ -1,17 +1,11 @@
 import { plural } from '../telegram/time';
 import { durationOf, fromServerClock, instantOf, Job } from '../veeam/estate';
 import { linesOf, saidOf } from '../veeam/session-text';
-import {
-  VeeamBackupFile,
-  VeeamJob,
-  VeeamLogRecord,
-  VeeamRepositoryState,
-  VeeamRestorePoint,
-  VeeamSession,
-  VeeamTaskSession,
-} from '../veeam/types';
+import { VeeamBackupFile, VeeamJob, VeeamRepositoryState, VeeamRestorePoint, VeeamTaskSession } from '../veeam/types';
 import { dayIn, describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from './full-schedule';
-import { localClock, shortOf, Status } from './repository-report';
+import { JobHistory } from './job-reads';
+import { localClock, shortOf, STAGE_NAMES, Status } from './repository-report';
+import { Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
 import { describeRetry, describeSchedule } from './schedule-planner';
 
@@ -23,7 +17,7 @@ import { describeRetry, describeSchedule } from './schedule-planner';
  * report prints them: `./session-report`.
  *
  * Here is what it says, from what was read; nothing here asks Veeam. The
- * reading is `./job-reports`.
+ * reading is `./job-reports`, and the job's month in it the Job reads'.
  */
 
 /** The period a Job report covers. */
@@ -32,19 +26,16 @@ export const JOB_REPORT_DAYS = 30;
 const DAY = 86_400_000;
 const MINUTE = 60_000;
 
-/** What one job's report is made from. */
-export interface JobReading {
+/**
+ * What one job's report is made from: its month, as the Job reads give it —
+ * the attempts with their machines, the logs that say why, the configuration
+ * and what held the newest runs back — and what is read beside it.
+ */
+export interface JobReading extends Omit<JobHistory, 'missing'> {
   at: number;
   days: number;
   server: string;
   job: Job;
-  configured?: VeeamJob;
-  /** The job's sessions inside the period, newest first, each with its machines' tasks when they were read. */
-  attempts: Array<{ session: VeeamSession; tasks?: VeeamTaskSession[] }>;
-  /** By task id, the log of each machine that did not end in a success: the only place that says why. */
-  taskLogs?: Record<string, VeeamLogRecord[]>;
-  /** Veeam's primary bottleneck of each of the newest runs: `Target`, `Source`, … */
-  bottlenecks: string[];
   repository?: VeeamRepositoryState;
   files: VeeamBackupFile[];
   points: VeeamRestorePoint[];
@@ -52,7 +43,7 @@ export interface JobReading {
   neighbours: Array<{ id: string; name: string }>;
   /** Their sessions around the job's newest run. */
   neighbourRuns: Array<{ jobId: string; start: string; end?: string }>;
-  /** What could not be read, when something could not. */
+  /** What could not be read, of the month or beside it, when something could not. */
   error?: string;
 }
 
@@ -97,6 +88,11 @@ export interface ReportMachine {
   errorTone?: 'crit' | 'warn' | 'healed';
   /** In runs, and never saved in any. */
   failing: boolean;
+  /**
+   * In none of the runs whose machines were read, while Veeam would not give
+   * some: whether it was saved is not known, which is not "never".
+   */
+  unread?: true;
 }
 
 /** One thing Veeam said went wrong, and to which machines. */
@@ -177,7 +173,8 @@ export interface JobReport {
   usual: number;
   longest?: JobRun;
   neighbours: { rows: Neighbour[]; jobs: number; of: number; origin: number; window?: { start: number; end: number } };
-  bottleneck?: string;
+  /** The stage Veeam blamed most often in the newest runs. */
+  bottleneck?: Stage;
   nextFull?: { day: number; kind: FullSchedule['kind'] };
   lastFull?: ChainDay;
   findings: Finding[];
@@ -220,11 +217,12 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const local = localClock(timezone);
 
   // Runs, oldest first.
-  const attempts = reading.attempts.map(({ session, tasks }) => ({
+  const attempts = reading.attempts.map(({ session, tasks, unread }) => ({
     startedAt: session.creationTime,
     endedAt: session.endTime,
     result: session.result?.result,
     tasks,
+    unread,
   }));
   const runs = runsOf(attempts, retryWindowOf(schedule))
     .map((run) => {
@@ -245,6 +243,7 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
         pieces,
         minutes: pieces.reduce((sum, piece) => sum + piece.minutes, 0),
         read,
+        unread: oldestFirst.some((attempt) => attempt.unread),
         machines,
         tasks: oldestFirst.flatMap((attempt) => attempt.tasks ?? []),
       };
@@ -255,6 +254,8 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   // Machines: what the job names, and what its runs went through.
   const listed = (configured?.virtualMachines?.includes ?? []).filter((object) => /virtualmachine/i.test(object.type ?? '') && object.name);
   const withTasks = runs.filter((run) => run.read && run.machines.size);
+  // A machine none of the runs read took on may have been in one Veeam would not give.
+  const partly = runs.some((run) => run.unread);
   const names = [...new Set([...listed.map((object) => object.name as string), ...withTasks.flatMap((run) => [...run.machines.keys()])])];
   const pointsOf = new Map<string, number[]>();
   for (const point of reading.points) {
@@ -297,9 +298,11 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
       error: last ? saidOf(last.task.result?.message) : undefined,
       errorTone: last ? (last.healed ? 'healed' : outcomeOf(last.task.result?.result) === 'failed' ? 'crit' : 'warn') : undefined,
       failing: finals.length > 0 && good.length === 0,
+      ...(partly && finals.length === 0 ? { unread: true as const } : {}),
     };
   });
-  machines.sort((a, b) => a.succeeded / (a.tookPart || 1) - b.succeeded / (b.tookPart || 1) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  // The worst first; one nothing is known of is not among them.
+  machines.sort((a, b) => Number(Boolean(a.unread)) - Number(Boolean(b.unread)) || a.succeeded / (a.tookPart || 1) - b.succeeded / (b.tookPart || 1) || a.name.localeCompare(b.name, undefined, { numeric: true }));
 
   // What went wrong, grouped by what it says.
   const groups = new Map<string, ErrorGroup & { runSet: Set<number>; machineSet: Set<string> }>();
@@ -376,8 +379,8 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
     window,
   };
 
-  const counted = reading.bottlenecks.reduce<Record<string, number>>((tally, stage) => ({ ...tally, [stage]: (tally[stage] ?? 0) + 1 }), {});
-  const bottleneck = Object.entries(counted).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const counted = reading.bottlenecks.reduce((tally, stage) => tally.set(stage, (tally.get(stage) ?? 0) + 1), new Map<Stage, number>());
+  const bottleneck = [...counted].sort((a, b) => b[1] - a[1])[0]?.[0];
 
   const fullSchedules = fullSchedulesOf(configured?.storage);
   const nextFull = fullSchedules?.length ? nextFullDay(fullSchedules, at, timezone) : undefined;
@@ -490,9 +493,11 @@ const finishedOf = (runs: JobRun[]): JobRun[] => runs.filter((run) => run.end !=
 
 /**
  * Machines the job names that no run whose machines were read took on: what
- * a machine deleted, renamed or made again in vCenter (a new id) looks like.
+ * a machine deleted, renamed or made again in vCenter (a new id) looks like —
+ * unless a run Veeam would not give may have taken it on.
  */
-const absentOf = (report: JobReport): ReportMachine[] => (report.history.runs ? report.machines.filter((machine) => machine.tookPart === 0) : []);
+const absentOf = (report: JobReport): ReportMachine[] =>
+  report.history.runs ? report.machines.filter((machine) => machine.tookPart === 0 && !machine.unread) : [];
 
 /** What is wrong, the worst first. */
 const findingsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: string): Finding[] => {
@@ -658,7 +663,7 @@ const stepsOf = (report: JobReport, schedule: VeeamJob['schedule'], timezone: st
     steps.push({
       severity: 'warn',
       title: 'Развести старт с соседями по репозиторию',
-      detail: `Во время запуска ${dayLabel(report.neighbours.window.start, timezone)} в репозиторий писали ещё ${report.neighbours.jobs} задач.${report.bottleneck ? ` Узкое место последних запусков — ${report.bottleneck}.` : ''}`,
+      detail: `Во время запуска ${dayLabel(report.neighbours.window.start, timezone)} в репозиторий писали ещё ${report.neighbours.jobs} задач.${report.bottleneck ? ` Узкое место последних запусков — ${STAGE_NAMES[report.bottleneck]}.` : ''}`,
       tags: tags(report.neighbours.rows.filter((row) => !row.own).map((row) => row.name), 3),
     });
   }

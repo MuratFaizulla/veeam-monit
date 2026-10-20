@@ -7,10 +7,8 @@ import { Job } from '../veeam/estate';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamInventoryService } from '../veeam/inventory.service';
 import { VeeamMonitorAuthService } from '../veeam/monitor-auth.service';
-import { VeeamApiError } from '../veeam/api.error';
-import { VeeamLogRecord, VeeamTaskSession } from '../veeam/types';
 import { Answer } from './answer';
-import { byLongest, MACHINE_LOGS, RunSpeed, speedOf } from './run-speed';
+import { RunSpeed, speedOf } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
@@ -23,13 +21,6 @@ import { assessProtection, excuseFor, standingOf, standingsOf, thresholdsOf, ver
 import { pointsOf } from './point-facts';
 import { PointsCard, renderPointsCard } from './points-card';
 import { PointSizes, sizesOf } from './points-sizes';
-
-/** Machine logs asked for at once when a card reads a run's speed. */
-const LOGS_AT_ONCE = 5;
-
-/** A log's lines, one line each: Veeam breaks its errors over several. */
-const titlesOf = (records: VeeamLogRecord[]): string[] =>
-  records.map((record) => (record.title ?? '').replace(/\s+/g, ' ').trim());
 
 /**
  * Reads one job on demand without changing the background monitor's health.
@@ -323,54 +314,21 @@ export class JobQueryService {
 
   /**
    * How fast one attempt went and what held it back, from what Veeam wrote
-   * while running it: the session's log and tasks, then the logs of its
-   * longest machines. Best effort: a card without it is still the answer.
+   * while running it, which the Job reads read. Best effort: a card without
+   * it is still the answer.
    */
   private async speedOf(attempt: JobSession | undefined, job: Job): Promise<RunSpeed | undefined> {
-    if (!attempt?.id) return undefined;
-    const sessionId = attempt.id;
-    try {
-      const [log, tasks] = await Promise.all([this.reader.sessionLog(sessionId), this.tasksOf(sessionId)]);
-      const longest = tasks
-        .filter((task): task is VeeamTaskSession & { id: string } => Boolean(task.id))
-        .sort(byLongest(this.config.timezone))
-        .slice(0, MACHINE_LOGS);
-      const machineLogs = new Map<string, string[]>();
-      // A few at a time: thirty requests at once is a burst Veeam has no need of.
-      for (let from = 0; from < longest.length; from += LOGS_AT_ONCE) {
-        await Promise.all(
-          longest.slice(from, from + LOGS_AT_ONCE).map(async (task) => {
-            try {
-              machineLogs.set(task.id, titlesOf(await this.reader.taskLog(task.id)));
-            } catch (error) {
-              this.logger.debug(`No log for task ${task.id}: ${(error as Error).message}`);
-            }
-          }),
-        );
-      }
-      return speedOf({
-        startedAt: attempt.startedAt,
-        endedAt: attempt.endedAt,
-        log: titlesOf(log),
-        tasks,
-        machineLogs,
-        cloud: /clouddirector/i.test(job.type ?? ''),
-        timezone: this.config.timezone,
-      });
-    } catch (error) {
-      this.logger.debug(`No speed for session ${sessionId}: ${(error as Error).message}`);
-      return undefined;
-    }
-  }
-
-  /** A session's tasks; none on a server whose REST API predates them (1.1), whose log still says the rest. */
-  private async tasksOf(sessionId: string): Promise<VeeamTaskSession[]> {
-    try {
-      return await this.reader.taskSessions(sessionId);
-    } catch (error) {
-      if (error instanceof VeeamApiError && error.upstreamStatus === 404) return [];
-      throw error;
-    }
+    if (!attempt) return undefined;
+    const record = await this.reads.recordOf(attempt);
+    return record
+      ? speedOf({
+          ...record,
+          startedAt: attempt.startedAt,
+          endedAt: attempt.endedAt,
+          cloud: /clouddirector/i.test(job.type ?? ''),
+          timezone: this.config.timezone,
+        })
+      : undefined;
   }
 
   /** Which objects of the newest bad session went wrong, and why. */

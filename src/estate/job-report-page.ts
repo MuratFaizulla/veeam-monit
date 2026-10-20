@@ -2,6 +2,7 @@ import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
 import { calendarLabel, dayLabel, JobReport, JobRun, ReportMachine, sizeOf, spanOf } from './job-report';
+import { STAGE_NAMES } from './repository-report';
 import { fonts, stampOf } from './repository-report-page';
 import { SessionReport } from './session-report';
 import { SESSION_STYLE, sessionsHtml } from './session-report-page';
@@ -82,8 +83,10 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
   const good = runs.filter((run) => run.result === 'success' || run.result === 'warning').length;
   const failed = runs.filter((run) => run.result === 'failed').length;
   const going = runs.filter((run) => run.result === 'none' && run.end === undefined).length;
-  const total = machines.length;
-  const saved = machines.filter((machine) => (replica ? machine.lastSaved !== undefined : machine.points)).length;
+  // A replica is told by its runs: a machine none of the runs read took on is not one without a good run.
+  const judged = replica ? machines.filter((machine) => !machine.unread) : machines;
+  const total = judged.length;
+  const saved = judged.filter((machine) => (replica ? machine.lastSaved !== undefined : machine.points)).length;
   const newest = replica ? Math.max(...machines.map((machine) => machine.lastSaved ?? -Infinity)) : report.newestPoint ?? -Infinity;
   const sent = machines.reduce((sum, machine) => sum + (machine.transferred ?? 0), 0);
   const bad = (text: string, when: boolean) => (when ? `<span class="js-bad">${text}</span>` : text);
@@ -105,7 +108,7 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
       cell(replica ? 'Машины реплицированы' : 'Машины сохранены', total ? bad(`${saved} из ${total}`, saved < total) : '—'),
       cell(replica ? 'Без удачной' : 'Без точек', total ? bad(String(total - saved), saved < total) : '—'),
       replica
-        ? cell('Узкое место', report.bottleneck ? esc(report.bottleneck) : '—')
+        ? cell('Узкое место', report.bottleneck ? STAGE_NAMES[report.bottleneck] : '—')
         : cell('На диске', report.disk ? `${sizeOf(report.disk)}${report.data ? ` · данных ${sizeOf(report.data)}` : ''}` : '—'),
     ],
   ];
@@ -154,12 +157,19 @@ const chart = (report: JobReport, timezone: string): string => {
   return `<svg class="js-chart" viewBox="0 0 ${W} ${H}">${lines}${dates}<line x1="${left}" x2="${W - right}" y1="${base}" y2="${base}" class="a"/>${report.runs.map(bar).join('')}${missed}${empty}</svg>`;
 };
 
+/** How often a machine was saved of the runs it was in, and when last: in red when not every time, or never. */
+const saves = (machine: ReportMachine, timezone: string): string =>
+  `<td class="v">${machine.succeeded < machine.tookPart || !machine.tookPart ? `<span class="js-bad">${machine.succeeded} из ${machine.tookPart}</span>` : `${machine.succeeded} из ${machine.tookPart}`}</td><td class="v">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<span class="js-bad">никогда</span>'}</td>`;
+
+/** A machine none of the runs read took on, while Veeam would not give some: not known, which is not "never". */
+const UNREAD = '<td class="v"><span class="js-dim">—</span></td><td class="v"><span class="js-dim">нет сведений</span></td>';
+
 const machinesTable = (report: JobReport, timezone: string): string => {
   const shown: ReportMachine[] = report.machines.slice(0, MACHINE_ROWS);
-  if (!shown.length) return '<table class="js-t"><tr><td class="js-dim">Сведений по машинам нет: этот сервер их не отдаёт (REST API 1.1), или запусков не было.</td></tr></table>';
+  if (!shown.length) return '<table class="js-t"><tr><td class="js-dim">Сведений по машинам нет: запусков не было, или Veeam их не отдал.</td></tr></table>';
   const rows = shown
     .map(
-      (machine) => `<tr><td class="v js-name">${esc(shortName(machine.name))}</td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td><td class="v">${machine.succeeded < machine.tookPart || !machine.tookPart ? `<span class="js-bad">${machine.succeeded} из ${machine.tookPart}</span>` : `${machine.succeeded} из ${machine.tookPart}`}</td><td class="v">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<span class="js-bad">никогда</span>'}</td><td><div class="js-err">${esc(machine.error ?? '')}${machine.errorTone === 'healed' ? ' <span class="js-dim">· повтор помог</span>' : ''}</div></td></tr>`,
+      (machine) => `<tr><td class="v js-name">${esc(shortName(machine.name))}</td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}<td><div class="js-err">${esc(machine.error ?? '')}${machine.errorTone === 'healed' ? ' <span class="js-dim">· повтор помог</span>' : ''}</div></td></tr>`,
     )
     .join('');
   const more = report.machines.length - shown.length;
@@ -187,7 +197,7 @@ const neighboursTable = (report: JobReport, timezone: string): string => {
       (row) =>
         `<tr><td class="v js-name">${row.own ? `<b>${esc(row.name)}</b>` : esc(row.name)}</td><td class="js-track">${row.spans.map(({ start, end }) => `<i class="${row.own ? 'own' : ''}" style="left:${position(start).toFixed(1)}%;width:${Math.max(0.8, position(end) - position(start)).toFixed(1)}%"></i>`).join('')}</td><td class="v">${timeOf(row.spans[0].start, timezone)}–${timeOf(row.spans[0].end, timezone)}${row.spans.length > 1 ? ` <span class="js-dim">+${row.spans.length - 1}</span>` : ''}</td></tr>`,
     )
-    .join('')}<tr><td class="js-dim">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${esc(report.bottleneck)}` : ''}</td><td><div class="js-axis">${[12, 15, 18, 21, 0, 3, 6, 9].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</div></td><td></td></tr></table>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}`;
+    .join('')}<tr><td class="js-dim">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${STAGE_NAMES[report.bottleneck]}` : ''}</td><td><div class="js-axis">${[12, 15, 18, 21, 0, 3, 6, 9].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</div></td><td></td></tr></table>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}`;
 };
 
 const errorsTable = (report: JobReport, timezone: string): string => `<div class="js-band">Последние ошибки</div>

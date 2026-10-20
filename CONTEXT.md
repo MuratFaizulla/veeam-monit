@@ -226,6 +226,10 @@ name that matches none, so only the report itself waits. A server that
 stops answering keeps what it said before it stopped. Printed by a headless
 Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
 
+What it says is `src/estate/repository-report.ts`, pure; reading and
+answering, `src/estate/repository-reports.ts`; the page,
+`src/estate/repository-report-page.ts`; printing, `src/estate/report-printer.ts`.
+
 ## Job report
 
 One job over a month, asked for by the Button under its Job card, as a PDF:
@@ -251,12 +255,23 @@ Run saved it: its points are on the target host, which the bot does not read.
 A scheduled start no Run came for within twelve hours of it is a missed start,
 counted only after the job's first Run of the month.
 
-Read from the job's own server when asked — a few dozen requests — and kept
-by nobody; printed by the same browser, one report at a time.
+A machine is judged only by the Runs whose machines were read. On a server
+whose REST API is 1.1, which has no task sessions, a session's machines are
+what its log says of each — how it ended and why, without times or sizes —
+as the alerts read them. A session whose machines Veeam would not give
+leaves a machine none of the Runs read took on **unknown**: said so, and
+neither never saved nor absent; the page says what could not be read. Both
+used to be an empty place the report could not tell from none, and every
+machine of the job was printed in red as never saved.
 
-What it says is `src/estate/repository-report.ts`, pure; reading and
-answering, `src/estate/repository-reports.ts`; the page,
-`src/estate/repository-report-page.ts`; printing, `src/estate/report-printer.ts`.
+Read from the job's own server when asked — a few dozen requests — and kept
+by nobody; printed by the same browser, one report at a time. The job's
+month — its attempts and their machines, the logs that say why, its
+configuration, and what could not be read — is asked of the **Job reads**.
+
+What it says is `src/estate/job-report.ts` and, for the sessions,
+`src/estate/session-report.ts`, pure; reading and answering,
+`src/estate/job-reports.ts`; the page, `src/estate/job-report-page.ts`.
 
 ## Live slot
 
@@ -636,11 +651,13 @@ bottleneck: Target"); each machine's log names the proxy and transport mode of
 every disk and the gateway that wrote the repository. OPS_Exchange's said its
 Full had been read over NBD by "VMware Backup Proxy" — the Veeam server itself
 — for days, which is what the card now says of it. The logs of the thirty
-longest machines are read, five at a time, only when somebody asks. In a
-vCloud job each vApp has a task of its own that reports its machines' bytes
-over again; it is known by its log or by a machine naming it its owner, and
-where one was not recognised the bytes are not added up at all rather than
-counted twice. Owned by `src/estate/run-speed.ts`.
+longest machines are read, six at a time, by the **Job reads**, only when
+somebody asks. In a vCloud job each vApp has a task of its own that reports
+its machines' bytes over again; it is known by its log or by a machine naming
+it its owner, and where one was not recognised the bytes are not added up at
+all rather than counted twice. What held the run back is the stage Veeam
+blamed, "Primary bottleneck: Target", by one rule (`bottleneckOf`) that the
+Job report reads its runs by too. Owned by `src/estate/run-speed.ts`.
 
 Every live slot is an aggregate; this is the only thing in the service that
 answers about a single job. The name is matched approximately — whole name,
@@ -652,19 +669,33 @@ Owned by `src/estate/job-card.ts`.
 
 ## Job reads
 
-What a **Job alert** and a **Job card** ask Veeam about one job when it comes
-up: its newest attempts, with their messages as worth showing; its own
-configuration, the retry policy in it; and how the machines of one attempt
-ended, and why. Best effort, all three: an alert or a card without one of them
-is still the answer.
+What a **Job alert**, a **Job card** and the **Job report** ask Veeam about
+one job: its newest attempts, with their messages as worth showing; its own
+configuration, the retry policy in it; how the machines of one attempt ended,
+and why; what Veeam wrote while running one attempt — its log, its machines,
+the logs of the longest of them — which the card's **Run speed** is read
+from; and its history over a period — the attempts and their machines, the
+logs that say why, the configuration, what held the newest runs back, and
+what could not be read. Best effort, all but the history's attempts: an alert
+or a card without one of them is still the answer, and a history without its
+attempts is no report.
+
+How much is asked and how fast is the reads' own: thirty sessions for a card
+or an alert, five hundred for a month, the machines of its newest sixty, six
+requests at a time. So is a server whose REST API is 1.1, which has no task
+sessions: a card's run has no machines then, only its log, and a month's
+machines are what each session's log says of them. What Veeam would not give
+is said, never left an empty place — the Job report took that for a machine
+never saved.
 
 The alert used to ask them of the whole module behind the Job card — three
 methods made public for it beside the card's answers — and its tests had to
 stand up a server and write Veeam's paths, session by session, to say what a
-night of retries looked like. Two adapters sit behind the seam: Veeam's, and
-the one an alert test hands in, which answers what the test says happened.
-Where the retry policy comes from is still the alert's to decide (see ADR
-0001); the reads only answer.
+night of retries looked like. The Job report and the card's speed read past
+the seam afterwards, with limits, a pace and a reading of 1.1 each of its
+own. Two adapters sit behind the seam: Veeam's, and the one a test hands in,
+which answers what the test says happened. Where the retry policy comes from
+is still the alert's to decide (see ADR 0001); the reads only answer.
 
 Owned by `src/estate/job-reads.ts`.
 

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AppConfig } from '../config/configuration';
 import { VeeamServer, VeeamServers } from '../veeam/servers';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { JobQueryService } from './job-query.service';
@@ -33,7 +34,7 @@ export class ServerEstates {
 /** A server's estate, wired. */
 export const estateOf = (config: ConfigService, server: VeeamServer): ServerEstate => {
   const evidence = new BackupEvidenceService(config, server.reader, server.name);
-  const reads = new VeeamJobReads(server.reader);
+  const reads = new VeeamJobReads(server.reader, config.getOrThrow<AppConfig['telegram']>('telegram').timezone);
   const jobs = new JobQueryService(config, server.reader, server.auth, evidence, server.inventory, reads);
   return { ...server, evidence, jobs, reads };
 };
