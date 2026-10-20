@@ -39,6 +39,12 @@ export interface LiveMessageRef {
   threadId?: number;
 }
 
+/**
+ * The key prefix of a message no slot owns any more but Telegram has not yet
+ * deleted. Kept in the same record as the slots, which no slot name begins with.
+ */
+const LEFTOVER = '~';
+
 export class LiveMessages {
   constructor(
     private readonly byChat: Record<string, Record<string, LiveMessageRef>>,
@@ -59,6 +65,29 @@ export class LiveMessages {
     if (this.byChat[chatId]?.[slot] === undefined) return;
     delete this.byChat[chatId][slot];
     this.save();
+  }
+
+  /**
+   * A message a slot gave up that Telegram would not delete just then — a
+   * dropped connection, a 429. Remembered, across restarts, for a later
+   * cycle to delete; forgotten at once, it stayed in the topic for good,
+   * frozen at its last content beside the slot's new message.
+   */
+  leave(chatId: string, ref: LiveMessageRef): void {
+    (this.byChat[chatId] ??= {})[`${LEFTOVER}${ref.messageId}`] = ref;
+    this.save();
+  }
+
+  /** The messages of this chat still waiting to be deleted. */
+  leftovers(chatId: string): LiveMessageRef[] {
+    return Object.entries(this.byChat[chatId] ?? {})
+      .filter(([key]) => key.startsWith(LEFTOVER))
+      .map(([, ref]) => ref);
+  }
+
+  /** The leftover is deleted, or never will be. */
+  cleared(chatId: string, messageId: number): void {
+    this.forget(chatId, `${LEFTOVER}${messageId}`);
   }
 
   /** A chat that removed the bot takes its slots with it. */

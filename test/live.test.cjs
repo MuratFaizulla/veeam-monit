@@ -192,6 +192,67 @@ test('a live message Telegram failed to edit for a moment is kept, not replaced'
   }
 });
 
+test('a live message retired while Telegram could not be reached is deleted on a later cycle', async () => {
+  // Every 36 hours a slot posts a fresh message and deletes the old one. The
+  // delete met a dropped connection, the old message was forgotten all the
+  // same, and ▶️ showed two: the new one and the old one, frozen a minute
+  // before the swap.
+  const failures = {
+    'dropped connection': () => { throw new Error('getaddrinfo EAI_AGAIN api.telegram.org'); },
+    'rate limit': () => ({
+      ok: false, error_code: 429, description: 'Too Many Requests: retry after 3', parameters: { retry_after: 3 },
+    }),
+    'bad gateway': () => ({ ok: false, error_code: 502, description: 'Bad Gateway' }),
+  };
+  const realNow = Date.now;
+  for (const [name, failure] of Object.entries(failures)) {
+    let failing = false;
+    const w = world({ TELEGRAM_LIVE: 'true' }, { deleteMessage: () => (failing ? failure() : undefined) });
+    await w.live.publish([{ slot: 'running', content: '▶️ первый' }]);
+    const first = w.store.liveMessages.of(CHAT, 'running').messageId;
+
+    Date.now = () => realNow() + 37 * 3_600_000;
+    try {
+      failing = true;
+      w.api.reset();
+      await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
+      assert.equal(w.api.sent().length, 1, `${name}: the slot moves to a fresh message`);
+      assert.notEqual(w.store.liveMessages.of(CHAT, 'running').messageId, first, `${name}: and owns it`);
+
+      failing = false;
+      w.api.reset();
+      await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
+      assert.deepEqual(w.api.of('deleteMessage').map((call) => call.message_id), [first], `${name}: the old one is deleted next cycle`);
+      assert.deepEqual(w.api.sent(), [], `${name}: and nothing is posted`);
+
+      w.api.reset();
+      await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
+      assert.deepEqual(w.api.of('deleteMessage'), [], `${name}: and not asked about again`);
+    } finally {
+      Date.now = realNow;
+    }
+  }
+});
+
+test('a live message Telegram refuses to delete is not asked about again', async () => {
+  const w = world({ TELEGRAM_LIVE: 'true' }, {
+    deleteMessage: () => ({ ok: false, error_code: 400, description: "Bad Request: message can't be deleted" }),
+  });
+  await w.live.publish([{ slot: 'running', content: '▶️ первый' }]);
+
+  const realNow = Date.now;
+  Date.now = () => realNow() + 37 * 3_600_000;
+  try {
+    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
+    w.api.reset();
+    await w.live.publish([{ slot: 'running', content: '▶️ второй' }]);
+  } finally {
+    Date.now = realNow;
+  }
+  assert.deepEqual(w.api.of('deleteMessage'), [], 'a refusal is final: only a person can remove it');
+  assert.deepEqual(w.store.liveMessages.leftovers(CHAT), []);
+});
+
 /**
  * A forum whose topics can be deleted the way a person deletes one: the topic
  * goes, and every message in it goes with it.

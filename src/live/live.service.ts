@@ -18,6 +18,9 @@ import { LiveMessageRef } from '../telegram/live-messages';
  */
 const ROTATE_AFTER_MS = 36 * 3_600_000;
 
+/** Telegram lets a bot delete its own message for 48 hours after sending it. */
+const DELETE_LIMIT_MS = 48 * 3_600_000;
+
 export { LiveSlot };
 
 /**
@@ -64,6 +67,7 @@ export class TelegramLiveService {
    */
   async publish(pages: readonly LivePage[]): Promise<void> {
     if (!this.transport.enabled) return;
+    for (const [chatId] of this.store.chats()) await this.clearLeftovers(chatId);
     const shown = this.config.live ? pages : [];
     for (const { slot, content } of shown) await this.publishSlot(slot, content);
     const given = new Set<string>(shown.map(({ slot }) => slot));
@@ -128,7 +132,53 @@ export class TelegramLiveService {
       const ref = this.store.liveMessages.of(chatId, key);
       if (!ref) return left;
       this.store.liveMessages.forget(chatId, key);
-      if (!(await this.transport.deleteMessage(chatId, ref.messageId))) left.push(ref.messageId);
+      if (!(await this.retire(chatId, ref))) left.push(ref.messageId);
+    }
+  }
+
+  /**
+   * Deletes a message no slot uses any more, and says false only when
+   * Telegram refused, so the message stays for good. A delete that merely
+   * failed is not the end of it: the message is kept as a leftover and a
+   * later cycle deletes it.
+   */
+  private async retire(chatId: string, ref: LiveMessageRef): Promise<boolean> {
+    const outcome = await this.delete(chatId, ref.messageId);
+    if (outcome === 'failed') this.store.liveMessages.leave(chatId, ref);
+    return outcome !== 'refused';
+  }
+
+  /**
+   * Deletes what earlier cycles gave up but could not delete then. One past
+   * Telegram's limit is not asked about again: only a person can remove it.
+   */
+  private async clearLeftovers(chatId: string): Promise<void> {
+    for (const ref of this.store.liveMessages.leftovers(chatId)) {
+      const outcome = Date.now() - (ref.createdAt ?? 0) > DELETE_LIMIT_MS ? 'refused' : await this.delete(chatId, ref.messageId);
+      if (outcome === 'failed') continue;
+      this.store.liveMessages.cleared(chatId, ref.messageId);
+      if (outcome === 'refused') {
+        this.logger.warn(`Live message ${ref.messageId} in chat ${chatId} could not be deleted in time: delete it by hand`);
+      }
+    }
+  }
+
+  /**
+   * Deletes one message and says what became of it: `deleted` (or already
+   * gone), `refused` when Telegram will not — too old, or not the bot's to
+   * delete — or `failed` when the call did not get an answer that counts: a
+   * dropped connection, a 429, a 5xx.
+   */
+  private async delete(chatId: string, messageId: number): Promise<'deleted' | 'refused' | 'failed'> {
+    try {
+      await this.transport.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+      return 'deleted';
+    } catch (error) {
+      if (error instanceof TelegramApiError) {
+        if (error.isMessageGone) return 'deleted';
+        if (!error.isRateLimited && error.code < 500) return 'refused';
+      }
+      return 'failed';
     }
   }
 
@@ -155,11 +205,19 @@ export class TelegramLiveService {
     // was last written. A long-lived slot therefore eventually meets an edit
     // that fails and a delete that fails with it, and is left with a message
     // frozen at its last good content and a second one posted beside it. That
-    // is what the ▶️ topic did: two messages, one stuck a day behind.
+    // is what the ▶️ topic did: two messages, one stuck a day behind. The
+    // delete itself can meet a dropped connection too, and a message given up
+    // on that one try stayed just the same — ▶️ again, 20.10 at 17:03 — so it
+    // is retried on later cycles until Telegram answers.
     const previous = held && !repost && !this.expired(held) ? held : undefined;
     if (held && !previous) {
       this.store.liveMessages.forget(chatId, key);
-      await this.transport.deleteMessage(chatId, held.messageId);
+      if (!(await this.retire(chatId, held))) {
+        this.logger.warn(
+          `Live "${slot}" left message ${held.messageId} behind in chat ${chatId}: ` +
+            'Telegram refused to delete it, so it must be removed by hand',
+        );
+      }
     }
 
     // Unchanged content is not rewritten, or a bot that is merely alive would
@@ -200,7 +258,7 @@ export class TelegramLiveService {
       // chat for good, and only a person can clear it. Said out loud rather
       // than swallowed, because the alternative is somebody reading a stale
       // status for weeks and nobody knowing why it is there.
-      if (!(await this.transport.deleteMessage(chatId, current.messageId))) {
+      if (!(await this.retire(chatId, current))) {
         this.logger.warn(
           `Live "${slot}" left message ${current.messageId} behind in chat ${chatId}: ` +
             'Telegram refused both the edit and the deletion, so it must be removed by hand',

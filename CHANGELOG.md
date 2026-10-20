@@ -46,6 +46,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 - «Последняя ошибка» (last error) in `/status` stayed until the bot restarted, whatever had failed a week before. It is now what went wrong in the latest pass, and a pass that goes well clears it.
 - The bot locked the service account out itself: after the password was refused it tried to sign in every minute, and Veeam locked the account for 15 minutes, then for 30. Now, after a refusal, the next sign-in waits at least 15 minutes, or until the lockout Veeam named is over. The alert says when the next attempt will be. Restarting the bot tries at once.
 - The continuation of 🗂 ended up above its beginning in the topic: the topic's messages were replaced every 36 hours independently of each other. Now, when one is posted again, the ones after it are too.
+- A live topic showed two messages, the old one frozen a minute before the new one appeared: every 36 hours the message is replaced, and when the server could not reach Telegram at that moment, the old one was not deleted and was forgotten all the same. Now a message that could not be deleted is kept in the state file and deleted on a later pass. One Telegram refuses, or one older than its 48 hours, is written to the log to be removed by hand.
 
 ## [1.0.0] — 2026-09-30
 
