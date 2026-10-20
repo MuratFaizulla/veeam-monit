@@ -1,6 +1,8 @@
 import { ReportSite } from '../config/configuration';
 import { VeeamRepositoryState, VeeamSchedule } from '../veeam/types';
 import { plural } from '../telegram/time';
+import { Status } from './report-envelope';
+import { ReportJob, writesTo } from './repository-writers';
 import { Load, Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
 
@@ -18,19 +20,6 @@ import { retryWindowOf, runsOf } from './runs';
  * Pure: what was read goes in, what the report says comes out. Reading is
  * `RepositoryReports`; drawing it, `repository-report-page.ts`.
  */
-
-/** One job as the report needs it. */
-export interface ReportJob {
-  id: string;
-  name: string;
-  type?: string;
-  disabled: boolean;
-  schedule?: VeeamSchedule;
-  /** Where a backup job writes. */
-  backupRepositoryId?: string;
-  /** Where a replica job keeps its metadata — the only repository it names. */
-  metadataRepositoryId?: string;
-}
 
 /** One session of a job: an Attempt, with its result lower-cased. */
 export interface ReportAttempt {
@@ -78,7 +67,6 @@ export interface RepositoryReading {
 
 export type { ReportSite } from '../config/configuration';
 
-export type Status = 'crit' | 'warn' | 'ok' | 'unknown';
 export type Severity = 'crit' | 'warn' | 'unknown';
 export type Icon = 'disk' | 'clock' | 'fail' | 'layers' | 'target' | 'box' | 'link' | 'gear' | 'question';
 
@@ -397,8 +385,8 @@ export const reportOf = (reading: RepositoryReading, sites: readonly ReportSite[
       for (const { jobId, load } of server.loads) loadsOf.set(jobId, [...(loadsOf.get(jobId) ?? []), load]);
       const working = new Map(server.working.map((session) => [session.jobId, session]));
       for (const job of server.jobs) {
-        const role = job.backupRepositoryId === repository.id ? 'backup' : job.metadataRepositoryId === repository.id ? 'metadata' : undefined;
-        if (!role || !repository.id) continue;
+        const role = writesTo(job, repository.id);
+        if (!role) continue;
         writers.push(writerOf(job, role, server.server, attemptsOf.get(job.id) ?? [], loadsOf.get(job.id) ?? [], working.get(job.id), now, local));
       }
     }

@@ -1,12 +1,11 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
 import { Answer } from '../estate/answer';
 import { JobChoice } from '../estate/job-choices';
-import { ReportAhead, ReportChoice } from '../estate/repository-reports';
+import { ReportChoice } from '../estate/repository-reports';
 
 export type { Answer } from '../estate/answer';
 export type { JobChoice, JobMark } from '../estate/job-choices';
-export { JOB_REPORT_DAYS } from '../estate/job-report';
-export type { ReportAhead, ReportChoice } from '../estate/repository-reports';
+export type { ReportChoice } from '../estate/repository-reports';
 
 /** The Selected server's jobs, for the job menu. */
 export interface JobChoices {
@@ -92,22 +91,21 @@ export interface Monitor {
   /** A job's restore points for a Button that addressed it, as for `describeJobById`. */
   describePointsById(id: string, server?: string): Promise<Answer>;
   /**
-   * The Repository report of every server as a PDF: every repository, or the
-   * ones `query` names. Read on demand and kept for half an hour.
+   * The Repository report of every server, asked for: every repository, or
+   * the ones `query` names. What is said at once — that it is coming and how
+   * long it takes, or, for a name that matches none, the names there are —
+   * and the PDF `later`, when one follows. Read on demand and kept for half
+   * an hour.
    */
-  repositoryReport(query: string): Promise<Answer>;
+  repositoryReport(query: string): Answer;
   /**
-   * One job's report over a month as a PDF, for a Button that addressed the
-   * job by id on the server it named — or the Selected one.
+   * One job's report over a month, asked for by a Button that addressed the
+   * job by id on the server it named — or the Selected one: said at once to
+   * be coming, and the PDF `later`.
    */
-  jobReport(id: string, server?: string): Promise<Answer>;
+  jobReport(id: string, server?: string): Answer;
   /** The repositories the report can be asked for, in its order, as the cycles last saw them. */
   repositoryChoices(): ReportChoice[];
-  /**
-   * What `repositoryReport(query)` will come to, known before it is read: a
-   * name that matches nothing, or whether it takes seconds or minutes.
-   */
-  repositoryReportAhead(query: string): ReportAhead;
 }
 
 /** Nest's handle for `Monitor`: an interface leaves nothing at runtime to inject by. */

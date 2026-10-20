@@ -6,25 +6,24 @@ import { instantOf } from '../veeam/estate';
 import { Answer } from './answer';
 import { JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
 import { judgementOf, ProtectionThresholds, thresholdsOf } from './job-standing';
+import { printedAnswer, STATUS_ICON, STATUS_WORD } from './report-envelope';
 import { ReportPrinter } from './report-printer';
-import { stampOf } from './repository-report-page';
+import { jobsWriting, writesTo } from './repository-writers';
 import { ServerEstate } from './server-estates';
 import { jobReportPage } from './job-report-page';
 import { sessionReportOf } from './session-report';
 
 const DAY = 86_400_000;
 
-const STATUS_ICON = { crit: '🔴', warn: '🟡', ok: '🟢', unknown: '⚪' } as const;
-const STATUS_WORD = { crit: 'критично', warn: 'внимание', ok: 'норма', unknown: 'нет данных' } as const;
-
 /**
  * The Job report, read and printed when somebody presses its Button under a
  * Job card: one job on one server, over a month. Some eighty requests — the
  * job's sessions and every one's machines, the logs of those that failed, the
- * backups and their files, the repository and who else writes there — so it
- * is read on demand only, and printed by the same browser as the Repository
- * report, one at a time. Its points are the server's Evidence's, read by the
- * scan already, and judged by 🛡's thresholds.
+ * backups and their files, the repository and who else writes there, a
+ * replica read by itself — so it is read on demand only, and printed by the
+ * same browser as the Repository report, one at a time. Its points are the
+ * server's Evidence's, read by the scan already, and judged by 🛡's
+ * thresholds.
  */
 @Injectable()
 export class JobReports {
@@ -41,6 +40,23 @@ export class JobReports {
     this.thresholds = thresholdsOf(telegram);
   }
 
+  /**
+   * The report on job `id` of `estate`, asked for: said at once to be coming,
+   * and how long it takes, with the PDF to follow. Its points are the last
+   * scan's, so what it says it reads is the month's runs and machines.
+   */
+  asked(estate: ServerEstate, id: string): Answer {
+    return {
+      text: [
+        '⏳ <b>Готовлю отчёт по заданию</b>',
+        '',
+        `Читаю запуски и машины за ${JOB_REPORT_DAYS} дней — это 20–30 секунд.`,
+        'PDF придёт сюда, а бот пока отвечает на другие команды.',
+      ].join('\n'),
+      later: () => this.answer(estate, id),
+    };
+  }
+
   /** The report on job `id` of `estate`, as a PDF; a job that is gone is said so. */
   async answer(estate: ServerEstate, id: string): Promise<Answer> {
     const reading = await readJob(estate, id, Date.now(), this.timezone, this.thresholds);
@@ -48,18 +64,18 @@ export class JobReports {
     if (reading.error) this.logger.warn(`Job report: ${estate.name} ${reading.job.name} read in part: ${reading.error}`);
     const report = jobReportOf(reading, this.timezone);
     const content = await this.printer.print(jobReportPage(report, sessionReportOf(reading, this.timezone), this.timezone));
-    const stamp = stampOf(report.at, this.timezone);
-    return {
-      text: [
-        `📄 <b>${escapeHtml(report.name)}</b> — ${STATUS_ICON[report.status]} ${STATUS_WORD[report.status]}`,
-        escapeHtml(report.verdict),
-        ...(report.partial ? ['⚠️ Прочитано не всё — что именно, сказано в отчёте.'] : []),
-        '',
-        `<i>${escapeHtml(report.server)} · за ${report.days} дней, на ${stamp}.</i>`,
-      ].join('\n'),
-      // A job's name may hold what a file name may not.
-      document: { filename: `Задание ${report.name.replace(/[\\/:*?"<>|]+/g, '_')} ${stamp.slice(0, 10)}.pdf`, content },
-    };
+    return printedAnswer(
+      {
+        title: report.name,
+        beside: `${STATUS_ICON[report.status]} ${STATUS_WORD[report.status].toLowerCase()}`,
+        lines: [escapeHtml(report.verdict), ...(report.partial ? ['⚠️ Прочитано не всё — что именно, сказано в отчёте.'] : [])],
+        covers: `${report.server} · за ${report.days} дней`,
+        file: `Задание ${report.name}`,
+      },
+      content,
+      report.at,
+      this.timezone,
+    );
   }
 }
 
@@ -107,9 +123,8 @@ export const readJob = async (
   });
   await step('соседи', async () => {
     if (!repositoryId) return;
-    reading.neighbours = (await reader.jobConfigurations()).flatMap((other) =>
-      other.id && other.id !== id && other.storage?.backupRepositoryId === repositoryId ? [{ id: other.id, name: other.name ?? other.id }] : [],
-    );
+    // A replica among them, which names the repository only in its own settings, as the Repository report has it.
+    reading.neighbours = (await jobsWriting(reader)).flatMap((other) => (other.id !== id && writesTo(other, repositoryId) ? [{ id: other.id, name: other.name }] : []));
     const newest = instantOf(reading.attempts[0]?.session.creationTime, timezone);
     if (newest === undefined || !reading.neighbours.length) return;
     const theirs = new Set(reading.neighbours.map((neighbour) => neighbour.id));

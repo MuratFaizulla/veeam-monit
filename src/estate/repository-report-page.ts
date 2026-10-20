@@ -1,7 +1,6 @@
-import { readFileSync } from 'fs';
-import { dirname, join } from 'path';
 import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
+import { envelope, ReportDocument, stampOf, Status, STATUS_WORD } from './report-envelope';
 import { STYLE } from './repository-report-style';
 import { Stage } from './run-speed';
 import {
@@ -16,7 +15,6 @@ import {
   RepositoryReport,
   shortOf,
   STAGE_NAMES,
-  Status,
   tb,
   tbOfGB,
   WEEK,
@@ -34,7 +32,7 @@ import {
  * what; each repository then gets a dashboard page, its jobs on a 24-hour
  * chart and what to do. Asked for one repository, only its own pages.
  */
-export const reportPage = (report: RepositoryReport, only: ReportRepository[] | undefined, timezone: string): string => {
+export const reportPage = (report: RepositoryReport, only: ReportRepository[] | undefined, timezone: string): ReportDocument => {
   const stamp = stampOf(report.at, timezone);
   const nowMinute = localClock(timezone)(report.at).minute;
   const view = { report, stamp, nowMinute };
@@ -60,7 +58,7 @@ export const reportPage = (report: RepositoryReport, only: ReportRepository[] | 
       pages.push(frame(['Репозитории', ...(repository.site ? [repository.site] : []), repository.short], (pageOf.get(repository) as number) + index, body)),
     );
   }
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Репозитории Veeam — ${stamp}</title><style>${fonts()}${STYLE}</style></head><body>${pages.join('\n')}</body></html>`;
+  return envelope({ lang: 'ru', title: `Репозитории Veeam — ${stamp}`, style: STYLE, body: pages.join('\n') });
 };
 
 interface View {
@@ -70,10 +68,9 @@ interface View {
 }
 
 // --- Words
-const STATUS_WORD: Record<Status, string> = { crit: 'Критично', warn: 'Внимание', ok: 'Норма', unknown: 'Нет данных' };
 /** The stylesheet's name for a status. */
-export const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'unk' : status);
-export const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}"><i></i>${STATUS_WORD[status]}</span>`;
+const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'unk' : status);
+const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}"><i></i>${STATUS_WORD[status]}</span>`;
 const freeTone = (repository: ReportRepository): string => (repository.freePercent < 10 ? 'crit' : repository.freePercent < 20 ? 'warn' : 'ok');
 const slug = (repository: ReportRepository): string => `r-${repository.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const jobsWord = (count: number) => plural(count, 'задача', 'задачи', 'задач');
@@ -105,9 +102,9 @@ const ICONS: Record<Icon | 'check' | 'alert' | 'arrow' | 'down' | 'pin', string>
   down: '<path d="M8 3v10M4 9l4 4 4-4"/>',
   pin: '<path d="M8 14s5-4.2 5-8A5 5 0 0 0 3 6c0 3.8 5 8 5 8z"/><circle cx="8" cy="6" r="1.6"/>',
 };
-export const icon = (name: keyof typeof ICONS, colour = '') =>
+const icon = (name: keyof typeof ICONS, colour = '') =>
   `<span class="ic ${colour}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg></span>`;
-export const glyph = (name: keyof typeof ICONS) =>
+const glyph = (name: keyof typeof ICONS) =>
   `<svg class="gl" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
 // --- Space: what jobs hold, what no job owns in disk terms, what is free
@@ -205,7 +202,7 @@ const axis = (nowMinute: number) =>
   `<div class="g-axis">${[0, 3, 6, 9, 12, 15, 18, 21].map((hour) => `<span style="left:${share(hour * 60)}%">${String(hour).padStart(2, '0')}</span>`).join('')}<em style="left:${share(nowMinute)}%">сейчас</em></div>`;
 
 // --- Small parts
-export const kpi = (label: string, value: string | number, unit: string, hint: string, colour = '') =>
+const kpi = (label: string, value: string | number, unit: string, hint: string, colour = '') =>
   `<div class="kpi ${colour}"><div class="k-l">${label}</div><div class="k-v">${value}<small>${unit}</small></div><div class="k-h">${hint}</div></div>`;
 const chip = (colour: string, text: string) => `<span class="chip ${colour}">${text}</span>`;
 const top = (crumb: string[], number: number, total: number, view: View) =>
@@ -531,31 +528,4 @@ const attachments = (view: View): string => {
       </div>
     </div>
   </div>`;
-};
-
-/** "13.10.2026 15:27" in the operator's zone. */
-export const stampOf = (at: number, timezone: string): string => {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-      .formatToParts(new Date(at))
-      .map((part) => [part.type, part.value]),
-  );
-  return `${parts.day}.${parts.month}.${parts.year} ${parts.hour}:${parts.minute}`;
-};
-
-/**
- * Inter, inside the page: the browser fetches nothing, and the server has no
- * fonts with Cyrillic of its own. Read once, a few hundred kilobytes.
- */
-let embedded: string | undefined;
-export const fonts = (): string => {
-  if (embedded === undefined) {
-    const css = require.resolve('@fontsource-variable/inter/index.css');
-    const dir = dirname(css);
-    embedded = readFileSync(css, 'utf8').replace(
-      /url\(\.\/files\/([^)]+)\)/g,
-      (_, file: string) => `url(data:font/woff2;base64,${readFileSync(join(dir, 'files', file)).toString('base64')})`,
-    );
-  }
-  return embedded;
 };

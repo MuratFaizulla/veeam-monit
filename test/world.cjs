@@ -167,11 +167,16 @@ function idleMonitor() {
     describeJobById: async (id, server) => ({ text: `карточка ${id}`, jobId: id, server }),
     describePoints: async (query) => ({ text: `точки ${query}`, about: 'points' }),
     describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
-    repositoryReport: async (query) => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
+    repositoryReport: (query) => ({
+      text: `⏳ отчёт ${query}`,
+      later: async () => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
+    }),
     repositoryChoices: () => [],
     jobChoices: async () => ({ server: SERVER, jobs: [] }),
-    jobReport: async (id) => ({ text: `отчёт задания ${id}`, document: { filename: 'job.pdf', content: Buffer.from('%PDF') } }),
-    repositoryReportAhead: () => ({ kind: 'coming', names: [], ready: true }),
+    jobReport: (id) => ({
+      text: `⏳ отчёт задания ${id}`,
+      later: async () => ({ text: `отчёт задания ${id}`, document: { filename: 'job.pdf', content: Buffer.from('%PDF') } }),
+    }),
     status: {
       lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
       trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,

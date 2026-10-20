@@ -7,7 +7,8 @@ import { dayIn, describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from
 import { JobHistory } from './job-reads';
 import { JobJudgement, Severity, Trouble, Verdict, verdictWords } from './job-standing';
 import { RunSize, runSizesOf, sizesOf } from './points-sizes';
-import { localClock, shortOf, STAGE_NAMES, Status } from './repository-report';
+import { Status } from './report-envelope';
+import { localClock, shortOf, STAGE_NAMES } from './repository-report';
 import { Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
 import { describeRetry, describeSchedule } from './schedule-planner';

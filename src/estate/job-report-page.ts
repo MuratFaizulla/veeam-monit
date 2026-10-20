@@ -2,8 +2,8 @@ import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
 import { calendarLabel, dayLabel, JobReport, JobRun, ReportMachine, sizeOf, spanOf } from './job-report';
+import { envelope, ReportDocument, stampOf, STATUS_WORD } from './report-envelope';
 import { STAGE_NAMES } from './repository-report';
-import { fonts, stampOf } from './repository-report-page';
 import { SessionReport } from './session-report';
 import { SESSION_STYLE, sessionsHtml } from './session-report-page';
 
@@ -16,9 +16,14 @@ import { SESSION_STYLE, sessionsHtml } from './session-report-page';
  * Veeam's colours. The first page is in Russian, the sessions in Veeam's
  * English.
  */
-export const jobReportPage = (report: JobReport, sessions: SessionReport, timezone: string): string => {
+export const jobReportPage = (report: JobReport, sessions: SessionReport, timezone: string): ReportDocument => {
   const stamp = stampOf(report.at, timezone);
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(report.name)} — ${stamp}</title><style>${fonts()}${STYLE}${SESSION_STYLE}</style></head><body>${summary(report, timezone, stamp)}${sessionsHtml(sessions, timezone)}</body></html>`;
+  return envelope({
+    lang: 'ru',
+    title: `${report.name} — ${stamp}`,
+    style: `${STYLE}${SESSION_STYLE}`,
+    body: `${summary(report, timezone, stamp)}${sessionsHtml(sessions, timezone)}`,
+  });
 };
 
 /** What fits the first page by construction: the browser grows a row to its content when it prints. */
@@ -33,7 +38,6 @@ const COLOUR = { success: '#00b050', warning: '#e8b32c', failed: '#e8645f', none
 const BAND = { crit: '#fb9895', warn: '#ffd96c', ok: '#00b050', unknown: '#a7a9ac' } as const;
 /** White on Veeam's yellow does not read; its other colours keep Veeam's white. */
 const INK = { crit: '#fff', warn: '#3d3d3d', ok: '#fff', unknown: '#fff' } as const;
-const STATUS_WORD = { crit: 'Критично', warn: 'Внимание', ok: 'Норма', unknown: 'Нет данных' } as const;
 
 const machinesWord = (count: number) => plural(count, 'машина', 'машины', 'машин');
 const runsWord = (count: number) => plural(count, 'запуск', 'запуска', 'запусков');

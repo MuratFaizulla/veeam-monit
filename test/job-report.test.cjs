@@ -423,7 +423,7 @@ test('a session still going says how far it has got, and its machines still goin
   assert.equal(session.totalSize, 40 * GB);
 });
 
-test('the page is Veeam\'s: its header, its day, its numbers, its Details; names escaped, nothing fetched', () => {
+test('the page is Veeam\'s: its header, its day, its numbers, its Details; names escaped', () => {
   const html = sessionReportPage(sessionReportOf(edgeReading({ job: { id: 'j1', name: 'OPS_<b>Edge</b>', type: 'Backup', result: 'failed' } }), TZ), TZ);
 
   assert.equal(html.match(/<div class="vb">/g).length, 6);
@@ -433,8 +433,6 @@ test('the page is Veeam\'s: its header, its day, its numbers, its Details; names
   assert.match(html, /<td class="k">Backup size<\/td>/);
   assert.match(html, />Details</);
   assert.match(html, /<span class="st bad">Error<\/span>/);
-  assert.match(html, /url\(data:font\/woff2;base64,/, 'the font is in the page');
-  assert.doesNotMatch(html, /https?:\/\//, 'the page fetches nothing');
 });
 
 /* ------------------------------------------------------------------ *
@@ -462,7 +460,6 @@ test('the file opens with a page that says how the job stands, and the sessions 
   assert.match(html, /@page sessions \{[^}]*margin: 9mm 10mm/);
   assert.match(html, /Backup job: OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
   assert.doesNotMatch(html, /OPS_<b>Edge/);
-  assert.doesNotMatch(html, /https?:\/\//, 'the page fetches nothing');
 });
 
 test('a replica is told by its runs, not by restore points the bot cannot see', () => {
@@ -697,6 +694,31 @@ test('a job\'s report has its month from the Job reads, its points from the Evid
   assert.deepEqual(reading.neighbourRuns.map((run) => run.jobId), ['n1']);
 });
 
+test('who else writes to the job\'s repository counts a replica, which names it only in its own settings', async () => {
+  // OPS_Replica keeps its metadata on r1; in the job list it names no repository at all.
+  const { veeam } = edgeServer({
+    '/api/v1/jobs': { data: [
+      { id: 'j1', name: 'OPS_Edge', storage: { backupRepositoryId: 'r1' } },
+      { id: 'n1', name: 'OPS_Files', storage: { backupRepositoryId: 'r1' } },
+      { id: 'n2', name: 'OPS_Replica', type: 'VSphereReplica' },
+      { id: 'n9', name: 'OPS_Elsewhere', storage: { backupRepositoryId: 'r9' } },
+    ] },
+    '/api/v1/jobs/n2': { id: 'n2', name: 'OPS_Replica', type: 'VSphereReplica', jobSettings: { metadataRepositoryId: 'r1' } },
+    '/api/v1/sessions': { data: [
+      { id: 'x1', jobId: 'n1', creationTime: recent(24.2), endTime: recent(23), result: { result: 'Success' } },
+      { id: 'x3', jobId: 'n2', creationTime: recent(24.1), endTime: recent(23.8), result: { result: 'Success' } },
+    ] },
+  });
+  const estate = { name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: edgeMonth(), evidence: { evidence: edgeEvidence() } };
+  const reading = await readJob(estate, 'j1', NOW, TZ, THRESHOLDS);
+
+  assert.deepEqual(reading.neighbours, [{ id: 'n1', name: 'OPS_Files' }, { id: 'n2', name: 'OPS_Replica' }]);
+  assert.deepEqual(reading.neighbourRuns.map((run) => run.jobId), ['n1', 'n2']);
+  // On the page, with whoever else wrote there during the newest run.
+  const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
+  assert.match(html, /Кто ещё писал в BKP03[\s\S]*OPS_Replica[\s\S]*2 из 2 заданий/);
+});
+
 test('what could not be read, of the month or beside it, is said, and the rest is kept; a job that is gone is none', async () => {
   const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
   const reader = new VeeamEstateReader(veeam, monitorAccount());
@@ -783,7 +805,13 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   await commands.settled();
 
   const [note] = w.api.sent();
-  assert.match(note.text, /^⏳ <b>Готовлю отчёт по заданию<\/b>\n\nЧитаю запуски, машины и точки за 30 дней/);
+  assert.equal(note.text, [
+    '⏳ <b>Готовлю отчёт по заданию</b>',
+    '',
+    // Its points are the last scan's: it reads none.
+    'Читаю запуски и машины за 30 дней — это 20–30 секунд.',
+    'PDF придёт сюда, а бот пока отвечает на другие команды.',
+  ].join('\n'));
   const order = w.api.calls.map((call) => call.method).filter((method) => method === 'sendMessage' || method === 'sendDocument');
   assert.deepEqual(order, ['sendMessage', 'sendDocument'], 'сначала «готовлю», потом файл');
   assert.ok(w.api.of('sendChatAction').some((call) => call.action === 'upload_document'));

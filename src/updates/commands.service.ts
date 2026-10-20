@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
-import { JOB_REPORT_DAYS, MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
+import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
@@ -337,40 +337,34 @@ export class TelegramCommandsService implements Answers {
   /**
    * `/repos` and the keys of the report menu — the Repository report as a
    * PDF. Reading every server takes a minute or two, so what is said at once
-   * is that it is coming and how long it takes, and the PDF follows; a name
-   * that matches no repository is said at once too, not after the wait.
+   * is what the report says it comes to — that it is coming and how long it
+   * takes — and the PDF follows; a name that matches no repository is said
+   * at once too, and nothing follows.
    */
   repositories(asked: Asked): Reply {
     const tooSoon = this.tooSoon();
     if (tooSoon) return tooSoon;
-    const query = asked.argument.trim();
-    const ahead = this.monitor.repositoryReportAhead(query);
-    if (ahead.kind === 'none') return { lines: [ahead.answer.text], markup: mainKeyboard() };
-    return {
-      lines: preparing(ahead.names.length ? ahead.names : query ? [query] : [], ahead.ready),
-      // Whoever pressed a repository's key gets the main menu back.
-      markup: mainMenu({ selective: true }),
-      later: () => this.uploading(String(asked.chat.id), () => this.answered(() => this.monitor.repositoryReport(query))),
-    };
+    const { text, later } = this.monitor.repositoryReport(asked.argument.trim());
+    if (!later) return { lines: [text], markup: mainKeyboard() };
+    // Whoever pressed a repository's key gets the main menu back.
+    return { lines: [text], markup: mainMenu({ selective: true }), later: this.sending(asked, later) };
   }
 
   /**
    * The 📄 Button under a Job card: that job's month as a PDF. A few dozen
-   * requests and a print, so it is said at once that it is coming, and the
-   * PDF follows, as the Repository report does.
+   * requests and a print, so what the report says it comes to is said at
+   * once, and the PDF follows, as the Repository report does.
    */
   private jobReport(asked: Asked, id: string, server?: string): Reply {
     const tooSoon = this.tooSoon();
     if (tooSoon) return tooSoon;
-    return {
-      lines: [
-        '⏳ <b>Готовлю отчёт по заданию</b>',
-        '',
-        `Читаю запуски, машины и точки за ${JOB_REPORT_DAYS} дней — это 20–30 секунд.`,
-        'PDF придёт сюда, а бот пока отвечает на другие команды.',
-      ],
-      later: () => this.uploading(String(asked.chat.id), () => this.answered(() => this.monitor.jobReport(id, server))),
-    };
+    const { text, later } = this.monitor.jobReport(id, server);
+    return { lines: [text], ...(later ? { later: this.sending(asked, later) } : {}) };
+  }
+
+  /** The report `later` makes, as the Reply that follows: the chat shows a file being sent meanwhile. */
+  private sending(asked: Asked, later: () => Promise<Answer>): () => Promise<Reply> {
+    return () => this.uploading(String(asked.chat.id), () => this.answered(later));
   }
 
   /**
@@ -644,17 +638,6 @@ const STANDING_WORD = {
   running: 'в работе',
   disabled: 'выключено',
 } as const;
-
-/** What is said at once when a report is asked for: that it is coming, and when. */
-const preparing = (names: string[], ready: boolean): string[] => [
-  names.length
-    ? `⏳ <b>Готовлю отчёт: ${names.map((name) => escapeHtml(name)).join(', ')}</b>`
-    : '⏳ <b>Готовлю отчёт по всем репозиториям</b>',
-  '',
-  ...(ready
-    ? ['Данные собраны недавно — PDF будет через несколько секунд.']
-    : ['Собираю данные со всех серверов Veeam — это 1–2 минуты.', 'PDF придёт сюда, а бот пока отвечает на другие команды.']),
-];
 
 /** How a server is doing, in the words of the server menu. */
 const standing = (server: ServerStatus): string => {

@@ -1,5 +1,5 @@
 import { escapeHtml as esc } from '../telegram/format';
-import { fonts } from './repository-report-page';
+import { envelope, ReportDocument } from './report-envelope';
 import { SessionBlock, SessionMachine, SessionReport, SessionStatus } from './session-report';
 
 /**
@@ -12,8 +12,8 @@ import { SessionBlock, SessionMachine, SessionReport, SessionStatus } from './se
  * pages of its own with margins (`SESSION_STYLE` keeps to them);
  * `sessionReportPage` is the same as a document by itself.
  */
-export const sessionReportPage = (report: SessionReport, timezone: string): string =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(report.name)} — sessions</title><style>${fonts()}${SESSION_STYLE}</style></head><body>${sessionsHtml(report, timezone)}</body></html>`;
+export const sessionReportPage = (report: SessionReport, timezone: string): ReportDocument =>
+  envelope({ lang: 'en', title: `${report.name} — sessions`, style: SESSION_STYLE, body: sessionsHtml(report, timezone) });
 
 export const sessionsHtml = (report: SessionReport, timezone: string): string => {
   const view: View = { report, timezone };

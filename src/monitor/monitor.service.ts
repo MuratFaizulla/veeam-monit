@@ -14,7 +14,7 @@ import { JobAlerts } from './job-alerts';
 import { ServerWatch } from './server-watch';
 import { escapeHtml, renderEvent } from '../telegram/format';
 import { Answer } from '../estate/answer';
-import { JobChoices, Monitor, MonitorHealth, ReportAhead, ReportChoice, Selection, ServerStatus } from './monitor';
+import { JobChoices, Monitor, MonitorHealth, ReportChoice, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates } from '../estate/server-estates';
 import { JobReports } from '../estate/job-reports';
 import { RepositoryReports } from '../estate/repository-reports';
@@ -249,9 +249,9 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     return this.answered(watch, await watch.estate.jobs.describePointsById(id));
   }
 
-  jobReport(id: string, server?: string): Promise<Answer> {
+  jobReport(id: string, server?: string): Answer {
     const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
-    return this.jobReports.answer(watch.estate, id);
+    return this.jobReports.asked(watch.estate, id);
   }
 
   async jobChoices(): Promise<JobChoices> {
@@ -261,16 +261,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   }
 
   /** Every server's, whichever is selected: a repository is shared by several. */
-  repositoryReport(query: string): Promise<Answer> {
-    return this.reports.answer(query);
+  repositoryReport(query: string): Answer {
+    return this.reports.asked(query);
   }
 
   repositoryChoices(): ReportChoice[] {
     return this.reports.choices();
-  }
-
-  repositoryReportAhead(query: string): ReportAhead {
-    return this.reports.ahead(query);
   }
 
   /* ---------------------------------------------------------------- *

@@ -6,6 +6,7 @@ import { loggedResults, MachineResult, VeeamEstateReader } from '../veeam/estate
 import { blameOf, sessionText } from '../veeam/session-text';
 import { VeeamJob, VeeamLogRecord, VeeamSession, VeeamTaskSession } from '../veeam/types';
 import { bottleneckOf, byLongest, Stage } from './run-speed';
+import { settled } from './settled';
 
 /**
  * Sessions read for one job — by its card and by its alert, which counts the
@@ -25,11 +26,11 @@ export const RECENT_SESSIONS = 30;
 const MACHINE_LOGS = 30;
 
 /*
- * A job's history, as the Job report reads it: how much is asked for, and how
- * fast. They used to be the report's own, and the card's speed had its own
- * pace and its own reading of a server without task sessions: six requests
- * at a time against five, and a 404 that was "no machines" to one and an
- * empty place to the other.
+ * A job's history, as the Job report reads it: how much is asked for — and
+ * how fast, six requests at a time, which is `./settled`'s. They used to be
+ * the report's own, and the card's speed had its own pace and its own reading
+ * of a server without task sessions: six requests at a time against five,
+ * and a 404 that was "no machines" to one and an empty place to the other.
  */
 
 /** The job's newest sessions asked for: a month of a daily job with every retry, and then some. */
@@ -40,8 +41,6 @@ const TASK_SESSIONS = 60;
 const LOG_SESSIONS = 6;
 /** Logs of the machines that did not end in a success, a request each: a failing month of a big job has hundreds. */
 const TASK_LOGS = 150;
-/** Requests in flight at a time, for whatever is read here: a hundred at once is a burst Veeam has no need of. */
-const AT_ONCE = 6;
 
 /**
  * One session of a job — one attempt, not one run.
@@ -333,30 +332,6 @@ const asTask = ({ name, result, reason }: MachineResult): VeeamTaskSession => ({
 /** A log's lines, one line each: Veeam breaks its errors over several. */
 const titlesOf = (records: VeeamLogRecord[]): string[] =>
   records.map((record) => (record.title ?? '').replace(/\s+/g, ' ').trim());
-
-/**
- * `work` over `items`, `AT_ONCE` at a time, and how each went, in its place,
- * as `Promise.allSettled` says it. A failure is kept to be said: the Job
- * report's reads used to leave an empty place, which nobody could tell from
- * a machine never saved.
- */
-const settled = async <T, R>(items: readonly T[], work: (item: T) => Promise<R>): Promise<Array<PromiseSettledResult<R>>> => {
-  const out = new Array<PromiseSettledResult<R>>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(AT_ONCE, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        try {
-          out[index] = { status: 'fulfilled', value: await work(items[index]) };
-        } catch (reason) {
-          out[index] = { status: 'rejected', reason };
-        }
-      }
-    }),
-  );
-  return out;
-};
 
 /** What of a read Veeam would not give, as the report says it: how many of how many, and the first reason. */
 const missed = (what: string, word: (count: number) => string, reads: Array<PromiseSettledResult<unknown>>): string[] => {

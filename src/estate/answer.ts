@@ -17,6 +17,12 @@ export interface Answer {
   server?: string;
   /** A file the answer is, with `text` as its caption: the Repository report's PDF. */
   document?: AnswerDocument;
+  /**
+   * The Answer this one says is coming: a report, read and printed once this
+   * one is said. What a report says meanwhile, and how long it takes, is the
+   * report's own.
+   */
+  later?: () => Promise<Answer>;
 }
 
 /** A file sent as an answer. */

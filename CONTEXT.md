@@ -229,13 +229,30 @@ it has been running more than six hours and three times its usual length.
 Moving a start is proposed only where the job's whole usual run stays inside
 the backup window, 18:00–07:00.
 
+A job **writes to** a repository when its backups go there or, a replica,
+its metadata does: the one repository a replica names, and only in its own
+settings, never in the job list. Both reports find who writes where by that
+one rule (`src/estate/repository-writers.ts`); the **Job report** used to
+take the job list's word for it, and a replica that wrote beside a job's
+newest Run was nobody.
+
 Read on demand only — a few hundred requests across every server, whichever
 is selected — one reading at a time, kept for half an hour. What it will be
 about is said before it is read: the cycle reads every repository each minute
 for its free space, which is enough to list them in the menu and to refuse a
-name that matches none, so only the report itself waits. A server that
-stops answering keeps what it said before it stopped. Printed by a headless
-Chromium (`REPORT_BROWSER`) from one HTML document laid out to the page.
+name that matches none, so only the report itself waits. What is said
+meanwhile, and how long it takes, is the report's to say, the Job report's
+too; the commands pass it on, and used to write both. A server that stops
+answering keeps what it said before it stopped.
+
+Printed, one at a time, by a headless Chromium (`REPORT_BROWSER`) from one
+HTML document laid out to the page, in the **report envelope** both reports'
+pages go in: the font inside it, and a rule that the browser fetches
+nothing, whatever a page names — which is what lets it run with no sandbox.
+The moment a report was read, the caption under its file and the file's name
+are the envelope's too (`src/estate/report-envelope.ts`). It used to be the
+Repository report's page: the Job report borrowed its font and its stamp,
+and every page kept the no-fetching rule by itself.
 
 What it says is `src/estate/repository-report.ts`, pure; reading and
 answering, `src/estate/repository-reports.ts`; the page,
@@ -290,9 +307,11 @@ machine of the job was printed in red as never saved.
 
 Read from the job's own server when asked — a few dozen requests, no restore
 point among them — and kept by nobody; printed by the same browser, one
-report at a time. The job's month — its attempts and their machines, the
-logs that say why, its configuration, and what could not be read — is asked
-of the **Job reads**.
+report at a time, in the same envelope. The job's month — its attempts and
+their machines, the logs that say why, its configuration, and what could not
+be read — is asked of the **Job reads**. Who else wrote to the repository
+is every job that **writes to** it, a replica among them, by the rule the
+Repository report reads.
 
 What it says is `src/estate/job-report.ts` and, for the sessions,
 `src/estate/session-report.ts`, pure; reading and answering,
@@ -849,6 +868,10 @@ severity, nowhere near whoever asked.
 An answer carries the ids of whatever it lets the reader ask about next, not
 only its text. That is what a **Button** is built from: a rendered job name is
 not an address.
+
+A report is answered twice: at once, with what the report says while it is
+read — that it is coming, and how long it takes — and then with its file,
+the Answer that follows (`later`). Both are the report's own.
 
 ## Answer log
 

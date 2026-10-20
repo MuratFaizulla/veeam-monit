@@ -4,11 +4,14 @@ import { AppConfig } from '../config/configuration';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamRepositoryState, VeeamSession } from '../veeam/types';
 import { Answer } from './answer';
+import { printedAnswer, STATUS_ICON, STATUS_WORD } from './report-envelope';
 import { ReportPrinter } from './report-printer';
-import { reportPage, stampOf } from './repository-report-page';
-import { RepositoryReading, RepositoryReport, ReportJob, reportOf, repositoriesNamed, ServerReading, tb } from './repository-report';
+import { reportPage } from './repository-report-page';
+import { RepositoryReading, RepositoryReport, reportOf, repositoriesNamed, ServerReading, tb } from './repository-report';
+import { jobsWriting, writesTo } from './repository-writers';
 import { loadOf } from './run-speed';
 import { ServerEstates } from './server-estates';
+import { settled, valueOf } from './settled';
 import { escapeHtml } from '../telegram/format';
 import { plural } from '../telegram/time';
 
@@ -17,8 +20,6 @@ import { plural } from '../telegram/time';
  * draws the same reading again rather than asking every server once more.
  */
 const FRESH_MS = 30 * 60_000;
-/** Requests in flight to one server at a time. */
-const POOL = 6;
 /** A job's newest finished attempts whose logs say how busy each stage was. */
 const LOAD_ATTEMPTS = 2;
 
@@ -30,16 +31,6 @@ export interface ReportChoice {
   /** Undefined when Veeam gives no capacity. */
   freePercent?: number;
 }
-
-/** What a report asked for now comes to, said before it is read. */
-export type ReportAhead =
-  /** Nothing by that name among the repositories there are: said at once, not in two minutes. */
-  | { kind: 'none'; answer: Answer }
-  /**
-   * Being read and printed. `names` are the repositories it is about, empty
-   * for every one; `ready` when a kept reading makes it seconds, not minutes.
-   */
-  | { kind: 'coming'; names: string[]; ready: boolean };
 
 /**
  * The Repository report, read and printed when somebody asks for it.
@@ -81,31 +72,39 @@ export class RepositoryReports {
     const chosen = repositoriesNamed(report, asked);
     if (asked && !chosen.length) return noSuch(asked, report);
     const content = await this.printer.print(reportPage(report, asked ? chosen : undefined, this.timezone));
-    const stamp = stampOf(report.at, this.timezone);
+    const covers = `Данные за ${report.days} дней`;
     if (asked) {
-      const words = chosen.map((repository) => `${STATUS_ICON[repository.status]} <b>${escapeHtml(repository.short)}</b> — ${escapeHtml(repository.verdict)}`);
-      return {
-        text: ['📄 <b>Репозитории Veeam</b>', ...words, '', `<i>Данные за ${report.days} дней, на ${stamp}.</i>`].join('\n'),
-        document: { filename: `Репозиторий ${chosen.map((repository) => repository.short.replace(/ · /g, ' ')).join(', ')} ${stamp.slice(0, 10)}.pdf`, content },
-      };
+      return printedAnswer(
+        {
+          title: 'Репозитории Veeam',
+          lines: chosen.map((repository) => `${STATUS_ICON[repository.status]} <b>${escapeHtml(repository.short)}</b> — ${escapeHtml(repository.verdict)}`),
+          covers,
+          file: `Репозиторий ${chosen.map((repository) => repository.short.replace(/ · /g, ' ')).join(', ')}`,
+        },
+        content,
+        report.at,
+        this.timezone,
+      );
     }
     const counts = (['crit', 'warn', 'ok', 'unknown'] as const)
       .map((status) => [status, report.repositories.filter((repository) => repository.status === status).length] as const)
       .filter(([, count]) => count)
-      .map(([status, count]) => `${STATUS_ICON[status]} ${count} ${STATUS_WORD[status]}`);
+      .map(([status, count]) => `${STATUS_ICON[status]} ${count} ${STATUS_WORD[status].toLowerCase()}`);
     const silent = report.servers.filter((server) => !server.answered).map((server) => escapeHtml(server.name));
     const orphaned = report.repositories.reduce((sum, repository) => sum + repository.orphanBytes, 0);
-    return {
-      text: [
-        `📄 <b>Репозитории Veeam</b> — ${report.repositories.length} ${plural(report.repositories.length, 'хранилище', 'хранилища', 'хранилищ')}`,
-        counts.join(' · '),
-        ...(orphaned ? [`Без задачи: ${tb(orphaned)} ТБ`] : []),
-        ...(silent.length ? [`Не ответил: ${silent.join(', ')}`] : []),
-        '',
-        `<i>Данные за ${report.days} дней, на ${stamp}. Один репозиторий: /repos имя.</i>`,
-      ].join('\n'),
-      document: { filename: `Репозитории Veeam ${stamp.slice(0, 10)}.pdf`, content },
-    };
+    return printedAnswer(
+      {
+        title: 'Репозитории Veeam',
+        beside: `${report.repositories.length} ${plural(report.repositories.length, 'хранилище', 'хранилища', 'хранилищ')}`,
+        lines: [counts.join(' · '), ...(orphaned ? [`Без задачи: ${tb(orphaned)} ТБ`] : []), ...(silent.length ? [`Не ответил: ${silent.join(', ')}`] : [])],
+        covers,
+        hint: 'Один репозиторий: /repos имя.',
+        file: 'Репозитории Veeam',
+      },
+      content,
+      report.at,
+      this.timezone,
+    );
   }
 
   /**
@@ -126,14 +125,30 @@ export class RepositoryReports {
     }));
   }
 
-  /** What `answer(query)` will come to, known now: a name that matches nothing, or how long it takes. */
-  ahead(query: string): ReportAhead {
+  /**
+   * The report asked for with `query`, answered at once, before it is read:
+   * that it is coming, about which repositories, and whether it takes a
+   * minute or two or, from a kept reading, seconds — with the PDF to follow.
+   * A name that matches nothing is said now, not in two minutes, and nothing
+   * follows.
+   */
+  asked(query: string): Answer {
     const asked = query.trim();
     const known = this.known();
     const chosen = repositoriesNamed(known, asked);
-    // Nothing seen yet, the minute after a start, is no reason to refuse a name.
-    if (asked && !chosen.length && known.repositories.length) return { kind: 'none', answer: noSuch(asked, known) };
-    return { kind: 'coming', names: asked ? chosen.map((repository) => repository.short) : [], ready: Boolean(this.fresh()) };
+    // Nothing seen yet, the minute after a start, is no reason to refuse a name: it is said as typed.
+    if (asked && !chosen.length && known.repositories.length) return noSuch(asked, known);
+    const names = !asked ? [] : chosen.length ? chosen.map((repository) => repository.short) : [asked];
+    return {
+      text: [
+        names.length ? `⏳ <b>Готовлю отчёт: ${names.map((name) => escapeHtml(name)).join(', ')}</b>` : '⏳ <b>Готовлю отчёт по всем репозиториям</b>',
+        '',
+        ...(this.fresh()
+          ? ['Данные собраны недавно — PDF будет через несколько секунд.']
+          : ['Собираю данные со всех серверов Veeam — это 1–2 минуты.', 'PDF придёт сюда, а бот пока отвечает на другие команды.']),
+      ].join('\n'),
+      later: () => this.answer(query),
+    };
   }
 
   /**
@@ -180,26 +195,9 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
   const reading: ServerReading = { server, repositories: [], jobs: [], attempts: [], loads: [], working: [], backups: [] };
   try {
     reading.repositories = await reader.repositoryStates();
-    const ids = new Set(reading.repositories.flatMap((repository) => (repository.id ? [repository.id] : [])));
-
-    // A replica names its repository only on a job read by id.
-    const listed = (await reader.jobConfigurations()).filter((job) => job.id);
-    const whole = await pooled(listed, (job) =>
-      !job.storage?.backupRepositoryId && /replica/i.test(job.type ?? '') ? reader.jobConfiguration(job.id as string) : Promise.resolve(job),
-    );
-    reading.jobs = listed.map((job, index): ReportJob => ({
-      id: job.id as string,
-      name: job.name ?? (job.id as string),
-      type: job.type,
-      disabled: Boolean(job.isDisabled),
-      schedule: job.schedule,
-      backupRepositoryId: (whole[index] ?? job).storage?.backupRepositoryId,
-      metadataRepositoryId: (whole[index] ?? job).jobSettings?.metadataRepositoryId,
-    }));
+    reading.jobs = await jobsWriting(reader);
     const writing = new Set(
-      reading.jobs
-        .filter((job) => ids.has(job.backupRepositoryId ?? '') || ids.has(job.metadataRepositoryId ?? ''))
-        .map((job) => job.id),
+      reading.jobs.filter((job) => reading.repositories.some((repository) => writesTo(job, repository.id))).map((job) => job.id),
     );
 
     const sessions = (await reader.sessionsCreatedAfter(since)).filter(
@@ -220,9 +218,9 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
       if (session.endTime && list.length < LOAD_ATTEMPTS) measured.set(session.jobId, [...list, session]);
     }
     const asked = [...measured.values()].flat();
-    const loads = await pooled(asked, async (session) => loadOf((await reader.sessionLog(session.id)).map((record) => record.title ?? '')));
+    const loads = await settled(asked, async (session) => loadOf((await reader.sessionLog(session.id)).map((record) => record.title ?? '')));
     reading.loads = asked.flatMap((session, index) => {
-      const load = loads[index];
+      const load = valueOf(loads[index]);
       return load ? [{ jobId: session.jobId, load }] : [];
     });
 
@@ -232,9 +230,9 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
 
     const backups = (await reader.backups()).filter((backup) => backup.id);
     // A backup whose files cannot be read is still listed, with no size.
-    const files = await pooled(backups, (backup) => reader.backupFiles(backup.id as string));
+    const files = await settled(backups, (backup) => reader.backupFiles(backup.id as string));
     reading.backups = backups.map((backup, index) => {
-      const its = files[index] ?? [];
+      const its = valueOf(files[index]) ?? [];
       const newest = its.map((file) => file.creationTime ?? '').sort().pop();
       return {
         name: backup.name ?? (backup.id as string),
@@ -259,25 +257,3 @@ const noSuch = (asked: string, report: RepositoryReport): Answer => ({
     `Есть: ${report.repositories.map((repository) => escapeHtml(repository.short)).join(', ')}.`,
   ].join('\n'),
 });
-
-/** `work` over `items`, `POOL` at a time. One that fails leaves its place empty. */
-const pooled = async <T, R>(items: T[], work: (item: T) => Promise<R>): Promise<Array<R | undefined>> => {
-  const out = new Array<R | undefined>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(POOL, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        try {
-          out[index] = await work(items[index]);
-        } catch {
-          out[index] = undefined;
-        }
-      }
-    }),
-  );
-  return out;
-};
-
-const STATUS_ICON = { crit: '🔴', warn: '🟡', ok: '🟢', unknown: '⚪' } as const;
-const STATUS_WORD = { crit: 'критично', warn: 'внимание', ok: 'норма', unknown: 'нет данных' } as const;

@@ -223,9 +223,6 @@ test('the whole report opens on a cover, then the cards, the attachments and eve
   assert.match(html, /<h2>Кто к чему подключён<\/h2>/);
   assert.match(html, /<h1 id="r-bkp01">BKP01/);
   assert.match(html, /<h1 id="r-br">BR/);
-  // Inter is inside the page: the browser fetches nothing.
-  assert.match(html, /@font-face[^}]+url\(data:font\/woff2;base64,/);
-  assert.doesNotMatch(html, /https?:\/\//);
 });
 
 test('one repository asked for gets its own pages and no cover', () => {
@@ -479,6 +476,29 @@ test('a second /repos within half an hour is a matter of seconds, and asks Veeam
   assert.equal(w.api.of('sendDocument').length, 1);
 });
 
+/* ------------------------------------------------------------------ *
+ * Printing: the envelope both reports' pages go in, and the browser
+ * ------------------------------------------------------------------ */
+
+test('a report\'s page goes in one envelope: its fonts inside it, and nothing fetched, whatever the page names', () => {
+  const { envelope } = require('../dist/estate/report-envelope');
+  const html = envelope({
+    lang: 'ru',
+    title: 'OPS_<b>Edge</b> — 14.10.2026 11:00',
+    style: '.js { color: #000; }',
+    body: '<img src="https://example.com/logo.png"><p>OPS_Edge</p>',
+  });
+
+  // Inter is inside the page: the server has no font with Cyrillic of its own.
+  assert.match(html, /@font-face[^}]+url\(data:font\/woff2;base64,/);
+  // The browser prints with no sandbox: the page may fetch nothing, not even what it names.
+  assert.match(html, /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">/);
+  assert.doesNotMatch(html.replace('https://example.com/logo.png', ''), /https?:\/\//, 'the envelope names no address of its own');
+  assert.match(html, /^<!doctype html><html lang="ru"><head><meta charset="utf-8">/);
+  assert.match(html, /<title>OPS_&lt;b&gt;Edge&lt;\/b&gt; — 14\.10\.2026 11:00<\/title>/);
+  assert.match(html, /\.js \{ color: #000; \}<\/style><\/head><body><img src="https:\/\/example\.com\/logo\.png"><p>OPS_Edge<\/p><\/body><\/html>$/);
+});
+
 test('without a browser the report says it cannot be printed rather than staying silent', async () => {
   const w = world({ REPORT_BROWSER: '/nowhere/chrome-headless-shell' });
   const { veeam } = veeamServer();
@@ -498,23 +518,26 @@ test('without a browser the report says it cannot be printed rather than staying
 });
 
 test('one report is printed at a time, and one that fails does not hold up the next', async () => {
+  const fs = require('node:fs');
   const { ReportPrinter } = require('../dist/estate/report-printer');
   const { configService } = require('./world.cjs');
-  const printer = new ReportPrinter(configService(appConfig({ REPORT_BROWSER: '/nowhere/chrome-headless-shell' })));
   let printing = 0;
   let most = 0;
-  printer.printed = async (html) => {
+  // A browser that takes its time, prints the page it was given as it is, and cannot print a broken one.
+  const browser = async (page, pdf) => {
     printing += 1;
     most = Math.max(most, printing);
     await new Promise((resolve) => setTimeout(resolve, 5));
     printing -= 1;
+    const html = fs.readFileSync(page, 'utf8');
     if (html === 'broken') throw new Error('Браузер не напечатал PDF');
-    return Buffer.from(html);
+    fs.writeFileSync(pdf, `%PDF ${html}`);
   };
+  const printer = new ReportPrinter(configService(appConfig()), browser);
 
   const prints = ['a', 'broken', 'c'].map((html) => printer.print(html).then(String, (error) => error.message));
 
-  assert.deepEqual(await Promise.all(prints), ['a', 'Браузер не напечатал PDF', 'c']);
+  assert.deepEqual(await Promise.all(prints), ['%PDF a', 'Браузер не напечатал PDF', '%PDF c']);
   assert.equal(most, 1);
 });
 
