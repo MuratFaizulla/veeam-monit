@@ -624,22 +624,6 @@ test('a job that is not failing is not asked which machine failed', async () => 
   assert.doesNotMatch(w.api.sent().at(-1).text, /Что именно не прошло/);
 });
 
-test('a schedule is read the way Veeam means it', () => {
-  const { describeSchedule, describeRetry } = require('../dist/estate/schedule-planner');
-
-  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }), 'ежедневно в 22:00');
-  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'WeekDays', localTime: '03:00' } }), 'по рабочим дням в 03:00');
-  assert.equal(describeSchedule({ runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 4 } }), 'каждые 4 ч');
-  assert.equal(describeSchedule({ runAutomatically: true, afterThisJob: { isEnabled: true, jobName: 'OPS_Exchange' } }), 'после «OPS_Exchange»');
-  // A filled-in schedule Veeam will never act on would otherwise be described
-  // as if it ran three times a week.
-  assert.equal(
-    describeSchedule({ runAutomatically: false, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }),
-    'только вручную',
-  );
-  assert.equal(describeRetry({ retry: { isEnabled: false } }), 'выключен');
-});
-
 test('a named proxy is told apart from automatic selection', () => {
   const { settingsOf } = require('../dist/estate/job-card');
   const names = {

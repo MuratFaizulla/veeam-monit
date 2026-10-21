@@ -3,7 +3,7 @@ import { durationOf, fromServerClock, instantOf, Job } from '../veeam/estate';
 import { linesOf, saidOf } from '../veeam/session-text';
 import { VeeamBackupFile, VeeamJob, VeeamRepositoryState, VeeamTaskSession } from '../veeam/types';
 import { PendingEvidence } from './evidence';
-import { dayIn, describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from './full-schedule';
+import { describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from './full-schedule';
 import { JobHistory } from './job-reads';
 import { JobJudgement, Severity, Trouble, Verdict, verdictWords } from './job-standing';
 import { RunSize, runSizesOf, sizesOf } from './points-sizes';
@@ -11,7 +11,7 @@ import { Status } from './report-envelope';
 import { localClock, shortOf, STAGE_NAMES } from './repository-report';
 import { Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
-import { describeRetry, describeSchedule } from './schedule-planner';
+import { dayIn, describeRetry, describeSchedule, scheduledStarts } from './schedule-planner';
 
 /**
  * What the Job report finds about one job over a month — every run, every
@@ -30,6 +30,9 @@ export const JOB_REPORT_DAYS = 30;
 
 const DAY = 86_400_000;
 const MINUTE = 60_000;
+/** How long before a scheduled start, and after it, a run still came for it. */
+const EARLY = 2 * 3_600_000;
+const LATE = 12 * 3_600_000;
 
 /**
  * What one job's report is made from: its month, as the Job reads give it —
@@ -214,8 +217,6 @@ const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : 0;
 };
-
-const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /* ------------------------------------------------------------------ *
  * The report
@@ -462,25 +463,25 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
 };
 
 /**
- * Scheduled starts of a daily schedule no run came for, after the job's first
- * run in the period: a job created last week owes nothing before it.
+ * The starts the schedule owes that no run came for, on the days after the
+ * job's first run in the period — a job created last week owes nothing
+ * before it — and before today, whose starts may still come.
  */
 const missedStarts = (runs: Array<{ start: number }>, schedule: VeeamJob['schedule'], from: number, at: number, timezone: string): number[] => {
-  const daily = schedule?.daily;
-  if (schedule?.runAutomatically === false || !daily?.isEnabled || !daily.localTime || !runs.length) return [];
-  const kind = (daily.dailyKind ?? '').toLowerCase();
-  const allowed = kind === 'everyday' ? WEEKDAYS : kind === 'weekdays' ? WEEKDAYS.slice(1, 6) : (daily.days ?? []).map((day) => day.toLowerCase());
-  const [hour, minute] = daily.localTime.split(':').map(Number);
-  const missed: number[] = [];
-  const first = dayIn(Math.max(from, runs[0].start), timezone) + DAY;
-  const today = dayIn(at, timezone);
-  for (let day = first; day < today; day += DAY) {
-    if (!allowed.includes(WEEKDAYS[new Date(day).getUTCDay()])) continue;
-    const due = fromServerClock(day + (hour * 60 + minute) * MINUTE, timezone);
-    // Late is not missing: a start queued for hours, past midnight even, still came.
-    if (!runs.some((run) => run.start >= due - 2 * 3_600_000 && run.start < due + 12 * 3_600_000)) missed.push(due);
-  }
-  return missed;
+  if (!runs.length) return [];
+  const first = fromServerClock(dayIn(Math.max(from, runs[0].start), timezone) + DAY, timezone);
+  const today = fromServerClock(dayIn(at, timezone), timezone);
+  // A day either side, for the starts next to the first and the last.
+  const owed = scheduledStarts(schedule, first - DAY, today + DAY, timezone);
+  return owed.filter((due, index) => {
+    if (due < first || due >= today) return false;
+    // Late is not missing: a start queued for hours, past midnight even, still
+    // came — but not past halfway to the next start, whose run that would be:
+    // a job started every six hours that skipped noon has not made it up at six.
+    const early = Math.min(EARLY, (due - (owed[index - 1] ?? -Infinity)) / 2);
+    const late = Math.min(LATE, ((owed[index + 1] ?? Infinity) - due) / 2);
+    return !runs.some((run) => run.start >= due - early && run.start < due + late);
+  });
 };
 
 export const dayLabel = (at: number, timezone: string): string =>

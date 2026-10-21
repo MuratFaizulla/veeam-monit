@@ -5,6 +5,7 @@ import { Status } from './report-envelope';
 import { ReportJob, writesTo } from './repository-writers';
 import { Load, Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
+import { timetableOf } from './schedule-planner';
 
 /**
  * The Repository report: every repository of every server, what writes to it
@@ -224,7 +225,6 @@ const DAY_NAMES = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 /** Weekdays in the order the report lists them, Monday first. */
 export const WEEK = [1, 2, 3, 4, 5, 6, 0];
 export const dayName = (day: number): string => DAY_NAMES[day];
-const DAY_IDS: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
 
 const TB = 1024 ** 4;
 /** Less than this is not worth a line. */
@@ -286,40 +286,39 @@ const dayRange = (days: number[]): string => {
   return runs.map((run) => (run.length >= 3 ? `${name(run[0])}–${name(run[run.length - 1])}` : run.map(name).join(', '))).join(', ');
 };
 
-/** A schedule as the report draws it. */
+/** A schedule as the report draws it: the planner's reading of it, in the report's words. */
 export const planOf = (schedule: VeeamSchedule | undefined): Plan => {
   const none: Plan = { label: 'вручную', days: [], starts: [], periodic: false };
-  if (!schedule?.runAutomatically) return none;
-  const minuteOf = (time: string | undefined) => (time ? Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)) : undefined);
-  if (schedule.daily?.isEnabled) {
-    const kind = (schedule.daily.dailyKind ?? '').toLowerCase();
-    const days =
-      kind === 'everyday' ? [0, 1, 2, 3, 4, 5, 6] : kind === 'weekdays' ? [1, 2, 3, 4, 5] : (schedule.daily.days ?? []).map((day) => DAY_IDS[day.toLowerCase()]).filter((day) => day !== undefined);
-    const start = minuteOf(schedule.daily.localTime);
-    return {
-      label: days.length === 7 ? 'ежедневно' : dayRange(days),
-      days,
-      starts: start === undefined ? [] : [start],
-      time: schedule.daily.localTime?.slice(0, 5),
-      periodic: false,
-    };
+  if (!schedule) return none;
+  const timetable = timetableOf(schedule);
+  const at = (minute: number | undefined) => (minute === undefined ? { starts: [] } : { starts: [minute], time: hhmm(minute) });
+  switch (timetable?.kind) {
+    case 'manual':
+      return none;
+    case 'daily': {
+      const days = timetable.weekdays;
+      return { label: days.length === 7 ? 'ежедневно' : dayRange(days), days, ...at(timetable.minute), periodic: false };
+    }
+    case 'monthly':
+      return { label: 'раз в месяц', days: [], ...at(timetable.minute), periodic: false };
+    case 'periodic': {
+      // A day's starts counted from midnight, as the chart has always drawn them: the minutes past the hour and the window are not drawn.
+      const { every } = timetable;
+      if (!every) return { ...none, label: 'другое' };
+      return {
+        label: `каждые ${every >= 60 ? `${num(every / 60, 0)} ч` : `${every} мин`}`,
+        days: [0, 1, 2, 3, 4, 5, 6],
+        starts: Array.from({ length: Math.floor(1440 / every) }, (_, index) => index * every),
+        periodic: true,
+      };
+    }
+    case 'after':
+      return { ...none, label: `после ${timetable.job ?? 'другой задачи'}` };
+    case 'continuous':
+      return { ...none, label: 'непрерывно' };
+    default:
+      return { ...none, label: 'другое' };
   }
-  if (schedule.monthly?.isEnabled) {
-    const start = minuteOf(schedule.monthly.localTime);
-    return { label: 'раз в месяц', days: [], starts: start === undefined ? [] : [start], time: schedule.monthly.localTime?.slice(0, 5), periodic: false };
-  }
-  if (schedule.periodically?.isEnabled && schedule.periodically.frequency) {
-    const every = (schedule.periodically.periodicallyKind ?? '').toLowerCase() === 'hours' ? schedule.periodically.frequency * 60 : schedule.periodically.frequency;
-    return {
-      label: `каждые ${every >= 60 ? `${num(every / 60, 0)} ч` : `${every} мин`}`,
-      days: [0, 1, 2, 3, 4, 5, 6],
-      starts: Array.from({ length: Math.floor(1440 / every) }, (_, index) => index * every),
-      periodic: true,
-    };
-  }
-  if (schedule.afterThisJob?.isEnabled) return { ...none, label: `после ${schedule.afterThisJob.jobName ?? 'другой задачи'}` };
-  if (schedule.continuously?.isEnabled) return { ...none, label: 'непрерывно' };
-  return { ...none, label: 'другое' };
 };
 
 /** The folder a repository points at, lower-cased, whatever address reaches it; undefined for a local disk. */

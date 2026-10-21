@@ -1,5 +1,5 @@
 import { VeeamFullBackups, VeeamJobStorage } from '../veeam/types';
-import { daysOf } from './schedule-planner';
+import { dayIn, daysOf, isMonthDay, MonthDay, monthDayOf, monthDaySaid, weekdayOf } from './schedule-planner';
 
 /**
  * When a job is set to take a Full, and which of those days went by without one.
@@ -27,24 +27,13 @@ const GRACE = 12 * 3_600_000;
 /** How far back missed days are counted from, at most. */
 const LOOKBACK_DAYS = 366;
 
-const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const MONTHS = [
-  'january', 'february', 'march', 'april', 'may', 'june',
-  'july', 'august', 'september', 'october', 'november', 'december',
-];
-/** Veeam's `dayNumberInMonth`, as a week of the month; -1 is the last. */
-const NTH: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, last: -1 };
-
 /** One kind of periodic Full a job is set to take. */
 export interface FullSchedule {
   kind: 'active' | 'synthetic';
   /** Weekly: the weekdays it is owed on, 0 being Sunday. */
   weekdays?: number[];
-  /**
-   * Monthly: the nth weekday of the month (-1 the last), or a date, in the
-   * listed months (1–12; every month when empty).
-   */
-  monthly?: { nth?: number; weekday?: number; date?: number; months: number[] };
+  /** Monthly: the day of the month, read as a monthly start's is. */
+  monthly?: MonthDay;
 }
 
 /**
@@ -62,23 +51,14 @@ export const fullSchedulesOf = (storage: VeeamJobStorage | undefined): FullSched
 const scheduleOf = (kind: FullSchedule['kind'], fulls: VeeamFullBackups | undefined): FullSchedule | undefined => {
   if (!fulls?.isEnabled) return undefined;
   if (fulls.weekly?.isEnabled) {
-    const weekdays = (fulls.weekly.days ?? [])
-      .map((day) => WEEKDAYS.indexOf(day.toLowerCase()))
-      .filter((day) => day >= 0);
+    const weekdays = (fulls.weekly.days ?? []).map(weekdayOf).filter((day): day is number => day !== undefined);
     return weekdays.length > 0 ? { kind, weekdays } : undefined;
   }
   const monthly = fulls.monthly;
   if (!monthly?.isEnabled) return undefined;
-  const months = (monthly.months ?? [])
-    .map((month) => MONTHS.indexOf(month.toLowerCase()) + 1)
-    .filter((month) => month > 0);
-  const which = (monthly.dayNumberInMonth ?? '').toLowerCase();
-  if (which === 'onday') {
-    return monthly.dayOfMonths ? { kind, monthly: { date: monthly.dayOfMonths, months } } : undefined;
-  }
-  const nth = NTH[which];
-  const weekday = WEEKDAYS.indexOf((monthly.dayOfWeek ?? '').toLowerCase());
-  return nth && weekday >= 0 ? { kind, monthly: { nth, weekday, months } } : undefined;
+  // The Full's date is `dayOfMonths`, a monthly start's `dayOfMonth`.
+  const day = monthDayOf(monthly, monthly.dayOfMonths);
+  return day ? { kind, monthly: day } : undefined;
 };
 
 /**
@@ -122,43 +102,11 @@ export const nextFullDay = (
 
 /** Whether `schedule` owes a Full on `day`, a `Date.UTC` midnight. */
 const isOwed = (schedule: FullSchedule, day: number): boolean => {
-  const date = new Date(day);
-  const weekday = date.getUTCDay();
-  if (schedule.weekdays) return schedule.weekdays.includes(weekday);
-  const monthly = schedule.monthly;
-  if (!monthly) return false;
-  if (monthly.months.length > 0 && !monthly.months.includes(date.getUTCMonth() + 1)) return false;
-  if (monthly.date !== undefined) return date.getUTCDate() === monthly.date;
-  if (weekday !== monthly.weekday) return false;
-  if (monthly.nth === -1) return new Date(day + 7 * DAY).getUTCMonth() !== date.getUTCMonth();
-  return Math.ceil(date.getUTCDate() / 7) === monthly.nth;
-};
-
-const formatters = new Map<string, Intl.DateTimeFormat>();
-
-/**
- * The calendar day `at` falls on in `timezone`, as its `Date.UTC` midnight:
- * stepping a day is adding a day, whatever the zone does with its clocks.
- */
-export const dayIn = (at: number, timezone: string): number => {
-  let formatter = formatters.get(timezone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone || undefined,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    formatters.set(timezone, formatter);
-  }
-  const parts = formatter.formatToParts(new Date(at));
-  const part = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
-  return Date.UTC(part('year'), part('month') - 1, part('day'));
+  if (schedule.weekdays) return schedule.weekdays.includes(new Date(day).getUTCDay());
+  return schedule.monthly ? isMonthDay(schedule.monthly, day) : false;
 };
 
 const KIND: Record<FullSchedule['kind'], string> = { active: 'Active Full', synthetic: 'Synthetic Full' };
-/** "в 3-ю ср месяца": the week of the month, as it is said after "в". */
-const NTH_SAID: Record<number, string> = { 1: '1-ю', 2: '2-ю', 3: '3-ю', 4: '4-ю', [-1]: 'последнюю' };
 
 /**
  * "Active Full по сб", "Active Full в 3-ю ср месяца", "Synthetic Full 1-го
@@ -169,13 +117,8 @@ export const describeFulls = (schedules: FullSchedule[]): string => {
   return schedules
     .map((schedule) => {
       const kind = KIND[schedule.kind];
-      if (schedule.weekdays) return `${kind} по ${daysOf(schedule.weekdays.map((day) => WEEKDAYS[day]))}`;
-      const monthly = schedule.monthly;
-      if (monthly?.date !== undefined) return `${kind} ${monthly.date}-го числа`;
-      if (monthly?.nth !== undefined && monthly.weekday !== undefined) {
-        return `${kind} в ${NTH_SAID[monthly.nth]} ${daysOf([WEEKDAYS[monthly.weekday]])} месяца`;
-      }
-      return `${kind} ежемесячно`;
+      if (schedule.weekdays) return `${kind} по ${daysOf(schedule.weekdays)}`;
+      return schedule.monthly ? `${kind} ${monthDaySaid(schedule.monthly)}` : `${kind} ежемесячно`;
     })
     .join(', ');
 };

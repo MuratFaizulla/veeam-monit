@@ -141,8 +141,9 @@ Saturday), so a day without one is a Full that did not happen, not a schedule
 that never asked for it. A day counts twelve hours after it ends, so a Full that
 starts at 23:40 is late rather than missed.
 
-Owned by `src/estate/full-schedule.ts`. A missed Full is one of the things
-the **Verdict** can say of a job; see **Standing**.
+Owned by `src/estate/full-schedule.ts`; a monthly day is read as a
+**Scheduled start**'s is. A missed Full is one of the things the **Verdict**
+can say of a job; see **Standing**.
 
 ## Standing
 
@@ -189,6 +190,29 @@ claimed about missed Runs.
 
 Inferred, never read from the schedule. Computed once, in the Evidence, because
 two modules deriving it from the same timestamps is two chances to disagree.
+
+## Scheduled start
+
+A moment a job's schedule has Veeam start it by itself, as opposed to how
+often it actually runs (**Cadence**): daily on its days at its time; monthly on
+its day of the month — a date, or the first to the last of a weekday — in its
+months; or periodically, every so many hours or minutes counted from
+midnight, past the hour as set, in the hours its window permits. A job
+started by hand, after another job or continuously has none: nothing in its
+schedule says when. The times are the Veeam server's clock, taken to be in
+`TELEGRAM_TIMEZONE`. A monthly day is the week Veeam names, not the date it
+fills in beside it.
+
+The schedule is read once (`timetableOf`): the **Job report** counts its
+missed starts against the starts it owes, the **Job card** and both reports
+say it in its words, 📅 names its kind, and the **Repository report** draws a
+week of it. A **Missed Full**'s day of the month is read by the same rule.
+It used to be read four times; the Job report's copy knew daily schedules
+only, so a monthly or a periodic job never missed a start, and the words said
+a job on the fourth Saturday ran on the 1st, the date beside it. 📅 lists
+today's starts by Veeam's own next run, not by the reading.
+
+Owned by `src/estate/schedule-planner.ts`.
 
 ## Repository capacity
 
@@ -293,8 +317,11 @@ names that no Run took on is **absent** — deleted, renamed or made again in
 vCenter. A Run still going counts for neither side. A machine is saved when a
 Run saved it, a replica's as much as a backup's: the Evidence keeps no
 machine's points apart, and a replica's are on the target host, which the
-bot does not read. A scheduled start no Run came for within twelve hours of
-it is a missed start, counted only after the job's first Run of the month.
+bot does not read. A **Scheduled start** no Run came for — from two hours
+before it to twelve after, and never past halfway to the next one, so a job
+started every six hours that skipped noon has not made it up at six — is a
+missed start, counted on the days after the job's first Run of the month and
+before today.
 
 A machine is judged only by the Runs whose machines were read. On a server
 whose REST API is 1.1, which has no task sessions, a session's machines are

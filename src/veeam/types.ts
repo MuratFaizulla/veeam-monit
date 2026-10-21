@@ -198,8 +198,13 @@ export interface VeeamSchedule {
   };
   periodically?: {
     isEnabled?: boolean;
+    /** `Hours`, `Minutes`; the model also names `Seconds` and `Days`. */
     periodicallyKind?: string;
     frequency?: number;
+    /** The hours of each day a start is permitted in. */
+    backupWindow?: VeeamBackupWindow;
+    /** Minutes past the hour an hourly start is made at. */
+    startTimeWithinAnHour?: number;
   };
   continuously?: { isEnabled?: boolean };
   afterThisJob?: { isEnabled?: boolean; jobName?: string | null };
@@ -208,6 +213,14 @@ export interface VeeamSchedule {
     retryCount?: number;
     awaitMinutes?: number;
   };
+}
+
+/**
+ * The days and hours a job may be started in: each day's 24 hours as
+ * "0,0,…,1,1", 1 where a start is permitted.
+ */
+export interface VeeamBackupWindow {
+  days?: Array<{ day?: string; hours?: string }>;
 }
 
 /** One protected object, as the job configuration names it. */

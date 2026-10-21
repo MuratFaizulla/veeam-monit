@@ -144,6 +144,35 @@ test('a job is told by its runs, a retry folded into the run it retried, and a s
   assert.equal(report.usual, 30);
 });
 
+test('a monthly job owes its start on its day of the month, and one that did not come is missed', () => {
+  // On the fourth Saturday at 22:00, as Veeam's own example has it — with the date beside it that Veeam does not go by.
+  const report = jobReportOf(edgeReading({
+    at: Date.parse('2026-10-26T06:00:00Z'), // 11:00 on Monday 26.10, local
+    configured: {
+      ...edgeRead({}).configured,
+      schedule: { runAutomatically: true, monthly: { isEnabled: true, dayNumberInMonth: 'Fourth', dayOfWeek: 'saturday', dayOfMonth: 1, localTime: '22:00' } },
+    },
+    attempts: [attempt('m1', '2026-09-26T22:00:00+05:00', 40, 'success', [task('edge-01', 'success'), task('db-01', 'success'), task('web-01', 'success')])],
+  }), TZ);
+
+  assert.deepEqual(report.missed.map(local), ['24.10, 22:00']);
+});
+
+test('a job started every six hours misses the start it skipped, which the next one does not make up for', () => {
+  const night = (day, hour) => attempt(`s${day}${hour}`, `2026-10-${day}T${hour}:00:00+05:00`, 30, 'success', [task('db-01', 'success'), task('web-01', 'success')]);
+  const report = jobReportOf(edgeReading({
+    configured: { ...edgeRead({}).configured, schedule: { runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 6 } } },
+    // Newest first; nothing at 12:00 on 12.10.
+    attempts: [
+      night(13, 18), night(13, 12), night(13, '06'), night(13, '00'),
+      night(12, 18), night(12, '06'), night(12, '00'),
+      night(11, '00'),
+    ],
+  }), TZ);
+
+  assert.deepEqual(report.missed.map(local), ['12.10, 12:00']);
+});
+
 test('a machine no run saves comes first, and one a retry saved says so', () => {
   const report = jobReportOf(edgeReading(), TZ);
 

@@ -202,9 +202,10 @@ test('a repository is asked for by its short name, its full name or a part of ei
 });
 
 test('a schedule is drawn as the days and the time it starts', () => {
+  // Which days and minutes those are is the planner's reading, tested with it (runs.test.cjs); here, how the report draws them.
   assert.deepEqual(planOf(nightly('22:30')), { label: 'ежедневно', days: [0, 1, 2, 3, 4, 5, 6], starts: [1350], time: '22:30', periodic: false });
   assert.equal(planOf({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'WeekDays', localTime: '01:00' } }).label, 'пн–пт');
-  assert.equal(planOf({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'SelectedDays', days: ['Friday', 'Tuesday'], localTime: '01:00' } }).label, 'вт, пт');
+  assert.equal(planOf({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'SelectedDays', days: ['tuesday', 'friday'], localTime: '01:00' } }).label, 'вт, пт');
   assert.equal(planOf({ runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 4 } }).starts.length, 6);
   assert.equal(planOf({ runAutomatically: false }).label, 'вручную');
 });

@@ -832,6 +832,109 @@ test('the Evidence keeps each job\'s Full schedule from its configuration', () =
 });
 
 /* ------------------------------------------------------------------ *
+ * Scheduled starts: what a job's schedule owes, read once
+ *
+ * The schedule used to be read four times: by the planner for its words, by
+ * the Repository report for its chart, by the Job report for its missed
+ * starts — daily ones only, with a weekday table of its own — and, for the
+ * Fulls, by full-schedule. The starts are the planner's now.
+ * ------------------------------------------------------------------ */
+
+const { scheduledStarts, describeSchedule, describeRetry } = require('../dist/estate/schedule-planner');
+
+/** "пн, 05.10, 22:00": a start as the server's clock reads it. */
+const onServer = (at) => new Intl.DateTimeFormat('ru-RU', {
+  timeZone: QYZYLORDA, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(new Date(at));
+/** The starts `schedule` owes from one of the server's midnights to another. */
+const owedBetween = (schedule, from, to) =>
+  scheduledStarts(schedule, Date.parse(`${from}T00:00:00+05:00`), Date.parse(`${to}T00:00:00+05:00`), QYZYLORDA).map(onServer);
+
+test('a daily schedule owes a start at its time on each of its days, by the server\'s clock', () => {
+  const daily = (fields) => ({ runAutomatically: true, daily: { isEnabled: true, ...fields } });
+
+  assert.deepEqual(owedBetween(daily({ dailyKind: 'Everyday', localTime: '22:00' }), '2026-10-05', '2026-10-08'), [
+    'пн, 05.10, 22:00', 'вт, 06.10, 22:00', 'ср, 07.10, 22:00',
+  ]);
+  assert.deepEqual(owedBetween(daily({ dailyKind: 'WeekDays', localTime: '03:00' }), '2026-10-09', '2026-10-14'), [
+    'пт, 09.10, 03:00', 'пн, 12.10, 03:00', 'вт, 13.10, 03:00',
+  ]);
+  // Veeam lists the chosen days in any order, and not always in lower case.
+  assert.deepEqual(owedBetween(daily({ dailyKind: 'SelectedDays', days: ['Friday', 'tuesday'], localTime: '01:30' }), '2026-10-05', '2026-10-12'), [
+    'вт, 06.10, 01:30', 'пт, 09.10, 01:30',
+  ]);
+  // 22:00 on the server's clock, five hours ahead of UTC.
+  const [first] = scheduledStarts(daily({ dailyKind: 'Everyday', localTime: '22:00' }), Date.parse('2026-10-05T00:00:00+05:00'), Date.parse('2026-10-06T00:00:00+05:00'), QYZYLORDA);
+  assert.equal(new Date(first).toISOString(), '2026-10-05T17:00:00.000Z');
+
+  // A job started by hand owes nothing, whatever its schedule says; a schedule with no time, nothing anybody could miss.
+  assert.deepEqual(owedBetween({ ...daily({ dailyKind: 'Everyday', localTime: '22:00' }), runAutomatically: false }, '2026-10-05', '2026-10-08'), []);
+  assert.deepEqual(owedBetween(daily({ dailyKind: 'Everyday' }), '2026-10-05', '2026-10-08'), []);
+});
+
+test('a monthly schedule owes its start on its week\'s weekday, or on its date, in its months', () => {
+  const monthly = (fields) => ({ runAutomatically: true, monthly: { isEnabled: true, localTime: '22:00', ...fields } });
+
+  // Veeam's own example: the fourth Saturday, with a date beside it that Veeam does not go by.
+  assert.deepEqual(owedBetween(monthly({ dayNumberInMonth: 'Fourth', dayOfWeek: 'saturday', dayOfMonth: 1 }), '2026-09-01', '2026-12-01'), [
+    'сб, 26.09, 22:00', 'сб, 24.10, 22:00', 'сб, 28.11, 22:00',
+  ]);
+  assert.deepEqual(owedBetween(monthly({ dayNumberInMonth: 'Last', dayOfWeek: 'wednesday' }), '2026-09-01', '2026-12-01'), [
+    'ср, 30.09, 22:00', 'ср, 28.10, 22:00', 'ср, 25.11, 22:00',
+  ]);
+  assert.deepEqual(owedBetween(monthly({ dayNumberInMonth: 'OnDay', dayOfMonth: 15, months: ['October', 'December'] }), '2026-09-01', '2026-12-01'), [
+    'чт, 15.10, 22:00',
+  ]);
+});
+
+test('a periodic schedule owes a start every so many hours or minutes, in the hours its window permits', () => {
+  const periodic = (fields) => ({ runAutomatically: true, periodically: { isEnabled: true, ...fields } });
+  const hours = (permitted) => Array.from({ length: 24 }, (_, hour) => (permitted.includes(hour) ? 1 : 0)).join(',');
+
+  assert.deepEqual(owedBetween(periodic({ periodicallyKind: 'Hours', frequency: 6 }), '2026-10-05', '2026-10-06'), [
+    'пн, 05.10, 00:00', 'пн, 05.10, 06:00', 'пн, 05.10, 12:00', 'пн, 05.10, 18:00',
+  ]);
+  // «Start time within an hour»: so many minutes past it.
+  assert.deepEqual(owedBetween(periodic({ periodicallyKind: 'Hours', frequency: 8, startTimeWithinAnHour: 15 }), '2026-10-05', '2026-10-06'), [
+    'пн, 05.10, 00:15', 'пн, 05.10, 08:15', 'пн, 05.10, 16:15',
+  ]);
+  // Permitted on Mondays from 22:00 and on Tuesdays until 01:00, as the server's clock reads it.
+  const window = { days: [
+    { day: 'monday', hours: hours([22, 23]) },
+    { day: 'tuesday', hours: hours([0]) },
+    ...['wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((day) => ({ day, hours: hours([]) })),
+  ] };
+  assert.deepEqual(owedBetween(periodic({ periodicallyKind: 'Minutes', frequency: 30, backupWindow: window }), '2026-10-05', '2026-10-08'), [
+    'пн, 05.10, 22:00', 'пн, 05.10, 22:30', 'пн, 05.10, 23:00', 'пн, 05.10, 23:30', 'вт, 06.10, 00:00', 'вт, 06.10, 00:30',
+  ]);
+  // A period Veeam did not say is nothing anybody could miss.
+  assert.deepEqual(owedBetween(periodic({ periodicallyKind: 'Hours' }), '2026-10-05', '2026-10-06'), []);
+});
+
+test('a schedule is said the way Veeam means it, by the day it starts the job on', () => {
+  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }), 'ежедневно в 22:00');
+  assert.equal(describeSchedule({ runAutomatically: true, daily: { isEnabled: true, dailyKind: 'WeekDays', localTime: '03:00' } }), 'по рабочим дням в 03:00');
+  assert.equal(describeSchedule({ runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 4 } }), 'каждые 4 ч');
+  assert.equal(describeSchedule({ runAutomatically: true, afterThisJob: { isEnabled: true, jobName: 'OPS_Exchange' } }), 'после «OPS_Exchange»');
+  // The date Veeam fills in beside a week of the month is not the day it goes by: this one was said as «1-го числа».
+  assert.equal(
+    describeSchedule({ runAutomatically: true, monthly: { isEnabled: true, dayNumberInMonth: 'Fourth', dayOfWeek: 'saturday', dayOfMonth: 1, localTime: '22:00' } }),
+    'ежемесячно, в 4-ю сб месяца в 22:00',
+  );
+  assert.equal(
+    describeSchedule({ runAutomatically: true, monthly: { isEnabled: true, dayNumberInMonth: 'OnDay', dayOfMonth: 15, localTime: '22:00' } }),
+    'ежемесячно, 15-го числа в 22:00',
+  );
+  // A filled-in schedule Veeam will never act on would otherwise be described
+  // as if it ran three times a week.
+  assert.equal(
+    describeSchedule({ runAutomatically: false, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } }),
+    'только вручную',
+  );
+  assert.equal(describeRetry({ retry: { isEnabled: false } }), 'выключен');
+});
+
+/* ------------------------------------------------------------------ *
  * Machine outcomes: each failed session asked once
  * ------------------------------------------------------------------ */
 
