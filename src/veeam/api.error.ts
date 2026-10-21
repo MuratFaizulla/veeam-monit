@@ -37,3 +37,19 @@ export class VeeamApiError extends Error {
     return this.upstreamStatus === 401 || this.upstreamStatus === 403;
   }
 }
+
+/**
+ * A failed read as a report says it: short, in Russian, and without Veeam's
+ * own words, which for a connection that failed name the server's address —
+ * nothing to print in a PDF sent to a chat. The words in full are in the
+ * log already, where the request that failed wrote them.
+ */
+export const readFailureOf = (error: unknown): string => {
+  if (!(error instanceof VeeamApiError)) return 'ошибка чтения';
+  const status = error.upstreamStatus;
+  if (status === null) return 'Veeam не ответил';
+  if (status === 401 || status === 403) return `Veeam не дал доступа (HTTP ${status})`;
+  if (status === 404) return 'Veeam этого не отдаёт (HTTP 404)';
+  if (status >= 500) return `ошибка на стороне Veeam (HTTP ${status})`;
+  return `Veeam ответил HTTP ${status}`;
+};

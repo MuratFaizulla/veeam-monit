@@ -331,7 +331,9 @@ whose REST API is 1.1, which has no task sessions, a session's machines are
 what its log says of each — how it ended and why, without times or sizes —
 as the alerts read them. A session whose machines Veeam would not give
 leaves a machine none of the Runs read took on **unknown**: said so, and
-neither never saved nor absent; the page says what could not be read. Both
+neither never saved nor absent; the page says what could not be read, and
+why in a few Russian words (`readFailureOf`), never in Veeam's, which for a
+connection that failed name the server's address. Both
 used to be an empty place the report could not tell from none, and every
 machine of the job was printed in red as never saved.
 

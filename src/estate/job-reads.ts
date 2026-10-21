@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { plural } from '../telegram/time';
-import { VeeamApiError } from '../veeam/api.error';
+import { readFailureOf, VeeamApiError } from '../veeam/api.error';
 import { instantOf, Job } from '../veeam/estate';
 import { loggedResults, MachineResult, VeeamEstateReader } from '../veeam/estate-reader.service';
 import { blameOf, sessionText } from '../veeam/session-text';
@@ -250,7 +250,7 @@ export class VeeamJobReads implements JobReads {
     const missing: string[] = [];
     const [configured, sessions] = await Promise.all([
       this.reader.jobConfiguration(job.id).catch((error: Error) => {
-        missing.push(`настройки: ${error.message}`);
+        missing.push(`настройки: ${readFailureOf(error)}`);
         return undefined;
       }),
       this.reader.recentSessions(job.id, HISTORY_SESSIONS),
@@ -336,7 +336,7 @@ const titlesOf = (records: VeeamLogRecord[]): string[] =>
 /** What of a read Veeam would not give, as the report says it: how many of how many, and the first reason. */
 const missed = (what: string, word: (count: number) => string, reads: Array<PromiseSettledResult<unknown>>): string[] => {
   const failed = reads.filter((read): read is PromiseRejectedResult => read.status === 'rejected');
-  return failed.length ? [`${what} ${failed.length} ${word(failed.length)} из ${reads.length}: ${(failed[0].reason as Error).message}`] : [];
+  return failed.length ? [`${what} ${failed.length} ${word(failed.length)} из ${reads.length}: ${readFailureOf(failed[0].reason)}`] : [];
 };
 
 /** After a number, in «машины 3 сессий из 60». */

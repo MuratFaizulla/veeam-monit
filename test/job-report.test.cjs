@@ -620,7 +620,8 @@ test('the Job reads read a job\'s month: its attempts, their machines — from t
     ]),
     '/api/v1/sessions/s3/taskSessions': { data: [task('web-01', 'None')] },
     '/api/v1/sessions/s2/taskSessions': { data: [{ ...task('db-01', 'Failed', 'Getting VM info from vSphere'), id: 'tf' }, { ...task('web-01', 'Success'), id: 'ts' }] },
-    '/api/v1/sessions/s1/taskSessions': () => { throw new Error('The Veeam server did not respond within 30000 ms'); },
+    // Veeam's own words name the server's address, which has no place in a PDF sent to a chat.
+    '/api/v1/sessions/s1/taskSessions': () => { throw new VeeamApiError('Failed to reach the Veeam server at https://veeam.example.com:9419 (ECONNREFUSED)', null); },
     // Only a machine that did not end in a success has its log read: its own outcome says only the step.
     '/api/v1/taskSessions/tf/logs': { records: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] },
     // The newest finished ones say what held them back; the one still going has not said yet.
@@ -634,12 +635,12 @@ test('the Job reads read a job\'s month: its attempts, their machines — from t
   assert.deepEqual(month.taskLogs, { tf: [{ status: 'Failed', title: 'Error: Cannot get service content.' }] });
   assert.deepEqual(month.bottlenecks, ['target', 'source']);
   // Machines Veeam would not give are not known, rather than none: that is said.
-  assert.deepEqual(month.missing, ['машины 1 сессии из 3: The Veeam server did not respond within 30000 ms']);
+  assert.deepEqual(month.missing, ['машины 1 сессии из 3: Veeam не ответил']);
 
   // A server whose REST API is 1.1 has no task sessions: each machine's outcome is in the session's log, read once.
   const logged = [];
   const older = await reads({
-    '/api/v1/jobs/j1': () => { throw new Error('socket hang up'); },
+    '/api/v1/jobs/j1': () => { throw new VeeamApiError('Veeam API responded with HTTP 500', 500); },
     '/api/v1/sessions': sessions([{ id: 'o1', jobId: 'j1', creationTime: recent(24), endTime: recent(23.5), result: { result: 'Failed' } }]),
     '/api/v1/sessions/o1/taskSessions': () => { throw new VeeamApiError('Not found', 404); },
     '/api/v1/sessions/o1/logs': () => {
@@ -658,7 +659,7 @@ test('the Job reads read a job\'s month: its attempts, their machines — from t
   ]);
   assert.deepEqual(older.bottlenecks, ['target']);
   assert.deepEqual(logged, ['o1']);
-  assert.deepEqual(older.missing, ['настройки: socket hang up']);
+  assert.deepEqual(older.missing, ['настройки: ошибка на стороне Veeam (HTTP 500)']);
 });
 
 /**
@@ -764,14 +765,14 @@ test('who else writes to the job\'s repository counts a replica, which names it 
 });
 
 test('what could not be read, of the month or beside it, is said, and the rest is kept; a job that is gone is none', async () => {
-  const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
+  const { veeam } = edgeServer({ '/api/v1/backups': () => { throw new VeeamApiError('The Veeam server did not respond within 30000 ms', null); } });
   const reader = new VeeamEstateReader(veeam, monitorAccount());
   // No scan has finished on this server: that is said, and is no failure of this read.
   const pending = { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' };
-  const estate = { name: 'BAAS', reader, reads: edgeMonth({ missing: ['машины 1 сессии из 2: socket hang up'] }), evidence: { evidence: pending } };
+  const estate = { name: 'BAAS', reader, reads: edgeMonth({ missing: ['машины 1 сессии из 2: Veeam не ответил'] }), evidence: { evidence: pending } };
   const reading = await readJob(estate, 'j1', NOW, TZ, THRESHOLDS);
 
-  assert.equal(reading.error, 'машины 1 сессии из 2: socket hang up; бэкапы: The Veeam server did not respond within 30000 ms');
+  assert.equal(reading.error, 'машины 1 сессии из 2: Veeam не ответил; бэкапы: Veeam не ответил');
   assert.equal(reading.attempts.length, 2);
   assert.deepEqual(reading.files, []);
   assert.deepEqual(reading.evidence, pending);

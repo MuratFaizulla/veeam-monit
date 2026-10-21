@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { escapeHtml } from '../telegram/format';
+import { readFailureOf } from '../veeam/api.error';
 import { instantOf } from '../veeam/estate';
 import { Answer } from './answer';
 import { JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
@@ -108,7 +109,7 @@ export const readJob = async (
     try {
       await work();
     } catch (error) {
-      missing.push(`${what}: ${(error as Error).message}`);
+      missing.push(`${what}: ${readFailureOf(error)}`);
     }
   };
 

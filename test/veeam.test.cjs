@@ -525,3 +525,15 @@ test('a session blames a machine only when it names one and says why', () => {
   assert.equal(blameOf('Error: Выдано исключение типа "AgentClosedException".'), undefined, 'a reason alone names nobody');
   assert.equal(blameOf(undefined), undefined);
 });
+
+test('a failed read is said in a few Russian words, and never in Veeam\'s own, which name the server', () => {
+  const { VeeamApiError, readFailureOf } = require('../dist/veeam/api.error');
+
+  assert.equal(readFailureOf(new VeeamApiError('Failed to reach the Veeam server at https://veeam.example.com:9419 (ECONNREFUSED)', null)), 'Veeam не ответил');
+  assert.equal(readFailureOf(new VeeamApiError('The Veeam server did not respond within 30000 ms', null)), 'Veeam не ответил');
+  assert.equal(readFailureOf(new VeeamApiError('Forbidden', 403)), 'Veeam не дал доступа (HTTP 403)');
+  assert.equal(readFailureOf(new VeeamApiError('Not found', 404)), 'Veeam этого не отдаёт (HTTP 404)');
+  assert.equal(readFailureOf(new VeeamApiError('Internal error', 503)), 'ошибка на стороне Veeam (HTTP 503)');
+  assert.equal(readFailureOf(new VeeamApiError('Conflict', 409)), 'Veeam ответил HTTP 409');
+  assert.equal(readFailureOf(new TypeError("Cannot read properties of undefined (reading 'id')")), 'ошибка чтения');
+});
