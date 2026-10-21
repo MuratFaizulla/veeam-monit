@@ -74,7 +74,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
 
   constructor(
     config: ConfigService,
-    estates: ServerEstates,
+    private readonly estates: ServerEstates,
     private readonly telegram: TelegramService,
     private readonly store: TelegramStateStore,
     private readonly live: TelegramLiveService,
@@ -216,14 +216,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
    * Servers
    * ---------------------------------------------------------------- */
 
-  /**
-   * The Selected server: the one chosen, or the first while nobody has chosen
-   * one that exists — the server the estate's answers are about, by the same
-   * reading of the state file, unless a Button names another.
-   */
+  /** The Selected server's watch, by the estates' one rule. */
   private shown(): Watch {
-    const chosen = this.store.selectedServer();
-    return (chosen === undefined ? undefined : this.watchOf(chosen)) ?? this.watches[0];
+    const { key } = this.estates.selected(this.store.selectedServer());
+    return this.watchOf(key) ?? this.watches[0];
   }
 
   private watchOf(key: string): Watch | undefined {

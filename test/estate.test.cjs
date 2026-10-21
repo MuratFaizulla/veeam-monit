@@ -15,7 +15,7 @@ const {
  * first. Asked here of the answers alone, over server estates with no cycle.
  * ------------------------------------------------------------------ */
 
-const TWO = { VEEAM_SERVERS: 'AST=https://ast.example:9419,BAAS=https://baas.example:9419' };
+const TWO = { VEEAM_SERVERS: 'AST=https://ast.example.com:9419,BAAS=https://baas.example.com:9419' };
 
 /** What a server's Veeam answers when it has `jobs` and nothing else to say about them. */
 const routesOf = (jobs) => ({

@@ -11,7 +11,7 @@ const {
  * Several Veeam servers: every one watched, one shown
  * ------------------------------------------------------------------ */
 
-const TWO = { VEEAM_SERVERS: 'AST=https://ast.example:9419,BAAS=https://baas.example:9419' };
+const TWO = { VEEAM_SERVERS: 'AST=https://ast.example.com:9419,BAAS=https://baas.example.com:9419' };
 
 /** A Veeam that remembers what it was asked, so a test can say what it was not. */
 const recorded = (fake) => {
@@ -45,8 +45,8 @@ const routesOf = (states, extra = {}) => ({
 function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes = {}, stateFile, handlers = {}, now } = {}) {
   const w = world({ ...TWO, ...env }, handlers, stateFile);
   let jobs = { ast, baas };
-  const veeamAst = recorded(veeamFake(routesOf(() => jobs.ast, astRoutes), 'https://ast.example:9419'));
-  const veeamBaas = recorded(veeamFake(routesOf(() => jobs.baas, baasRoutes), 'https://baas.example:9419'));
+  const veeamAst = recorded(veeamFake(routesOf(() => jobs.ast, astRoutes), 'https://ast.example.com:9419'));
+  const veeamBaas = recorded(veeamFake(routesOf(() => jobs.baas, baasRoutes), 'https://baas.example.com:9419'));
   const [astEndpoint, baasEndpoint] = w.app.veeam.servers;
   const { monitor, answers } = watching(w, [
     serverOf(w, veeamAst, monitorAccount(), undefined, astEndpoint),

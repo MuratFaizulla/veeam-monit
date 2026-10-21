@@ -34,6 +34,7 @@ const { capacities, capacityOf } = require('../dist/estate/repository-capacity')
 const { RepositoryReports } = require('../dist/estate/repository-reports');
 const { JobReports } = require('../dist/estate/job-reports');
 const { EstateAnswers } = require('../dist/estate/estate-answers');
+const { ServerEstates } = require('../dist/estate/server-estates');
 
 const CHAT = '-1001234567890';
 /** The key of the one server a world has: named after its host, https://localhost:9419. */
@@ -239,6 +240,12 @@ function monitorOf(w, veeam, auth = monitorAccount(), evidence) {
 }
 
 /**
+ * The world's servers as `ServerEstates` holds them, with its own rule for
+ * which one is selected rather than a copy of it.
+ */
+const estatesOf = (servers) => Object.assign(Object.create(ServerEstates.prototype), { all: servers });
+
+/**
  * One server of a world, as `ServerEstates` wires one: `veeam` is its
  * transport and `auth` its token. Its key and name are the world's first
  * configured server's unless `endpoint` says otherwise.
@@ -318,8 +325,8 @@ function clockAt(iso) {
  * store says another. `reports` is the Repository report, when a monitor
  * tells it what repositories its cycles saw.
  */
-function answersOf(w, servers, printer = printerOf(), reports = new RepositoryReports(w.config, { all: servers }, printer)) {
-  return new EstateAnswers({ all: servers }, w.store, reports, new JobReports(w.config, printer));
+function answersOf(w, servers, printer = printerOf(), reports = new RepositoryReports(w.config, estatesOf(servers), printer)) {
+  return new EstateAnswers(estatesOf(servers), w.store, reports, new JobReports(w.config, printer));
 }
 
 /**
@@ -330,10 +337,10 @@ function answersOf(w, servers, printer = printerOf(), reports = new RepositoryRe
  * `clockAt`'s.
  */
 function watching(w, servers, printer = printerOf(), now) {
-  const reports = new RepositoryReports(w.config, { all: servers }, printer);
+  const reports = new RepositoryReports(w.config, estatesOf(servers), printer);
   return {
     monitor: new MonitorService(
-      w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports, now,
+      w.config, estatesOf(servers), w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports, now,
     ),
     answers: answersOf(w, servers, printer, reports),
   };

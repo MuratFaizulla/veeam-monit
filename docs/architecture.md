@@ -14,6 +14,7 @@ flowchart LR
         direction TB
         C["Polling cycle<br/>every 60 s"]
         E["Restore point scan<br/>hourly, selected server"]
+        Q["Answers<br/>job card · points · summary · reports"]
         S[("data/telegram-state.json")]
     end
 
@@ -30,8 +31,12 @@ flowchart LR
     C --> A
     C --> L
     E --> L
+    V1 -. "when asked" .-> Q
+    E --> Q
     C <--> S
-    G -- "/job · /digest · /check" --> C
+    G -- "/check" --> C
+    G -- "/job · /points · /digest · /repos" --> Q
+    Q --> G
 ```
 
 Polling runs at start and then on a timer. Everything the bot must remember across restarts is in `data/telegram-state.json`:

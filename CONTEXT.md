@@ -872,7 +872,11 @@ comes from the job's own configuration when there is none.
 A job's **Button** names the server the job is on, so pressing it after another
 server was selected still opens the job it was labelled with. A Button from
 before there was a list names none, and opens the job on the Selected server.
-Which server a question is about is the **Estate answers**'.
+Which server a question is about is the **Estate answers**'. Which one is
+selected — the one chosen, or the first while none chosen is still listed —
+is one rule, `selected` on `ServerEstates`, read by the slots and the answers
+alike; written in both, it was two places to forget a server taken off the
+list.
 
 ## Estate reader
 

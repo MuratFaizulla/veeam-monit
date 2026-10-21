@@ -142,13 +142,9 @@ export class EstateAnswers {
   }
 }
 
-/**
- * The server a question is about: the one its Button named, else the
- * Selected server — the one chosen, or the first while nobody has chosen one
- * that is still listed.
- */
+/** The server a question is about: the one its Button named, else the Selected server. */
 const asked = (estates: ServerEstates, store: TelegramStateStore, server?: string): ServerEstate =>
-  estates.all.find(({ key }) => key === server) ?? estates.all.find(({ key }) => key === store.selectedServer()) ?? estates.all[0];
+  estates.all.find(({ key }) => key === server) ?? estates.selected(store.selectedServer());
 
 /** An answer about `estate`, carrying its key for the Buttons under it, and naming it when there are several. */
 const about = (estate: ServerEstate, answer: Answer, named: boolean): Answer =>

@@ -30,6 +30,16 @@ export class ServerEstates {
   constructor(config: ConfigService, servers: VeeamServers) {
     this.all = servers.all.map((server) => estateOf(config, server));
   }
+
+  /**
+   * The Selected server: the one `chosen`, or the first while nobody has
+   * chosen one that is still listed. What the live slots show and what a
+   * question without a Button is about, by this one rule: written twice, it
+   * was two places to forget a server taken off the list.
+   */
+  selected(chosen: string | undefined): ServerEstate {
+    return this.all.find(({ key }) => key === chosen) ?? this.all[0];
+  }
 }
 
 /** A server's estate, wired. */
