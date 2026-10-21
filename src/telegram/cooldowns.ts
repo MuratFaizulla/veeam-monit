@@ -6,6 +6,9 @@
  *
  * Holds a record owned by the state store and calls `save` after each change;
  * it knows nothing about files. A test hands it a plain object.
+ *
+ * Read against the wall clock unless `now` says otherwise: a server's sending
+ * reads its own, which a test moves by hand.
  */
 export class Cooldowns {
   constructor(
@@ -20,15 +23,14 @@ export class Cooldowns {
    * burns the window even when the message never reaches Telegram, which
    * silences the next stretch of a real outage.
    */
-  isSuppressed(key: string | undefined): boolean {
+  isSuppressed(key: string | undefined, now = Date.now()): boolean {
     if (!key) return false;
-    return (this.until[key] ?? 0) > Date.now();
+    return (this.until[key] ?? 0) > now;
   }
 
   /** Starts the cooldown window. Call after the report actually went out. */
-  arm(key: string | undefined, cooldownMs: number | undefined): void {
+  arm(key: string | undefined, cooldownMs: number | undefined, now = Date.now()): void {
     if (!key || !cooldownMs) return;
-    const now = Date.now();
     this.until[key] = now + cooldownMs;
     for (const [existing, until] of Object.entries(this.until)) {
       if (until <= now) delete this.until[existing];
@@ -42,4 +44,13 @@ export class Cooldowns {
     delete this.until[key];
     this.save();
   }
+}
+
+/**
+ * The cooldowns an event's `dedupeKey` is checked against and armed in by
+ * Delivery: the store's, or the ones a server's sending keeps for its server.
+ */
+export interface EventCooldowns {
+  isSuppressed(key: string | undefined): boolean;
+  arm(key: string | undefined, cooldownMs: number | undefined): void;
 }

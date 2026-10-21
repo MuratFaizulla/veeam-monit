@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
+import { EventCooldowns } from './cooldowns';
 import { renderEvent } from './format';
 import { TelegramRoutingService } from './routing.service';
 import { TelegramStateStore } from './state.store';
@@ -105,8 +106,12 @@ export class TelegramService {
    *
    * Delivery failures are reported, never thrown: a broken chat must not abort
    * the monitor cycle that produced the event.
+   *
+   * Its `dedupeKey` is checked against `cooldowns`, and armed there once it
+   * was delivered: the store's, unless the event is about one Veeam server,
+   * whose sending keeps that server's cooldowns and hands them in.
    */
-  async notify(event: NotificationEvent): Promise<DeliveryReport> {
+  async notify(event: NotificationEvent, cooldowns: EventCooldowns = this.store.cooldowns): Promise<DeliveryReport> {
     const decision = this.routing.route(event);
     const report = (outcome: DeliveryOutcome, sent = 0, failed = 0): DeliveryReport => ({
       outcome,
@@ -119,7 +124,7 @@ export class TelegramService {
 
     if (decision.drop === true) return report('dropped-by-rule');
     if (!this.config.severities.includes(event.severity)) return report('severity-filtered');
-    if (this.store.cooldowns.isSuppressed(event.dedupeKey)) return report('cooldown');
+    if (cooldowns.isSuppressed(event.dedupeKey)) return report('cooldown');
     if (!this.transport.enabled) return report('transport-disabled');
 
     const text = renderEvent(event);
@@ -149,7 +154,7 @@ export class TelegramService {
     if (sent === 0) return report('failed', 0, failed);
     // Only a delivered report starts the quiet period. Arming on the way in
     // would silence the next window after a send that never happened.
-    this.store.cooldowns.arm(event.dedupeKey, event.cooldownMs);
+    cooldowns.arm(event.dedupeKey, event.cooldownMs);
     return report('delivered', sent, failed);
   }
 

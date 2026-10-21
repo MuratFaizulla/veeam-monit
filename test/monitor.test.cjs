@@ -187,7 +187,9 @@ test('losing and regaining the Veeam API is reported as a transition', async () 
   assert.match(w.api.sent()[0].text, /Veeam is reachable again/);
 });
 
-test('a repository below the free-space threshold is reported once per cooldown', async () => {
+test('a repository below the free-space threshold is reported by the cycle that read it', async () => {
+  // How often it is said again is the repository alarms' and the server's
+  // sending's, asked without a cycle (alerts.test.cjs).
   const w = world({ TELEGRAM_REPOSITORY_FREE_PERCENT: '10', TELEGRAM_REPOSITORY_COOLDOWN_MIN: '720' });
   const veeam = veeamFake({
     '/api/v1/serverTime': { serverTime: 'now' },
@@ -207,10 +209,6 @@ test('a repository below the free-space threshold is reported once per cooldown'
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].text, /Repo01/);
   assert.match(alerts[0].text, /4\.0%/);
-
-  w.api.reset();
-  await monitor.check();
-  assert.equal(w.api.sent().filter((payload) => /Repo0/.test(payload.text)).length, 0);
 });
 
 test('a repository that does not report free space raises nothing', async () => {

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  CHAT, world, ear, veeamFake, job, monitorAccount, serverOf, watching, TelegramStateStore,
+  CHAT, world, ear, veeamFake, job, monitorAccount, serverOf, watching, printerOf, clockAt, TelegramStateStore,
 } = require('./world.cjs');
 
 /* ------------------------------------------------------------------ *
@@ -41,8 +41,8 @@ const routesOf = (states, extra = {}) => ({
   ...extra,
 });
 
-/** Two servers, AST listed first, each with its own jobs and its own Veeam. */
-function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes = {}, stateFile, handlers = {} } = {}) {
+/** Two servers, AST listed first, each with its own jobs and its own Veeam, watched by a monitor reading `now`. */
+function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes = {}, stateFile, handlers = {}, now } = {}) {
   const w = world({ ...TWO, ...env }, handlers, stateFile);
   let jobs = { ast, baas };
   const veeamAst = recorded(veeamFake(routesOf(() => jobs.ast, astRoutes), 'https://ast.example:9419'));
@@ -51,7 +51,7 @@ function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes 
   const { monitor, answers } = watching(w, [
     serverOf(w, veeamAst, monitorAccount(), undefined, astEndpoint),
     serverOf(w, veeamBaas, monitorAccount(), undefined, baasEndpoint),
-  ]);
+  ], printerOf(), now);
   const { commands, updates } = ear(w, monitor, answers);
   return {
     ...w, monitor, commands, updates, veeamAst, veeamBaas,
@@ -123,8 +123,6 @@ test('every server is watched, and an alert says which server it is about', asyn
   assert.match(alerts[0], /BAAS · Files — failed/);
   assert.equal(w.store.jobMemoryOf('baas').resultOf('b1'), 'failed');
   assert.equal(w.store.jobMemoryOf('ast').resultOf('a1'), 'success');
-  // The same job id on two servers would be two conditions, not one.
-  assert.ok(w.store.snapshot().cooldowns['baas:job:b1:failed'] > Date.now());
 });
 
 test('a server added to the list is learned quietly, whatever the others remember', async () => {
@@ -596,20 +594,25 @@ test('a server that does not answer says so in the server list, and the others g
 });
 
 test('the daily Summary goes out once per server, each saying which', async () => {
+  const clock = clockAt('2026-09-25T08:10:00Z');
   const w = twoServers({
-    env: { TELEGRAM_DIGEST_HOUR: String(new Date().getUTCHours()), TELEGRAM_TIMEZONE: 'UTC' },
+    env: { TELEGRAM_DIGEST_HOUR: '8', TELEGRAM_TIMEZONE: 'UTC' },
     ast: [job('a1', 'SQL Daily', 'Success')],
     baas: [job('b1', 'Files', 'Success')],
+    now: clock.now,
   });
+  const digests = () => texts(w).filter((text) => /сводка по заданиям/.test(text));
 
   await w.monitor.check();
 
-  const digests = texts(w).filter((text) => /сводка по заданиям/.test(text));
-  assert.equal(digests.length, 2);
-  assert.ok(digests.some((text) => /AST · Veeam: сводка/.test(text)));
-  assert.ok(digests.some((text) => /BAAS · Veeam: сводка/.test(text)));
-  const { cooldowns } = w.store.snapshot();
-  assert.ok(cooldowns['ast:digest'] > Date.now() && cooldowns['baas:digest'] > Date.now());
+  assert.equal(digests().length, 2);
+  assert.ok(digests().some((text) => /AST · Veeam: сводка/.test(text)));
+  assert.ok(digests().some((text) => /BAAS · Veeam: сводка/.test(text)));
+
+  w.api.reset();
+  clock.pass(10 * 60_000);
+  await w.monitor.check();
+  assert.deepEqual(digests(), [], 'once a day, on either');
 });
 
 test('a state file from before the server list is read as the first server\'s', () => {

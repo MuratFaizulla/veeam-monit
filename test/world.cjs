@@ -302,6 +302,16 @@ function printerOf() {
 }
 
 /**
+ * A clock a test moves by hand: at `iso` until `pass` moves it on. Handed to
+ * whatever takes one, so that a cooldown running out, or the hour the daily
+ * Summary goes out, is the test's time and not the moment the suite runs.
+ */
+function clockAt(iso) {
+  let at = Date.parse(iso);
+  return { now: () => at, pass: (ms) => (at += ms) };
+}
+
+/**
  * What a world's commands are answered with about `servers` — the Summary, a
  * Job card, the job menu, /points and both reports — asked of their estates
  * with no cycle behind them. The first server is the Selected one until the
@@ -316,11 +326,15 @@ function answersOf(w, servers, printer = printerOf(), reports = new RepositoryRe
  * Several servers of a world as the service wires them: the monitor watching
  * every one, the first selected until one is chosen, and the answers about
  * them, whose report menu lists the repositories the monitor's cycles saw.
+ * The monitor reads `now`, the wall clock unless a test hands it one of
+ * `clockAt`'s.
  */
-function watching(w, servers, printer = printerOf()) {
+function watching(w, servers, printer = printerOf(), now) {
   const reports = new RepositoryReports(w.config, { all: servers }, printer);
   return {
-    monitor: new MonitorService(w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports),
+    monitor: new MonitorService(
+      w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports, now,
+    ),
     answers: answersOf(w, servers, printer, reports),
   };
 }
@@ -490,7 +504,7 @@ function selfSigned(name = 'Veeam Backup Server Certificate') {
 
 module.exports = {
   selfSigned,
-  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, idleAnswers, monitorWorld, answersWorld, job, exchange,
+  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, idleAnswers, monitorWorld, answersWorld, job, exchange, clockAt,
   configuredJob, kingstonNight,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,

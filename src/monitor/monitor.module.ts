@@ -1,7 +1,14 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LiveModule } from '../live/live.module';
+import { TelegramLiveService } from '../live/live.service';
+import { LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramModule } from '../telegram/telegram.module';
+import { TelegramService } from '../telegram/telegram.service';
+import { TelegramStateStore } from '../telegram/state.store';
 import { EstateModule } from '../estate/estate.module';
+import { RepositoryReports } from '../estate/repository-reports';
+import { ServerEstates } from '../estate/server-estates';
 import { MONITOR } from './monitor';
 import { MonitorService } from './monitor.service';
 
@@ -15,7 +22,24 @@ import { MonitorService } from './monitor.service';
  */
 @Module({
   imports: [EstateModule, LiveModule, TelegramModule],
-  providers: [MonitorService, { provide: MONITOR, useExisting: MonitorService }],
+  providers: [
+    {
+      // Built by hand because its clock is a plain function, which Nest cannot
+      // resolve from design-time metadata and the tests hand in.
+      provide: MonitorService,
+      inject: [ConfigService, ServerEstates, TelegramService, TelegramStateStore, TelegramLiveService, LiveSnapshotsService, RepositoryReports],
+      useFactory: (
+        config: ConfigService,
+        estates: ServerEstates,
+        telegram: TelegramService,
+        store: TelegramStateStore,
+        live: TelegramLiveService,
+        snapshots: LiveSnapshotsService,
+        reports: RepositoryReports,
+      ) => new MonitorService(config, estates, telegram, store, live, snapshots, reports),
+    },
+    { provide: MONITOR, useExisting: MonitorService },
+  ],
   exports: [MONITOR],
 })
 export class MonitorModule {}

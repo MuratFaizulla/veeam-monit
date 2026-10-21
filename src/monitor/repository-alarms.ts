@@ -1,39 +1,37 @@
-import { NotificationEvent } from '../telegram/types';
 import { RepositoryCapacity } from '../estate/repository-capacity';
+import { Sending } from './server-sending';
 
 /**
- * Which repositories are short of space, as the alerts they are owed.
+ * Says which of one server's repositories are short of space, through that
+ * server's sending.
  *
  * Reads Repository capacity and nothing else: `freePercent` exists only when
  * Veeam reported free space, and a repository nobody can say anything about is
  * left alone — it used to be treated as zero free and raised a critical alert.
  *
- * `cleared` lists the alarms of repositories that are back above the
- * threshold, so the next shortage is announced at once rather than waiting out
- * the cooldown of the previous one.
+ * A repository back above the threshold has its alarm forgotten, so the next
+ * shortage is announced at once rather than waiting out the cooldown of the
+ * previous one. Under which key is this module's own: it used to hand the
+ * keys back for the monitor to make them the server's, which only the
+ * monitor knew how to do; the server's sending does that now.
  */
-export interface RepositoryAlarms {
-  events: NotificationEvent[];
-  cleared: string[];
-}
-
-export const repositoryAlarms = (
+export const sendRepositoryAlarms = async (
   repositories: RepositoryCapacity[],
   policy: { thresholdPercent: number; cooldownMs: number },
-): RepositoryAlarms => {
+  sending: Sending,
+): Promise<void> => {
   const { thresholdPercent, cooldownMs } = policy;
-  const alarms: RepositoryAlarms = { events: [], cleared: [] };
-  if (thresholdPercent <= 0) return alarms;
+  if (thresholdPercent <= 0) return;
 
   for (const repository of repositories) {
     const { freePercent, freeGB, capacityGB } = repository;
     if (freePercent === undefined) continue;
     const key = `repo:${repository.key}`;
     if (freePercent >= thresholdPercent) {
-      alarms.cleared.push(key);
+      sending.forget(key);
       continue;
     }
-    alarms.events.push({
+    await sending.send({
       kind: 'repository',
       // Under half the threshold is the one that fills up tonight.
       severity: freePercent < thresholdPercent / 2 ? 'critical' : 'warning',
@@ -50,7 +48,6 @@ export const repositoryAlarms = (
       cooldownMs,
     });
   }
-  return alarms;
 };
 
 /** "3.8 TB", "512.0 GB". */

@@ -11,7 +11,7 @@ const {
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramLiveService,
   MonitorService, BackupEvidenceService, VeeamHttpService, monitorOf, monitorAccount,
-  announcement, probe, capacities, capacityOf,
+  announcement, probe, capacities, capacityOf, serverOf, watching, printerOf, clockAt,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 } = require('./world.cjs');
 
@@ -726,27 +726,32 @@ test('the last error is the last pass\'s: a pass that goes well clears it', asyn
 
 test('the digest cooldown is armed only once the digest was delivered', async () => {
   let broken = true;
-  const hour = new Date().getHours();
-  const w = world({ TELEGRAM_DIGEST_HOUR: String(hour) }, rejectSend(() => broken));
+  // The hour the Summary is due by the monitor's clock, not by the moment the
+  // suite happens to run.
+  const clock = clockAt('2026-09-25T08:10:00Z');
+  const w = world({ TELEGRAM_DIGEST_HOUR: '8', TELEGRAM_TIMEZONE: 'UTC' }, rejectSend(() => broken));
   const veeam = veeamFake({
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [job('1', 'SQL Daily', 'Failed')] },
   });
-  const auth = monitorAccount();
-  const monitor = monitorOf(w, veeam, auth);
+  const { monitor } = watching(w, [serverOf(w, veeam, monitorAccount())], printerOf(), clock.now);
+  const summaries = () => w.api.sent().filter((payload) => /сводка по заданиям/.test(payload.text)).length;
 
   await monitor.check();
-  assert.equal(w.store.snapshot().cooldowns['digest'], undefined, 'неудачная сводка не глушит сутки');
-
   broken = false;
   w.api.reset();
+  clock.pass(60_000);
   await monitor.check();
+  assert.equal(summaries(), 1, 'неудачная сводка не глушит сутки: отправлена на следующем цикле');
 
-  assert.ok(
-    w.api.sent().some((payload) => /сводка по заданиям/.test(payload.text)),
-    'сводка отправлена на следующем цикле',
-  );
-  assert.ok(w.store.snapshot().cooldowns['digest'] > Date.now(), 'теперь окно взведено');
+  w.api.reset();
+  clock.pass(60_000);
+  await monitor.check();
+  assert.equal(summaries(), 0, 'теперь окно взведено');
+
+  clock.pass(24 * 3_600_000);
+  await monitor.check();
+  assert.equal(summaries(), 1, 'а на следующий день сводка уходит снова');
 });
 
 test('every state write persists without the caller managing save()', async () => {

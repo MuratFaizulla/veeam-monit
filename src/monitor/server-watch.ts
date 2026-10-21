@@ -1,7 +1,7 @@
 import { VeeamReachability } from '../veeam/http.service';
 import { ServerMemory } from '../telegram/server-memory';
 import { NotificationEvent } from '../telegram/types';
-import { Send } from './job-alerts';
+import { Sending } from './server-sending';
 
 const HOUR = 3_600_000;
 
@@ -14,11 +14,6 @@ export interface WatchedServer {
 export interface ServerWatchSettings {
   /** How long a sign-in that keeps failing is not reported again. */
   authCooldownMs: number;
-  /**
-   * Lets the next sign-in failure be reported at once. Handed in because the
-   * cooldown is kept per server under a key the monitor's sending scopes.
-   */
-  forget: (dedupeKey: string) => void;
 }
 
 /** How the latest pass found the server. */
@@ -53,7 +48,8 @@ export interface ServerHealth {
  * ago as readily as now.
  *
  * One per Veeam server, built by the monitor beside it, like the Job alerts.
- * Sending is handed in — the monitor's, which names the server.
+ * Sending is handed in — the server's, which names the server and keeps its
+ * cooldowns, the failing sign-in's among them.
  */
 export class ServerWatch {
   private readonly current: ServerHealth = { reachable: null, authenticated: null, error: null };
@@ -61,7 +57,7 @@ export class ServerWatch {
   constructor(
     private readonly server: WatchedServer,
     private readonly memory: ServerMemory,
-    private readonly send: Send,
+    private readonly sending: Sending,
     private readonly settings: ServerWatchSettings,
   ) {}
 
@@ -99,7 +95,7 @@ export class ServerWatch {
       this.memory.remember({ reachable });
       return reachable;
     }
-    const report = await this.send({
+    const report = await this.sending.send({
       kind: 'infrastructure',
       severity: reachable ? 'success' : 'critical',
       title: reachable ? 'Veeam is reachable again' : 'Veeam is unreachable',
@@ -124,7 +120,7 @@ export class ServerWatch {
     const { auth, http } = this.server;
     if (!auth.configured) {
       this.current.authenticated = null;
-      await this.send(UNCONFIGURED);
+      await this.sending.send(UNCONFIGURED);
       return false;
     }
 
@@ -134,7 +130,7 @@ export class ServerWatch {
       this.current.authenticated = false;
       this.current.error = (error as Error).message;
       this.memory.remember({ authenticated: false });
-      await this.send({
+      await this.sending.send({
         kind: 'infrastructure',
         severity: 'critical',
         title: 'Veeam: the monitor account cannot sign in',
@@ -152,8 +148,8 @@ export class ServerWatch {
     this.current.authenticated = true;
     if (this.memory.authenticated === false) {
       // The next failure is news again, however soon it comes.
-      this.settings.forget(AUTH_FAILED);
-      const report = await this.send({
+      this.sending.forget(AUTH_FAILED);
+      const report = await this.sending.send({
         kind: 'infrastructure',
         severity: 'success',
         title: 'Veeam: the monitor account signs in again',

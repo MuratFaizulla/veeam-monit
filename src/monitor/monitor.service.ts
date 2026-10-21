@@ -7,23 +7,29 @@ import { TelegramLiveService } from '../live/live.service';
 import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
 import { NotificationEvent } from '../telegram/types';
+import { EventCooldowns } from '../telegram/cooldowns';
 import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
 import { digestDue, digestEvent, summarise } from '../estate/digest';
-import { repositoryAlarms } from './repository-alarms';
+import { sendRepositoryAlarms } from './repository-alarms';
 import { JobAlerts } from './job-alerts';
+import { ServerSending } from './server-sending';
 import { ServerWatch } from './server-watch';
-import { aboutServer } from '../telegram/format';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
 
 const HOUR = 3_600_000;
 
+/** The cooldown each server's daily Summary is kept under, once it was delivered. */
+const DIGEST = 'digest';
+
 export type { MonitorHealth } from './monitor';
 
 /** What the monitor keeps about one server from one pass to the next. */
 interface Watch {
   estate: ServerEstate;
+  /** What is said about the server goes through here, which names it and keeps its cooldowns. */
+  sending: ServerSending;
   /** Whether the server answers and its account signs in, and what is said when either changes. */
   server: ServerWatch;
   lastCheckAt: string | null;
@@ -43,7 +49,8 @@ type Pass = Omit<LiveCycle, 'health' | 'server'>;
  * all, the monitor service account being able to log in, and the jobs
  * themselves. The first two are each server's Server watch, the jobs its Job
  * alerts; the monitor runs them on a timer, with the repositories, the daily
- * Summary and the live slots.
+ * Summary and the live slots. Whatever is said about a server goes through
+ * that server's sending, which names it and keeps its cooldowns.
  *
  * Every server is watched every cycle, whichever one is selected: a failure on
  * a server nobody is looking at is exactly the one that must not wait until
@@ -57,8 +64,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MonitorService.name);
   private readonly config: AppConfig['telegram'];
   private readonly watches: Watch[];
-  /** Whether messages say which server they are about: only when there are several. */
-  private readonly named: boolean;
   private timer?: NodeJS.Timeout;
   private running = false;
   /** A pass was asked for while one was running, and must follow it. */
@@ -75,29 +80,40 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     private readonly live: TelegramLiveService,
     private readonly snapshots: LiveSnapshotsService,
     private readonly reports: RepositoryReports,
+    /**
+     * Epoch ms: what the cycle's own decisions are read against — the
+     * cooldowns, the hour of the daily Summary, a retry's wait. A test hands
+     * one in rather than waiting for the hour.
+     */
+    private readonly now: () => number = () => Date.now(),
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
+    // Whether what is said names its server, and keeps its cooldowns apart:
+    // only when there are several.
+    const several = estates.all.length > 1;
     this.watches = estates.all.map((estate) => {
-      // Through the monitor's own sending, which names the server and counts
-      // what was delivered.
-      const send = (event: NotificationEvent) => this.emit(watch, event);
-      const watch: Watch = {
+      // Through the server's own sending, which names the server and keeps
+      // its cooldowns, and the monitor's delivery, which counts what was
+      // delivered.
+      const sending = new ServerSending(estate, (event, cooldowns) => this.emit(event, cooldowns), store.cooldowns, {
+        several,
+        now: this.now,
+      });
+      return {
         estate,
-        server: new ServerWatch(estate, store.serverMemoryOf(estate.key), send, {
+        sending,
+        server: new ServerWatch(estate, store.serverMemoryOf(estate.key), sending, {
           authCooldownMs: this.config.authAlertCooldownMs,
-          forget: (key) => store.cooldowns.clear(this.scoped(watch, key)),
         }),
         lastCheckAt: null,
         alerts: new JobAlerts(
           estate,
           store.jobMemoryOf(estate.key),
-          send,
-          { timezone: this.config.timezone, cooldownMs: this.config.jobAlertCooldownMs },
+          (event) => sending.send(event),
+          { timezone: this.config.timezone, cooldownMs: this.config.jobAlertCooldownMs, now: this.now },
         ),
       };
-      return watch;
     });
-    this.named = this.watches.length > 1;
   }
 
   onModuleInit(): void {
@@ -214,24 +230,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     return this.watches.find((watch) => watch.estate.key === key);
   }
 
-  /**
-   * A key that is this server's alone: a cooldown, a remembered repository
-   * alarm. With one server the keys are what they always were, so an upgrade
-   * forgets nothing.
-   */
-  private scoped(watch: Watch, key: string): string {
-    return this.named ? `${watch.estate.key}:${key}` : key;
-  }
-
-  /** The event, saying which server it is about, and its cooldown this server's alone. */
-  private labelled(watch: Watch, event: NotificationEvent): NotificationEvent {
-    if (!this.named) return event;
-    return {
-      ...aboutServer(event, watch.estate.name),
-      dedupeKey: event.dedupeKey === undefined ? undefined : this.scoped(watch, event.dedupeKey),
-    };
-  }
-
   /* ---------------------------------------------------------------- *
    * One server's pass
    * ---------------------------------------------------------------- */
@@ -277,7 +275,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         await this.step(watch, 'digest', () => this.sendDigest(watch, jobs, working));
       }
     }
-    watch.lastCheckAt = new Date().toISOString();
+    watch.lastCheckAt = new Date(this.now()).toISOString();
     return { jobs, working, repositories, authenticated, evidence };
   }
 
@@ -347,20 +345,19 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       throw error;
     }
 
-    const { events, cleared } = repositoryAlarms(repositories, {
-      thresholdPercent: this.config.repositoryFreePercent,
-      cooldownMs: this.config.repositoryAlertCooldownMs,
-    });
-    for (const key of cleared) this.store.cooldowns.clear(this.scoped(watch, key));
-    for (const event of events) await this.emit(watch, event);
+    await sendRepositoryAlarms(
+      repositories,
+      { thresholdPercent: this.config.repositoryFreePercent, cooldownMs: this.config.repositoryAlertCooldownMs },
+      watch.sending,
+    );
     return repositories;
   }
 
   /** Whether this server's once-a-day roll-up is due and not yet sent. */
   private digestDue(watch: Watch): boolean {
     return (
-      digestDue(new Date(), this.config.digestHour, this.config.timezone) &&
-      !this.store.cooldowns.isSuppressed(this.scoped(watch, 'digest'))
+      digestDue(new Date(this.now()), this.config.digestHour, this.config.timezone) &&
+      !watch.sending.isSuppressed(DIGEST)
     );
   }
 
@@ -370,21 +367,19 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     // used to be read a second time here, on the one cycle a day that most
     // wanted to be quick, and the sessions a third time.
     const summary = summarise(jobs, working.byJob, working.unavailable);
-    const report = await this.emit(watch, digestEvent(summary));
-
-    // Arming before the fetch, as this used to, lost the whole digest for 23
-    // hours whenever that request threw.
-    if (report.outcome === 'delivered') this.store.cooldowns.arm(this.scoped(watch, 'digest'), 23 * HOUR);
+    // Under a cooldown of its own, kept like any alert's, so it is armed only
+    // once the Summary was delivered: arming before the fetch, as this used
+    // to, lost the whole digest for 23 hours whenever that request threw.
+    await watch.sending.send({ ...digestEvent(summary), dedupeKey: DIGEST, cooldownMs: 23 * HOUR });
   }
 
-  private async emit(watch: Watch, event: NotificationEvent): Promise<DeliveryReport> {
-    const labelled = this.labelled(watch, event);
-    const report = await this.telegram.notify(labelled);
+  private async emit(event: NotificationEvent, cooldowns: EventCooldowns): Promise<DeliveryReport> {
+    const report = await this.telegram.notify(event, cooldowns);
     this.lastOutcome = report.outcome;
     if (report.outcome === 'delivered') this.delivered += 1;
     if (report.outcome === 'failed') this.undelivered += 1;
 
-    const line = `Event "${labelled.title}" -> ${report.outcome} topic=${report.topic ?? 'General'} (${report.reason}) sent=${report.sent} failed=${report.failed}`;
+    const line = `Event "${event.title}" -> ${report.outcome} topic=${report.topic ?? 'General'} (${report.reason}) sent=${report.sent} failed=${report.failed}`;
     if (report.outcome === 'failed') this.logger.error(line);
     else this.logger.debug(line);
     return report;

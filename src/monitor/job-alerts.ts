@@ -6,12 +6,12 @@ import { RunStanding, standingOf } from '../estate/runs';
 import { ServerEstate } from '../estate/server-estates';
 import { JobMemory, RetryingRun } from '../telegram/job-memory';
 import { escapeHtml } from '../telegram/format';
-import { DeliveryReport } from '../telegram/telegram.service';
 import { Clock, dayOfEn, durationEn } from '../telegram/time';
 import { NotificationEvent, NotificationSeverity } from '../telegram/types';
 import { jobTypeWordEn } from '../telegram/words';
 import { Job } from '../veeam/estate';
 import { VeeamSchedule } from '../veeam/types';
+import { Send } from './server-sending';
 import { jobTransitions, Transition } from './transitions';
 
 /**
@@ -201,15 +201,12 @@ export class JobAlerts {
   }
 }
 
-/** Sends one alert and says what became of it; only whether it reached nobody matters here. */
-export type Send = (event: NotificationEvent) => Promise<Pick<DeliveryReport, 'outcome'>>;
-
 export interface JobAlertsSettings {
   /** IANA zone the moments are written in, or empty for the server's own. */
   timezone: string;
   /** How long the same alert about the same job is not repeated. */
   cooldownMs: number;
-  /** Epoch ms; the clock, for a test that needs the wait to have run out. */
+  /** Epoch ms; the monitor's clock, or a test's that needs the wait to have run out. */
   now?: () => number;
 }
 

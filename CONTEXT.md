@@ -402,6 +402,9 @@ deleting the one it replaces, are the **Posted message**'s.
 Turning one notification event into one message per chat it belongs in, and
 saying what became of it. Routing, the severity filter, the cooldown, the retry
 in General and the eviction of a chat that removed the bot are all inside it.
+An event about a **Server** is checked against the cooldowns its **Server
+sending** hands in — that server's, by the monitor's clock; any other against
+the state file's under its key as written, by the wall clock.
 
 A **DeliveryReport** names the outcome rather than reducing it to "sent or not":
 `cooldown`, `severity-filtered` and `dropped-by-rule` are three different
@@ -590,9 +593,11 @@ result only once the alert was delivered — a delivery that reached nobody has
 not dealt with anything, so the transition stays pending and is tried again
 next cycle.
 
-Repositories have the same split in `src/monitor/repository-alarms.ts`: below
-the threshold warns, below half of it is critical, back above it re-arms. The
-hour the daily **Summary** goes out is `digestDue`, in `TELEGRAM_TIMEZONE`.
+Repositories are said by `src/monitor/repository-alarms.ts`, through the
+server's **Server sending**: below the threshold warns, below half of it is
+critical, back above it re-arms — the next shortage is said at once rather
+than after the cooldown of the last. The hour the daily **Summary** goes out
+is `digestDue`, in `TELEGRAM_TIMEZONE`, by the monitor's clock.
 
 ## Job alert
 
@@ -609,8 +614,8 @@ configuration otherwise — the **Attempt** line, and the machines that went
 wrong. They used to be private methods of the monitor and the modules around
 them, reachable only through whole monitor cycles; a script that wanted to show
 what an alert looks like copied the field list by hand, and the copy drifted
-within the day. Sending is handed in — the monitor's, which names the server
-and counts deliveries — and so is the clock.
+within the day. Sending is handed in — the server's **Server sending**, which
+names the server and keeps its cooldowns — and so is the clock, the monitor's.
 
 Not in it: the server not answering and the account not signing in, which are
 the **Server watch**'s; repository space and the daily **Summary**, which are
@@ -625,7 +630,9 @@ and what the bot says when either changes: "Veeam is unreachable", "Veeam is
 reachable again", "the monitor account cannot sign in", "signs in again", and
 "Job monitoring is off" while no account is configured. One per server, built
 by the monitor beside it like the **Job alert**, and asked first in every pass;
-sending is handed in.
+sending is handed in — the server's **Server sending**, which a sign-in that
+works again asks to forget the failure's cooldown, so the next failure is news
+at once.
 
 What was last said is kept in the state file, so a change is said once
 whatever restarts in between, and said again next pass if it reached nobody.
@@ -643,6 +650,33 @@ a week ago as readily as now, until the bot restarted.
 
 Owned by `src/monitor/server-watch.ts`; what it remembers by
 `src/telegram/server-memory.ts`.
+
+## Server sending
+
+How what the monitor says about one **Server** goes out, and that server's
+cooldowns. With several servers an event names its server first in the title
+— what a notification on a locked phone shows — and its cooldown is that
+server's alone: the same job id on two servers is two conditions, not one.
+With one server an event goes as it is, under the key it always had, so a
+state file from before the server list still holds the cooldowns it was
+written with. The file is as it was: with several servers, a server's
+cooldowns lie under its key and a colon.
+
+One per server, built by the monitor beside it and handed to its **Job
+alert**, its **Server watch** and its repository alarms. What lets a cooldown
+go early — a sign-in that works again, a repository back above the threshold
+— forgets it through the server's sending, under the key it was sent with.
+Only the monitor used to know how to make a key one server's, so the Server
+watch was handed a way to forget one, and the repository alarms handed their
+keys back for the monitor to make them the server's.
+
+**Delivery** checks an event against the cooldowns the sending hands it, and
+arms them, by the monitor's clock — the one the hour of the daily **Summary**
+is read by, whose own cooldown is kept the same way, once a day per server and
+armed only once it was delivered. A test moves that clock rather than waiting
+out a cooldown or the hour.
+
+Owned by `src/monitor/server-sending.ts`.
 
 ## Job memory
 
@@ -812,8 +846,8 @@ without them; `VEEAM_LEGACY_TLS` names the servers that are offered them.
 
 Every server is watched every cycle — reachability and sign-in (its **Server
 watch**), job states, repositories — and its alerts carry its name first in the title, when there is
-more than one: `BAAS · Files — failed`. The daily **Summary** goes out once per
-server.
+more than one: `BAAS · Files — failed`, with cooldowns of its own (its **Server
+sending**). The daily **Summary** goes out once per server.
 
 Owned by `src/veeam/servers.ts` (`VeeamServers`) and, with its Evidence and
 job answers, `src/estate/server-estates.ts` (`ServerEstates`).
