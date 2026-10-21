@@ -173,6 +173,21 @@ test('a job started every six hours misses the start it skipped, which the next 
   assert.deepEqual(report.missed.map(local), ['12.10, 12:00']);
 });
 
+test('a start that falls while the run before it is still going is not missed: Veeam does not start a running job', () => {
+  // Every six hours, eight hours a run: Veeam starts it at 00, 08 and 16 and skips 06, 12 and 18.
+  const night = (day, hour) => attempt(`s${day}${hour}`, `2026-10-${day}T${hour}:00:00+05:00`, 8 * 60, 'success', [task('db-01', 'success'), task('web-01', 'success')]);
+  const report = jobReportOf(edgeReading({
+    configured: { ...edgeRead({}).configured, schedule: { runAutomatically: true, periodically: { isEnabled: true, periodicallyKind: 'Hours', frequency: 6 } } },
+    attempts: [
+      night(13, 16), night(13, '08'), night(13, '00'),
+      night(12, 16), night(12, '08'), night(12, '00'),
+      night(11, 16), night(11, '08'), night(11, '00'),
+    ],
+  }), TZ);
+
+  assert.deepEqual(report.missed.map(local), []);
+});
+
 test('a machine no run saves comes first, and one a retry saved says so', () => {
   const report = jobReportOf(edgeReading(), TZ);
 

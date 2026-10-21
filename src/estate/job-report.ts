@@ -465,9 +465,12 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
 /**
  * The starts the schedule owes that no run came for, on the days after the
  * job's first run in the period — a job created last week owes nothing
- * before it — and before today, whose starts may still come.
+ * before it — and before today, whose starts may still come. A start that
+ * falls while a run is still going is not owed: Veeam does not start a job
+ * that is running, and a six-hourly job whose runs take eight hours skips
+ * every other start by design.
  */
-const missedStarts = (runs: Array<{ start: number }>, schedule: VeeamJob['schedule'], from: number, at: number, timezone: string): number[] => {
+const missedStarts = (runs: Array<{ start: number; end?: number }>, schedule: VeeamJob['schedule'], from: number, at: number, timezone: string): number[] => {
   if (!runs.length) return [];
   const first = fromServerClock(dayIn(Math.max(from, runs[0].start), timezone) + DAY, timezone);
   const today = fromServerClock(dayIn(at, timezone), timezone);
@@ -475,6 +478,7 @@ const missedStarts = (runs: Array<{ start: number }>, schedule: VeeamJob['schedu
   const owed = scheduledStarts(schedule, first - DAY, today + DAY, timezone);
   return owed.filter((due, index) => {
     if (due < first || due >= today) return false;
+    if (runs.some((run) => run.start < due && due < (run.end ?? at))) return false;
     // Late is not missing: a start queued for hours, past midnight even, still
     // came — but not past halfway to the next start, whose run that would be:
     // a job started every six hours that skipped noon has not made it up at six.

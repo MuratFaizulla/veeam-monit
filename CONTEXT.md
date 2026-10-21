@@ -322,7 +322,9 @@ bot does not read. A **Scheduled start** no Run came for — from two hours
 before it to twelve after, and never past halfway to the next one, so a job
 started every six hours that skipped noon has not made it up at six — is a
 missed start, counted on the days after the job's first Run of the month and
-before today.
+before today. One that falls while a Run is still going is not owed at all:
+Veeam does not start a job that is running, and a six-hourly job whose Runs
+take eight hours skips every other start by design.
 
 A machine is judged only by the Runs whose machines were read. On a server
 whose REST API is 1.1, which has no task sessions, a session's machines are
