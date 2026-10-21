@@ -51,7 +51,7 @@ One Nest module per subject, and one folder per module. The folders sit in layer
 updates   TelegramUpdatesModule   commands, buttons, webhook, HTTP endpoints
 monitor   MonitorModule           polling cycle and alerts; exports only MONITOR
 live      LiveModule              live topics: what they say, and one message per topic
-estate    EstateModule            restore points, the job card, the digest, runs
+estate    EstateModule            restore points, the job card, the digest, runs, the answers to commands
 veeam     VeeamModule             HTTP client, token, reading Veeam, repository and proxy names
 telegram  TelegramModule          delivery: chats, topics, routing, the state file, the bot's language
 config                            settings: one declaration per variable

@@ -19,7 +19,7 @@ import { TelegramBotCommand, TelegramChat, TelegramMarkup } from '../telegram/ty
  * without being listed.
  *
  * What each Answer says is not here — bar `/help`, which is this list. The
- * rest need the monitor, the rate limits and the Answer log, and live in
+ * rest need the monitor, the estate, the rate limits and the Answer log, and live in
  * `TelegramCommandsService`; an entry only names which one it gives, through
  * `Answers`.
  */

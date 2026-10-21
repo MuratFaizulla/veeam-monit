@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CHAT, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, appConfig,
+  CHAT, world, ear, veeamFake, serverOf, watching, idleMonitor, answersOf, printerOf, appConfig,
 } = require('./world.cjs');
 const { reportOf, repositoriesNamed, planOf } = require('../dist/estate/repository-report');
 const { reportPage } = require('../dist/estate/repository-report-page');
@@ -347,8 +347,9 @@ const reposWorld = (env = {}, routes = {}) => {
   const w = world({ REPORT_SITES: 'Main', ...env });
   const { veeam, asked } = veeamServer(Date.now(), { ...CYCLE, ...routes });
   const printer = printerOf();
-  const monitor = monitorOfServers(w, [serverOf(w, veeam)], printer);
-  const { updates, commands } = ear(w, monitor);
+  // A monitor beside the answers: its cycle is what tells the report menu the repositories there are.
+  const { monitor, answers } = watching(w, [serverOf(w, veeam)], printer);
+  const { updates, commands } = ear(w, monitor, answers);
   return { ...w, updates, commands, monitor, printer, asked };
 };
 
@@ -505,8 +506,7 @@ test('without a browser the report says it cannot be printed rather than staying
   const { veeam } = veeamServer();
   const { ReportPrinter } = require('../dist/estate/report-printer');
   const { configService } = require('./world.cjs');
-  const monitor = monitorOfServers(w, [serverOf(w, veeam)], new ReportPrinter(configService(w.app)));
-  const { updates, commands } = ear(w, monitor);
+  const { updates, commands } = ear(w, idleMonitor(), answersOf(w, [serverOf(w, veeam)], new ReportPrinter(configService(w.app))));
 
   await updates.handleUpdate({
     update_id: 1,

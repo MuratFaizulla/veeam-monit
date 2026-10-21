@@ -2,7 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  CHAT, world, idleMonitor, TelegramCommandsService, TelegramGeneral, TelegramUpdatesService, TelegramChatAccess,
+  CHAT, SERVER, world, answersWorld, exchange, configuredJob, job, idleMonitor, idleAnswers,
+  TelegramCommandsService, TelegramGeneral, TelegramUpdatesService, TelegramChatAccess,
 } = require('./world.cjs');
 const { COMMANDS, BOT_COMMANDS } = require('../dist/updates/commands');
 
@@ -125,7 +126,7 @@ test('a command is answered with no polling loop or webhook anywhere near it', a
   // all. When interpretation lived in the class that owns the polling loop, a
   // test that started that class on a world like this never finished.
   const w = world();
-  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor(), new TelegramGeneral(w.transport, w.store, w.posted));
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, idleMonitor(), idleAnswers(), new TelegramGeneral(w.transport, w.store, w.posted));
 
   await commands.answer({
     update_id: 1,
@@ -397,4 +398,272 @@ test('a chat that removed the bot is let go by General, as by the alerts', async
     await w.general.keepMenu();
     assert.deepEqual(w.api.calls, [], `${way}: and nothing more is asked of it`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * An answer, its Buttons and the menu
+ *
+ * What an answer says is the estate's (estate.test.cjs). What it offers next,
+ * and where it is said, is the commands': asked here of answers about one
+ * server, with no cycle behind them.
+ * ------------------------------------------------------------------ */
+
+/** The Selected server's Evidence, read as a cycle reads it: what /points answers from. */
+const scanned = async (w) => w.evidence.refresh(true, await w.server.reader.jobStates());
+
+test('a button and its reader cannot disagree about what it means', () => {
+  const { encode, decode } = require('../dist/updates/keyboard');
+  const { BOT_COMMANDS } = require('../dist/updates/commands');
+
+  for (const action of [{ kind: 'summary' }, { kind: 'check' }, { kind: 'help' }, { kind: 'status' }, { kind: 'clear' }]) {
+    assert.deepEqual(decode(encode(action)), action, `${action.kind} выживает круг`);
+  }
+  // The longest key configuration allows, beside a GUID.
+  const job = { kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf', server: 'veeam01-backup-a' };
+  assert.deepEqual(decode(encode(job)), job, 'сервер и GUID помещаются в 64 байта Telegram');
+  const points = { ...job, kind: 'points' };
+  assert.deepEqual(decode(encode(points)), points, 'и для точек задания');
+  assert.deepEqual(decode('a:pts:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
+    kind: 'points', id: '1e218e3f-9e08-4e28-ae89-06077422eddf',
+  });
+  // A job's Button from before there was a list names no server.
+  assert.deepEqual(decode('a:job:1e218e3f-9e08-4e28-ae89-06077422eddf'), {
+    kind: 'job', id: '1e218e3f-9e08-4e28-ae89-06077422eddf',
+  });
+
+  // A button from a version that had actions this one does not.
+  assert.equal(decode('a:whatever'), undefined);
+  assert.equal(decode(undefined), undefined);
+
+  // The menu names only commands the bot actually answers.
+  assert.deepEqual(
+    BOT_COMMANDS.map((c) => c.command).sort(),
+    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'repos', 'servers', 'status', 'topics'],
+  );
+});
+
+test('the command menu is registered with Telegram at startup', async () => {
+  // A webhook world on purpose: long polling would leave a loop running for as
+  // long as the test process lives.
+  const w = world({
+    TELEGRAM_WEBHOOK_URL: 'https://veeam.example.com',
+    TELEGRAM_WEBHOOK_SECRET: 'webhook-secret-for-tests-0123456789',
+  });
+
+  await w.updates.onModuleInit();
+
+  const published = w.api.of('setMyCommands').at(-1);
+  assert.ok(published, 'меню отправлено в Bot API');
+  assert.ok(published.commands.some((c) => c.command === 'job' && /имени/.test(c.description)));
+  // Without this Telegram never delivers a press, and every button is dead.
+  assert.ok(w.api.of('setWebhook').at(-1).allowed_updates.includes('callback_query'));
+});
+
+test('a summary asked for in General is answered in General', async () => {
+  const w = answersWorld({ TELEGRAM_ROUTING_MODE: 'single' }, [job('1', 'SQL Daily', 'Success')]);
+
+  await w.updates.handleUpdate({
+    update_id: 7,
+    message: {
+      message_id: 1,
+      text: '/digest',
+      chat: FORUM,
+    },
+  });
+
+  // Routed as an event, a clean summary would land in the recoveries topic by
+  // its severity — nowhere near whoever asked for it. An answer is not an event.
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /сводка по заданиям/);
+  assert.equal(reply.message_thread_id, undefined, 'в General, а не в теме по severity');
+  assert.equal(w.api.of('createForumTopic').length, 0, 'и без создания темы');
+});
+
+test('the summary offers the jobs it just named', async () => {
+  const w = answersWorld({}, [
+    job('1', 'SQL Daily', 'Failed'),
+    job('2', 'Files', 'Success'),
+    job('3', 'Exchange', 'Warning'),
+  ]);
+
+  await typed(w, '/digest');
+
+  const rows = w.api.sent().at(-1).reply_markup.inline_keyboard;
+  assert.deepEqual(rows.map((row) => row[0].text), ['SQL Daily', 'Exchange', '🔄 Обновить']);
+  // Addressed by id: a name would not fit the 64 bytes, and would open the
+  // wrong job if the estate changed between the message and the press. And by
+  // server, which may no longer be the one selected when it is pressed.
+  assert.equal(rows[0][0].callback_data, `a:job:${SERVER}:1`);
+});
+
+test('pressing a job button opens that job, without anybody typing a name', async () => {
+  const w = configuredJob();
+
+  // A Button from before there was a list: no server, so the first one.
+  await pressed(w, 'a:job:1');
+
+  const sent = w.api.sent().at(-1);
+  assert.equal(sent.message_thread_id, undefined, 'ответ в General');
+  assert.match(sent.text, /OPS_ERP_APP_DB1/);
+  assert.match(sent.text, /Расписание:<\/b> пн, ср, пт в 03:12/);
+  // And the card offers its own refresh, so the loop closes, and its month as a PDF.
+  assert.deepEqual(
+    sent.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
+    [`a:job:${SERVER}:1`, `a:pts:${SERVER}:1`, 'a:sum', `a:rpt:${SERVER}:1`],
+  );
+});
+
+test('a press is acknowledged before the work, not after', async () => {
+  const w = answersWorld({}, [job('1', 'SQL Daily', 'Success')]);
+
+  await pressed(w, 'a:sum');
+
+  // Telegram spins on the presser's screen until this is answered, so it must
+  // not wait behind a Veeam read.
+  const order = w.api.calls.map((call) => call.method);
+  assert.equal(order[0], 'answerCallbackQuery');
+  assert.ok(order.includes('sendMessage'));
+});
+
+test('a button this version does not know is acknowledged and ignored', async () => {
+  const w = world();
+
+  await pressed(w, 'a:from-a-future-version');
+
+  assert.equal(w.api.of('answerCallbackQuery').length, 1, 'спиннер снят');
+  assert.deepEqual(w.api.sent(), [], 'и ничего не отвечено наугад');
+});
+
+test('/points answers in General, offering a refresh and the job\'s card', async () => {
+  const w = exchange({}, answersWorld);
+  await scanned(w);
+
+  await typed(w, '/points exchange');
+
+  const reply = w.api.sent().at(-1);
+  assert.equal(reply.message_thread_id, undefined, 'answered in General');
+  assert.match(reply.text, /🗂 <b>OPS_Exchange<\/b> · точки восстановления/u);
+  assert.match(reply.text, /<b>Точек на ВМ:<\/b> 1/u, 'the point a failed run left is not one');
+  assert.deepEqual(
+    reply.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
+    [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum'],
+  );
+});
+
+test('/points without a name offers the jobs that need somebody, and a press opens their points', async () => {
+  const w = exchange({}, answersWorld);
+  await scanned(w);
+
+  await typed(w, '/points');
+
+  const reply = w.api.sent().at(-1);
+  assert.match(reply.text, /Укажите задание/u);
+  assert.match(reply.text, /которым нужно внимание/u);
+  const offered = reply.reply_markup.inline_keyboard[0][0];
+  assert.deepEqual([offered.text, offered.callback_data], ['OPS_Exchange', `a:pts:${SERVER}:1`]);
+
+  // Asking again within seconds is held back; a press a while later is not.
+  w.store.cooldowns.clear('command:read');
+  await pressed(w, offered.callback_data);
+  assert.match(w.api.sent().at(-1).text, /🗂 <b>OPS_Exchange<\/b> · точки восстановления/u);
+});
+
+test('/points with a name several jobs share offers each, and each opens its points', async () => {
+  const w = answersWorld({}, [job('1', 'OPS_Veeam_DB_Kingston', 'Success'), job('2', 'OPS_Kingston_EM_DB', 'Success')]);
+
+  await typed(w, '/points kingston');
+
+  const buttons = w.api.sent().at(-1).reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes(`a:pts:${SERVER}:1`) && buttons.includes(`a:pts:${SERVER}:2`), buttons.join(' '));
+  assert.ok(!buttons.some((data) => data.startsWith('a:job:')), 'not the cards it was not asked for');
+});
+
+/* ------------------------------------------------------------------ *
+ * /clear: General taken back, the record left alone
+ * ------------------------------------------------------------------ */
+
+test('/clear takes back the answers and leaves the record alone', async () => {
+  const w = world();
+  // Alerts, which are a record of something that happened, in their job's topic.
+  await w.service.notify({ kind: 'job', severity: 'critical', subject: 'SQL Daily', title: 'SQL Daily — failed' });
+  await w.service.notify({ kind: 'job', severity: 'success', subject: 'SQL Daily', title: 'SQL Daily — succeeded' });
+  const alerts = w.api.sent().map((_, i) => 1001 + i);
+  assert.ok(alerts.length > 0);
+  // And some chatter.
+  await typed(w, '/status');
+  await typed(w, '/help');
+  w.api.reset();
+
+  await typed(w, '/clear');
+
+  const deleted = w.api.of('deleteMessages').flatMap((call) => call.message_ids);
+  assert.equal(deleted.length, 2, 'оба ответа убраны');
+  for (const id of alerts) {
+    assert.ok(!deleted.includes(id), `оповещение ${id} не тронуто`);
+  }
+  assert.match(w.api.sent().at(-1).text, /Убрано 2 сообщения/);
+});
+
+test('/clear removes only answers in General', async () => {
+  const w = world();
+  const inThread = (thread, text) => w.updates.handleUpdate({
+    update_id: Math.floor(Math.random() * 1e6),
+    message: {
+      message_id: 1,
+      message_thread_id: thread,
+      is_topic_message: thread !== undefined,
+      text,
+      chat: { id: Number(CHAT), type: 'supergroup', is_forum: true },
+    },
+  });
+
+  await inThread(1, '/help');
+  w.store.answerLog.remember(CHAT, 9001, 77);
+  await inThread(undefined, '/help');
+  w.api.reset();
+
+  await inThread(1, '/clear');
+
+  const deleted = w.api.of('deleteMessages').flatMap((call) => call.message_ids);
+  assert.equal(deleted.length, 2);
+  assert.ok(!deleted.includes(9001));
+  assert.equal(w.api.sent().at(-1).message_thread_id, undefined);
+});
+
+test('/clear with nothing to remove says so instead of claiming work', async () => {
+  const w = world();
+
+  await typed(w, '/clear');
+
+  assert.equal(w.api.of('deleteMessages').length, 0);
+  assert.match(w.api.sent().at(-1).text, /Нечего убирать/);
+});
+
+test('/clear says what went, what will not, and what it deletes once Telegram answers', async () => {
+  const refused = { ok: false, error_code: 400, description: "Bad Request: message can't be deleted" };
+  const w = world({}, {
+    // One message the bot may not delete fails the whole call, and the rest
+    // go one at a time.
+    deleteMessages: () => refused,
+    deleteMessage: (payload) => ({
+      1001: { ok: false, error_code: 400, description: 'Bad Request: message to delete not found' },
+      1002: refused,
+      1003: '<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>',
+    })[payload.message_id],
+  });
+  await typed(w, '/status');
+  await typed(w, '/help');
+  await typed(w, '/topics');
+  await typed(w, '/digest');
+  w.api.reset();
+
+  await typed(w, '/clear');
+
+  // Four answers: one deleted, one somebody deleted by hand, one the bot may
+  // not delete, and one Telegram did not answer for — which used to be counted
+  // with the third, and forgotten.
+  const answer = w.api.sent().at(-1).text;
+  assert.match(answer, /Убрано 2 сообщения/);
+  assert.match(answer, /\n1 не поддались — у меня нет права удалять чужие сообщения, или им больше двух суток\./);
+  assert.match(answer, /\n1 удалю чуть позже — Telegram сейчас не отвечает\./);
 });

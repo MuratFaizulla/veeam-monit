@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { world, veeamFake, monitorWorld, job, evidenceOf } = require('./world.cjs');
+const { world, veeamFake, monitorWorld, answersWorld, job, evidenceOf } = require('./world.cjs');
 
 /* ------------------------------------------------------------------ *
  * Runs: one rule for which sessions are one run
@@ -124,9 +124,8 @@ test('the first alert after Veeam comes back still knows the retry policy', asyn
  * ------------------------------------------------------------------ */
 
 test('a job card lists one retried run as one line, with its attempts counted', async () => {
-  const { CHAT } = require('./world.cjs');
   const end = Date.now() - HOUR;
-  const w = monitorWorld({}, [job('1', 'CORE_DBS03', 'Failed')], {
+  const w = answersWorld({}, [job('1', 'CORE_DBS03', 'Failed')], {
     '/api/v1/jobs/1': { id: '1', name: 'CORE_DBS03', schedule: RETRY_POLICY },
     '/api/v1/backupInfrastructure/repositories': { data: [] },
     '/api/v1/backupInfrastructure/proxies': { data: [] },
@@ -138,11 +137,7 @@ test('a job card lists one retried run as one line, with its attempts counted', 
     '/api/v1/sessions/s3/taskSessions': { data: [] },
   });
 
-  await w.updates.handleUpdate({
-    update_id: 1,
-    message: { message_id: 1, text: '/job CORE_DBS03', chat: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
-  });
-  const card = w.api.sent().at(-1).text;
+  const card = (await w.answers.describeJob('CORE_DBS03')).text;
   const list = card.slice(card.indexOf('Последние запуски'));
   const lines = list.split('\n').filter((line) => /^[🟢🟡🔴⚪]/u.test(line));
 
@@ -179,19 +174,14 @@ const nightlyRuns = (nights, attempts) => {
 };
 
 const cardRuns = async (sessions, retryCount) => {
-  const { CHAT } = require('./world.cjs');
   const policy = { runAutomatically: true, retry: { isEnabled: true, retryCount, awaitMinutes: 10 } };
-  const w = monitorWorld({}, [job('1', 'OPS_Nightly', 'Success')], {
+  const w = answersWorld({}, [job('1', 'OPS_Nightly', 'Success')], {
     '/api/v1/jobs/1': { id: '1', name: 'OPS_Nightly', schedule: policy },
     '/api/v1/backupInfrastructure/repositories': { data: [] },
     '/api/v1/backupInfrastructure/proxies': { data: [] },
     '/api/v1/sessions': sessions,
   });
-  await w.updates.handleUpdate({
-    update_id: 1,
-    message: { message_id: 1, text: '/job OPS_Nightly', chat: { id: Number(CHAT), type: 'supergroup', is_forum: true } },
-  });
-  const card = w.api.sent().at(-1).text;
+  const card = (await w.answers.describeJob('OPS_Nightly')).text;
   const list = card.slice(card.indexOf('Последние запуски'));
   return list.split('\n').filter((line) => /^[🟢🟡🔴⚪]/u.test(line));
 };

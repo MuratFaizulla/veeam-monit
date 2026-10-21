@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { EstateModule } from '../estate/estate.module';
 import { MonitorModule } from '../monitor/monitor.module';
 import { TelegramAdminGuard, TelegramEnabledGuard, TelegramWebhookGuard } from './access.guard';
 import { TelegramChatAccess } from './chat-access';
@@ -15,15 +16,17 @@ import { TelegramUpdatesService } from './updates.service';
  * Separate from delivery because it is the one part that asks the monitor
  * anything. With it inside the delivery module, the monitor — which sends
  * through delivery — and the ear — which asks the monitor — made one cycle,
- * and the whole service had to be a single module to hold it.
+ * and the whole service had to be a single module to hold it. What a command
+ * asks about the estate — the Summary, a Job card, the reports — it asks the
+ * estate's answers, past the monitor.
  *
  * Inside, hearing and interpreting are two providers: `TelegramUpdatesService`
  * is how an Update arrives, `TelegramCommandsService` what it means. Only the
- * second asks the monitor. What is said in General, the menu kept there and
- * /clear are `TelegramGeneral`'s, which both use.
+ * second asks the monitor and the estate. What is said in General, the menu
+ * kept there and /clear are `TelegramGeneral`'s, which both use.
  */
 @Module({
-  imports: [TelegramModule, MonitorModule],
+  imports: [TelegramModule, EstateModule, MonitorModule],
   controllers: [TelegramController],
   providers: [
     TelegramUpdatesService,

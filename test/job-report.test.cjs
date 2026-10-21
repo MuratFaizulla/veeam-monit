@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { CHAT, SERVER, world, ear, veeamFake, serverOf, monitorOfServers, printerOf, monitorAccount, jobReadsOf, telegramConfig } = require('./world.cjs');
+const { CHAT, SERVER, world, ear, veeamFake, serverOf, idleMonitor, answersOf, printerOf, monitorAccount, jobReadsOf, telegramConfig } = require('./world.cjs');
 const { jobReportOf, dayLabel } = require('../dist/estate/job-report');
 const { jobReportPage } = require('../dist/estate/job-report-page');
 const { sessionReportOf } = require('../dist/estate/session-report');
@@ -828,7 +828,8 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   const w = world();
   const { veeam } = edgeServer();
   const printer = printerOf();
-  const { updates, commands } = ear(w, monitorOfServers(w, [{ ...serverOf(w, veeam), reads: edgeMonth() }], printer));
+  // Asked of the job's estate, with no cycle behind it.
+  const { updates, commands } = ear(w, idleMonitor(), answersOf(w, [{ ...serverOf(w, veeam), reads: edgeMonth() }], printer));
 
   await pressed({ updates }, encode({ kind: 'report', id: 'j1', server: SERVER }));
   await commands.settled();

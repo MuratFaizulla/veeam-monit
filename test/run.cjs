@@ -4,6 +4,7 @@
 require('./telegram.test.cjs');
 require('./commands.test.cjs');
 require('./monitor.test.cjs');
+require('./estate.test.cjs');
 require('./live.test.cjs');
 require('./live-performance.test.cjs');
 require('./live-repositories.test.cjs');

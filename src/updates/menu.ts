@@ -1,5 +1,5 @@
 import { TelegramKey, TelegramReplyKeyboard } from '../telegram/types';
-import type { JobChoice, JobMark } from '../monitor/monitor';
+import type { JobChoice, JobMark } from '../estate/job-choices';
 import type { CommandName } from './commands';
 
 /**

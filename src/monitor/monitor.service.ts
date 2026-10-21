@@ -1,27 +1,25 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
-import { Job, WorkingSessions, workingUnavailable } from '../veeam/estate';
+import { Job, WorkingSessions } from '../veeam/estate';
 import { DeliveryReport, TelegramService } from '../telegram/telegram.service';
 import { TelegramLiveService } from '../live/live.service';
 import { LiveCycle, LiveSnapshotsService } from '../live/snapshots.service';
 import { TelegramStateStore } from '../telegram/state.store';
 import { NotificationEvent } from '../telegram/types';
 import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
-import { addressable, digestDue, digestEvent, summarise } from '../estate/digest';
+import { digestDue, digestEvent, summarise } from '../estate/digest';
 import { repositoryAlarms } from './repository-alarms';
 import { JobAlerts } from './job-alerts';
 import { ServerWatch } from './server-watch';
-import { escapeHtml, renderEvent } from '../telegram/format';
-import { Answer } from '../estate/answer';
-import { JobChoices, Monitor, MonitorHealth, ReportChoice, Selection, ServerStatus } from './monitor';
-import { ServerEstate, ServerEstates } from '../estate/server-estates';
-import { JobReports } from '../estate/job-reports';
+import { aboutServer } from '../telegram/format';
+import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
+import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
 
 const HOUR = 3_600_000;
 
-export type { Answer, MonitorHealth } from './monitor';
+export type { MonitorHealth } from './monitor';
 
 /** What the monitor keeps about one server from one pass to the next. */
 interface Watch {
@@ -51,7 +49,8 @@ type Pass = Omit<LiveCycle, 'health' | 'server'>;
  * a server nobody is looking at is exactly the one that must not wait until
  * somebody does. What the selection decides is which server the live slots and
  * the commands show — and so which server pays for the reads only they need,
- * the Evidence scan above all.
+ * the Evidence scan above all. What a command asks about that server is not
+ * the cycle's, and is answered by `EstateAnswers`.
  */
 @Injectable()
 export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
@@ -76,7 +75,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     private readonly live: TelegramLiveService,
     private readonly snapshots: LiveSnapshotsService,
     private readonly reports: RepositoryReports,
-    private readonly jobReports: JobReports,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
     this.watches = estates.all.map((estate) => {
@@ -198,82 +196,15 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Where every job of the Selected server stands, as a message somebody can
-   * be handed.
-   *
-   * The same counting as the daily digest, pulled instead of pushed. It is
-   * rendered here rather than emitted as an event on purpose: an event goes
-   * through the router to the topic its severity implies, and a clean summary
-   * asked for in General would land in the recoveries topic, where nobody who
-   * asked for it is looking. An answer belongs where the question was.
-   */
-  async summary(): Promise<Answer> {
-    const watch = this.shown();
-    const read = await watch.estate.jobs.jobsNow();
-    if (!read.ok) return this.answered(watch, { text: read.message });
-    const working = await this.working(watch.estate);
-    const summary = summarise(read.jobs, working.byJob, working.unavailable);
-    return {
-      // The very same event the daily message sends, rendered instead of
-      // routed. Two renderings of one set of figures began to differ within a
-      // day of existing; there is now nothing that can differ.
-      text: renderEvent(this.labelled(watch, digestEvent(summary))),
-      // The jobs that are not well are exactly the ones somebody reading this
-      // is about to ask about, so the summary offers them rather than making
-      // them be typed back in.
-      jobs: addressable(summary),
-      server: watch.estate.key,
-    };
-  }
-
-  async describeJob(query: string): Promise<Answer> {
-    const watch = this.shown();
-    return this.answered(watch, await watch.estate.jobs.describeJob(query));
-  }
-
-  async describeJobById(id: string, server?: string): Promise<Answer> {
-    // A Button names its server. One from before there was a list does not,
-    // and the only server there was then is the first.
-    const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
-    return this.answered(watch, await watch.estate.jobs.describeJobById(id));
-  }
-
-  async describePoints(query: string): Promise<Answer> {
-    const watch = this.shown();
-    return this.answered(watch, await watch.estate.jobs.describePoints(query));
-  }
-
-  async describePointsById(id: string, server?: string): Promise<Answer> {
-    const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
-    return this.answered(watch, await watch.estate.jobs.describePointsById(id));
-  }
-
-  jobReport(id: string, server?: string): Answer {
-    const watch = (server === undefined ? undefined : this.watchOf(server)) ?? this.shown();
-    return this.jobReports.asked(watch.estate, id);
-  }
-
-  async jobChoices(): Promise<JobChoices> {
-    const watch = this.shown();
-    const read = await watch.estate.jobs.choices();
-    return read.ok ? { server: watch.estate.name, jobs: read.jobs } : { server: watch.estate.name, unavailable: read.message };
-  }
-
-  /** Every server's, whichever is selected: a repository is shared by several. */
-  repositoryReport(query: string): Answer {
-    return this.reports.asked(query);
-  }
-
-  repositoryChoices(): ReportChoice[] {
-    return this.reports.choices();
-  }
-
   /* ---------------------------------------------------------------- *
    * Servers
    * ---------------------------------------------------------------- */
 
-  /** The Selected server: the one chosen, or the first while nobody has chosen one that exists. */
+  /**
+   * The Selected server: the one chosen, or the first while nobody has chosen
+   * one that exists — the server the estate's answers are about, by the same
+   * reading of the state file, unless a Button names another.
+   */
   private shown(): Watch {
     const chosen = this.store.selectedServer();
     return (chosen === undefined ? undefined : this.watchOf(chosen)) ?? this.watches[0];
@@ -292,26 +223,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     return this.named ? `${watch.estate.key}:${key}` : key;
   }
 
-  /**
-   * The event, saying which server it is about. First in the title, because
-   * the title is what a notification on a locked phone shows.
-   */
+  /** The event, saying which server it is about, and its cooldown this server's alone. */
   private labelled(watch: Watch, event: NotificationEvent): NotificationEvent {
     if (!this.named) return event;
     return {
-      ...event,
-      title: `${watch.estate.name} · ${event.title}`,
+      ...aboutServer(event, watch.estate.name),
       dedupeKey: event.dedupeKey === undefined ? undefined : this.scoped(watch, event.dedupeKey),
-    };
-  }
-
-  /** An answer about one server, naming it and carrying its key for the Buttons under it. */
-  private answered(watch: Watch, answer: Answer): Answer {
-    if (!this.named) return { ...answer, server: watch.estate.key };
-    return {
-      ...answer,
-      text: `🖥 <b>${escapeHtml(watch.estate.name)}</b>\n\n${answer.text}`,
-      server: watch.estate.key,
     };
   }
 
@@ -334,7 +251,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     // Once, beside the job list it is united with, and shared by everything
     // that counts running jobs: ▶️, 📈 and the daily Summary. A server nobody
     // is looking at needs it only on the one cycle a day its Summary goes out.
-    const working = authenticated && (shown || digest) ? await this.working(estate) : undefined;
+    const working = authenticated && (shown || digest) ? await workingOn(estate) : undefined;
     // Said in the health too, and only here: /digest reads the same thing, and
     // a command asking its own question must not overwrite the cycle's health.
     if (working?.unavailable) watch.server.failed(working.unavailable);
@@ -362,22 +279,6 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     }
     watch.lastCheckAt = new Date().toISOString();
     return { jobs, working, repositories, authenticated, evidence };
-  }
-
-  /**
-   * What Veeam is running right now. Never throws.
-   *
-   * A failed read is an empty one with the reason, which is the safe direction:
-   * a running count falls back to the job status alone and never invents a run,
-   * and 📈 says why it has nothing to show.
-   */
-  private async working(estate: ServerEstate): Promise<WorkingSessions> {
-    try {
-      return await estate.reader.workingSessions();
-    } catch (error) {
-      this.logger.warn(`${estate.name}: working sessions unavailable: ${(error as Error).message}`);
-      return workingUnavailable((error as Error).message);
-    }
   }
 
   private async step<T>(watch: Watch, name: string, run: () => Promise<T>): Promise<T | undefined> {

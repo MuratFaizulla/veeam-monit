@@ -266,8 +266,9 @@ about is said before it is read: the cycle reads every repository each minute
 for its free space, which is enough to list them in the menu and to refuse a
 name that matches none, so only the report itself waits. What is said
 meanwhile, and how long it takes, is the report's to say, the Job report's
-too; the commands pass it on, and used to write both. A server that stops
-answering keeps what it said before it stopped.
+too, and so is what the report menu says of how long it takes; the commands
+pass it on, and used to write all three. A server that stops answering keeps
+what it said before it stopped.
 
 Printed, one at a time, by a headless Chromium (`REPORT_BROWSER`) from one
 HTML document laid out to the page, in the **report envelope** both reports'
@@ -479,12 +480,14 @@ two adapters of that one seam. What the Update *means* — a command or a
 lifecycle, so a test of a command never constructs the polling loop. One that
 did once hung the whole test run.
 
-What a command needs from the monitor — its health, a pass on demand, the
-**Summary** and a **Job card** — it asks through `Monitor` in
+What a command needs from the monitor — its health, the servers, selecting
+one, a pass on demand: the cycle — it asks through `Monitor` in
 `src/monitor/monitor.ts`, not through the monitor class. The HTTP surface does
-the same. Two adapters sit behind that seam: `MonitorService`, and the idle
-monitor the tests use for a world with no Veeam, which a test keeps in step
-with the real one.
+the same. What it asks about the estate — the **Summary**, a **Job card**, the
+job menu, /points, both reports — it asks the **Estate answers**, which have
+no cycle behind them. Each seam has two adapters: the real one, and the idle
+one the tests use for a world with no Veeam, which a test keeps in step with
+it.
 
 **Access** is who the bot talks to, because anybody can find it by name: a
 chat in `TELEGRAM_CHAT_IDS` is a *recipient* — the only kind anything is ever
@@ -673,7 +676,9 @@ counted as failed on Monday. That is the point of it — 🚨 Alerts reports
 One event, two deliveries: `digestEvent` builds it, the daily message routes it
 at `TELEGRAM_DIGEST_HOUR`, and `/digest` renders the same event straight back to
 whoever asked. They were briefly two renderings of one set of figures and began
-to differ within a day; there is now nothing that can differ.
+to differ within a day; there is now nothing that can differ. With several
+servers both put the server's name first in the title, by the rule the alerts
+are titled by.
 
 The running count comes from the union of job status and Working sessions, not
 from the status alone — see `isRunningNow`. Counting it separately here is what
@@ -829,6 +834,7 @@ comes from the job's own configuration when there is none.
 A job's **Button** names the server the job is on, so pressing it after another
 server was selected still opens the job it was labelled with. A Button from
 before there was a list names none, and opens the job on the Selected server.
+Which server a question is about is the **Estate answers**'.
 
 ## Estate reader
 
@@ -899,6 +905,27 @@ not an address.
 A report is answered twice: at once, with what the report says while it is
 read — that it is coming, and how long it takes — and then with its file,
 the Answer that follows (`later`). Both are the report's own.
+
+## Estate answers
+
+What a command or a **Button** asks about the estate, answered: the
+**Summary**, a **Job card** by name or by id, the job menu, a job's restore
+points and both reports. **The server a question is about** is decided
+there, once: the one its Button named, else the **Selected server**. A typed
+command names none, nor does a Button from before there was a list; one
+naming a server since taken off the list gets the Selected one. With several
+servers an answer says first which server it is about, and the Summary says
+it in its title, as the daily one does; every answer carries the server's
+key for the Buttons under it.
+
+Apart from the cycle: nothing in it watches or keeps anything, so a command
+is answered with no monitor behind it, and a test of one builds the server's
+estate and nothing more. It used to be the monitor's — nine members of
+`Monitor`, each the same pass-through to a server's estate — so every new
+command added one to the monitor's interface, to the class behind it and to
+the idle monitor, and a test of one command ran a whole cycle first.
+
+Owned by `src/estate/estate-answers.ts`.
 
 ## Answer log
 

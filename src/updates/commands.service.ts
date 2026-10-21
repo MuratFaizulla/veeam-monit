@@ -2,7 +2,9 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { plural, stampOf } from '../telegram/time';
-import { MONITOR, Monitor, Answer, ServerStatus } from '../monitor/monitor';
+import { MONITOR, Monitor, ServerStatus } from '../monitor/monitor';
+import { Answer } from '../estate/answer';
+import { EstateAnswers } from '../estate/estate-answers';
 import { Answers, Asked, commandNamed, commandPressed, Reply } from './commands';
 import { escapeHtml } from '../telegram/format';
 import { Action, cardKeyboard, clearKeyboard, decode, jobsKeyboard, mainKeyboard, pointsKeyboard } from './keyboard';
@@ -82,6 +84,7 @@ export class TelegramCommandsService implements Answers {
     private readonly topics: TelegramTopicsService,
     private readonly store: TelegramStateStore,
     @Inject(MONITOR) private readonly monitor: Monitor,
+    private readonly estate: EstateAnswers,
     private readonly general: TelegramGeneral,
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
@@ -231,10 +234,10 @@ export class TelegramCommandsService implements Answers {
    */
   private async act(action: Action, asked: Asked): Promise<Reply | undefined> {
     if (action.kind === 'job') {
-      return this.reading(() => this.monitor.describeJobById(action.id, action.server));
+      return this.reading(() => this.estate.describeJobById(action.id, action.server));
     }
     if (action.kind === 'points') {
-      return this.reading(() => this.monitor.describePointsById(action.id, action.server));
+      return this.reading(() => this.estate.describePointsById(action.id, action.server));
     }
     if (action.kind === 'report') return this.jobReport(asked, action.id, action.server);
     return commandPressed(action.kind)?.answer(this, asked);
@@ -323,15 +326,15 @@ export class TelegramCommandsService implements Answers {
   }
 
   summary(): Promise<Reply> {
-    return this.reading(() => this.monitor.summary(), REFRESH_SUMMARY_BUTTON);
+    return this.reading(() => this.estate.summary(), REFRESH_SUMMARY_BUTTON);
   }
 
   job(name: string): Promise<Reply> {
-    return this.reading(() => this.monitor.describeJob(name), SUMMARY_BUTTON);
+    return this.reading(() => this.estate.describeJob(name), SUMMARY_BUTTON);
   }
 
   points(name: string): Promise<Reply> {
-    return this.reading(() => this.monitor.describePoints(name), SUMMARY_BUTTON);
+    return this.reading(() => this.estate.describePoints(name), SUMMARY_BUTTON);
   }
 
   /**
@@ -344,7 +347,7 @@ export class TelegramCommandsService implements Answers {
   repositories(asked: Asked): Reply {
     const tooSoon = this.tooSoon();
     if (tooSoon) return tooSoon;
-    const { text, later } = this.monitor.repositoryReport(asked.argument.trim());
+    const { text, later } = this.estate.repositoryReport(asked.argument.trim());
     if (!later) return { lines: [text], markup: mainKeyboard() };
     // Whoever pressed a repository's key gets the main menu back.
     return { lines: [text], markup: mainMenu({ selective: true }), later: this.sending(asked, later) };
@@ -358,7 +361,7 @@ export class TelegramCommandsService implements Answers {
   private jobReport(asked: Asked, id: string, server?: string): Reply {
     const tooSoon = this.tooSoon();
     if (tooSoon) return tooSoon;
-    const { text, later } = this.monitor.jobReport(id, server);
+    const { text, later } = this.estate.jobReport(id, server);
     return { lines: [text], ...(later ? { later: this.sending(asked, later) } : {}) };
   }
 
@@ -373,7 +376,7 @@ export class TelegramCommandsService implements Answers {
    * turns it into the servers.
    */
   private reportChoices(): Reply {
-    const repositories = this.monitor.repositoryChoices();
+    const { repositories, takes } = this.estate.repositoryChoices();
     const sites = [...new Set(repositories.map(({ site }) => site))];
     const listed = sites.flatMap((site) => [
       ...(site ? [`<b>${escapeHtml(site)}</b>`] : []),
@@ -390,7 +393,8 @@ export class TelegramCommandsService implements Answers {
         '',
         ...(repositories.length ? listed : ['Список репозиториев появится после первой проверки, через минуту.', '']),
         `Выберите репозиторий кнопкой под полем ввода или «${EVERY_REPOSITORY}».`,
-        'PDF собирается 1–2 минуты, повторный в течение получаса — за секунды.',
+        // How long it takes is the report's to say, as is what it says while it is read.
+        takes,
       ],
       markup: reportMenu(repositories),
     };
@@ -405,7 +409,7 @@ export class TelegramCommandsService implements Answers {
    * by the list would refuse the card picked from it a moment later.
    */
   private async jobChoices(page = 1): Promise<Reply> {
-    const { server, jobs, unavailable } = await this.monitor.jobChoices();
+    const { server, jobs, unavailable } = await this.estate.jobChoices();
     if (!jobs) return { lines: [unavailable ?? '⚠️ Veeam не ответил.'], markup: mainKeyboard() };
     if (!jobs.length) {
       return { lines: [`📦 <b>Задания · ${escapeHtml(server)}</b>`, '', 'На этом сервере нет заданий.'], markup: mainKeyboard() };
@@ -550,10 +554,11 @@ export class TelegramCommandsService implements Answers {
   }
 
   /**
-   * A question put to the monitor, answered in place.
+   * A question put to the estate, answered in place.
    *
    * These ask Veeam and say what it said; they publish nothing and change
-   * nothing, so unlike `/check` they need no cycle and cannot collide with one.
+   * nothing, so unlike `/check` they need no cycle and cannot collide with one
+   * — which is why they are asked of `EstateAnswers` and not of the monitor.
    * A failure is answered too: an unanswered command reads as a dead bot.
    */
   private async reading(
@@ -592,7 +597,7 @@ export class TelegramCommandsService implements Answers {
    * What the answer lets somebody do next.
    *
    * An answer about one job offers that job again; an answer listing jobs
-   * offers each of them. Which is why the monitor hands back ids alongside the
+   * offers each of them. Which is why the estate hands back ids alongside the
    * text: a button has to address a job, and the name printed in the message
    * is not an address.
    */

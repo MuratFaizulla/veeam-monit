@@ -33,6 +33,7 @@ const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
 const { RepositoryReports } = require('../dist/estate/repository-reports');
 const { JobReports } = require('../dist/estate/job-reports');
+const { EstateAnswers } = require('../dist/estate/estate-answers');
 
 const CHAT = '-1001234567890';
 /** The key of the one server a world has: named after its host, https://localhost:9419. */
@@ -128,10 +129,11 @@ function world(env = {}, handlers = {}, stateFile) {
   const topics = new TelegramTopicsService(config, transport, store);
   const routing = new TelegramRoutingService(config);
   const service = new TelegramService(config, transport, topics, routing, store);
-  // The second adapter of the Monitor seam (src/monitor/monitor.ts), for tests
-  // with no Veeam: it says it ran and reports nothing. monitorWorld swaps in
-  // the real one below.
-  const { commands, updates, general } = ear({ config, transport, topics, store, posted }, idleMonitor());
+  // The second adapters of the Monitor seam (src/monitor/monitor.ts) and of
+  // the estate's answers (src/estate/estate-answers.ts), for tests with no
+  // Veeam: the monitor says it ran and reports nothing, the answers say what
+  // was asked. answersWorld and monitorWorld swap in the real ones below.
+  const { commands, updates, general } = ear({ config, transport, topics, store, posted }, idleMonitor(), idleAnswers());
   const live = new TelegramLiveService(config, transport, topics, store, posted);
   // Configured chats only learn they are forums from getChat or an update.
   store.mergeChat({ id: Number(CHAT), type: 'supergroup', is_forum: true });
@@ -141,14 +143,14 @@ function world(env = {}, handlers = {}, stateFile) {
 }
 
 /**
- * Intake and the commands it hands Updates to, asking `monitor`, and General,
- * which both use. Tests reach
- * both through `updates.handleUpdate`, as Telegram does; `commands` is there
- * for a test of interpretation with no intake at all.
+ * Intake and the commands it hands Updates to, asking `monitor` about the
+ * cycle and `answers` about the estate, and General, which both use. Tests
+ * reach both through `updates.handleUpdate`, as Telegram does; `commands` is
+ * there for a test of interpretation with no intake at all.
  */
-function ear(w, monitor) {
+function ear(w, monitor, answers) {
   const general = new TelegramGeneral(w.transport, w.store, w.posted);
-  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor, general);
+  const commands = new TelegramCommandsService(w.config, w.transport, w.topics, w.store, monitor, answers, general);
   const access = new TelegramChatAccess(w.config, w.transport);
   const updates = new TelegramUpdatesService(w.config, w.transport, w.topics, w.store, commands, access, general);
   return { commands, updates, general };
@@ -162,25 +164,31 @@ function idleMonitor() {
     }],
     select: (key) => (key === SERVER ? 'already' : 'unknown'),
     check: async () => 'ran',
+    status: {
+      lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
+      trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
+    },
+  };
+}
+
+/** The estate's answers with no estate behind them: each says what was asked. Kept in step with EstateAnswers by a test. */
+function idleAnswers() {
+  return {
     summary: async () => ({ text: 'сводка' }),
     describeJob: async (query) => ({ text: `карточка ${query}` }),
     describeJobById: async (id, server) => ({ text: `карточка ${id}`, jobId: id, server }),
     describePoints: async (query) => ({ text: `точки ${query}`, about: 'points' }),
     describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
-    repositoryReport: (query) => ({
-      text: `⏳ отчёт ${query}`,
-      later: async () => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
-    }),
-    repositoryChoices: () => [],
     jobChoices: async () => ({ server: SERVER, jobs: [] }),
     jobReport: (id) => ({
       text: `⏳ отчёт задания ${id}`,
       later: async () => ({ text: `отчёт задания ${id}`, document: { filename: 'job.pdf', content: Buffer.from('%PDF') } }),
     }),
-    status: {
-      lastCheckAt: null, reachable: null, authenticated: null, lastError: null,
-      trackedJobs: 0, delivered: 0, undelivered: 0, lastOutcome: null,
-    },
+    repositoryReport: (query) => ({
+      text: `⏳ отчёт ${query}`,
+      later: async () => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
+    }),
+    repositoryChoices: () => ({ repositories: [], takes: 'PDF — за секунды.' }),
   };
 }
 
@@ -227,7 +235,7 @@ function evidenceOf(w, veeam, auth = monitorAccount()) {
  * time it was added, eleven tests stopped compiling at once.
  */
 function monitorOf(w, veeam, auth = monitorAccount(), evidence) {
-  return monitorOfServers(w, [serverOf(w, veeam, auth, evidence)]);
+  return watching(w, [serverOf(w, veeam, auth, evidence)]).monitor;
 }
 
 /**
@@ -293,16 +301,35 @@ function printerOf() {
   return printer;
 }
 
-/** A monitor watching several servers, the first of them selected until one is chosen. */
-function monitorOfServers(w, servers, printer = printerOf()) {
-  const reports = new RepositoryReports(w.config, { all: servers }, printer);
-  const jobReports = new JobReports(w.config, printer);
-  return new MonitorService(
-    w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports, jobReports,
-  );
+/**
+ * What a world's commands are answered with about `servers` — the Summary, a
+ * Job card, the job menu, /points and both reports — asked of their estates
+ * with no cycle behind them. The first server is the Selected one until the
+ * store says another. `reports` is the Repository report, when a monitor
+ * tells it what repositories its cycles saw.
+ */
+function answersOf(w, servers, printer = printerOf(), reports = new RepositoryReports(w.config, { all: servers }, printer)) {
+  return new EstateAnswers({ all: servers }, w.store, reports, new JobReports(w.config, printer));
 }
 
-function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
+/**
+ * Several servers of a world as the service wires them: the monitor watching
+ * every one, the first selected until one is chosen, and the answers about
+ * them, whose report menu lists the repositories the monitor's cycles saw.
+ */
+function watching(w, servers, printer = printerOf()) {
+  const reports = new RepositoryReports(w.config, { all: servers }, printer);
+  return {
+    monitor: new MonitorService(w.config, { all: servers }, w.service, w.store, w.live, new LiveSnapshotsService(w.config), reports),
+    answers: answersOf(w, servers, printer, reports),
+  };
+}
+
+/**
+ * A world's one Veeam server, reporting `jobStates` — until `setJobs` says
+ * otherwise — with `extraRoutes` beside or over what every server answers.
+ */
+function oneServer(env, jobStates, extraRoutes, handlers) {
   const w = world(env, handlers);
   let states = jobStates;
   const veeam = veeamFake({
@@ -316,10 +343,28 @@ function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   });
   const auth = monitorAccount();
   const evidence = evidenceOf(w, veeam, auth);
-  const monitor = monitorOf(w, veeam, auth, evidence);
-  // The real monitor, so /check in these tests drives a real cycle.
-  const { commands, updates, general } = ear(w, monitor);
-  return { ...w, commands, updates, general, monitor, auth, veeam, evidence, setJobs: (next) => (states = next) };
+  const server = serverOf(w, veeam, auth, evidence);
+  return { ...w, server, auth, veeam, evidence, setJobs: (next) => (states = next) };
+}
+
+/**
+ * A world whose commands answer about one Veeam server, with no cycle behind
+ * them: the monitor is the idle one. What a test of an answer needs; its
+ * Evidence is read, when the test needs one, by `evidence.refresh`.
+ */
+function answersWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
+  const w = oneServer(env, jobStates, extraRoutes, handlers);
+  const answers = answersOf(w, [w.server]);
+  const { commands, updates, general } = ear(w, idleMonitor(), answers);
+  return { ...w, commands, updates, general, answers };
+}
+
+/** The same, watched by the real monitor, so a cycle — and /check — drives a real pass. */
+function monitorWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
+  const w = oneServer(env, jobStates, extraRoutes, handlers);
+  const { monitor, answers } = watching(w, [w.server]);
+  const { commands, updates, general } = ear(w, monitor, answers);
+  return { ...w, commands, updates, general, monitor, answers };
 }
 
 const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', status: 'Stopped' });
@@ -331,9 +376,11 @@ const job = (id, name, lastResult) => ({ id, name, lastResult, type: 'Backup', s
  * started on 23 August succeeded — writing the point at 01:31 while carrying
  * the *first* attempt's session id. The run on 14 September errored out after
  * 6.8 GB of 22.4 and left a point behind anyway.
+ *
+ * Watched by the real monitor, unless `worldOf` is `answersWorld`.
  */
-const exchange = (env = {}) =>
-  monitorWorld({ TELEGRAM_LIVE: 'true', ...env }, [job('1', 'OPS_Exchange', 'Failed')], {
+const exchange = (env = {}, worldOf = monitorWorld) =>
+  worldOf({ TELEGRAM_LIVE: 'true', ...env }, [job('1', 'OPS_Exchange', 'Failed')], {
     '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
     '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'OPS_Exchange' }] },
     '/api/v1/restorePoints': {
@@ -355,6 +402,70 @@ const exchange = (env = {}) =>
     // The one machine of the job is the one that failed that night.
     '/api/v1/sessions/sep14/taskSessions': { data: [{ name: 'MTA', result: { result: 'Failed' } }] },
   });
+
+/**
+ * OPS_ERP_APP_DB1 as this VBR actually reports it: three days a week at
+ * 03:12, four twenty-second retries that all failed on the same unreachable
+ * machine, and a fifth run that worked. Its card is asked about with no
+ * cycle behind it, unless `worldOf` is `monitorWorld`.
+ */
+const configuredJob = (worldOf = answersWorld) => worldOf({}, [
+  {
+    id: '1', name: 'OPS_ERP_APP_DB1', type: 'Backup', status: 'Stopped',
+    lastResult: 'Failed', lastRun: '2026-09-16T03:44:58+05:00',
+    nextRun: '2026-09-18T03:12:00+05:00', objectsCount: 1,
+  },
+], {
+  '/api/v1/jobs/1': {
+    id: '1', name: 'OPS_ERP_APP_DB1',
+    schedule: {
+      runAutomatically: true,
+      // Veeam lists the days in its own order; the card must not.
+      daily: { isEnabled: true, dailyKind: 'SelectedDays', localTime: '03:12',
+        days: ['friday', 'monday', 'wednesday'] },
+      retry: { isEnabled: true, retryCount: 3, awaitMinutes: 10 },
+    },
+    storage: {
+      backupRepositoryId: 'repo-6',
+      backupProxies: { autoSelectEnabled: true, proxyIds: [] },
+      retentionPolicy: { type: 'Days', quantity: 7 },
+      advancedSettings: {
+        backupModeType: 'Incremental',
+        activeFulls: { isEnabled: true, weekly: { isEnabled: true, days: ['saturday'] } },
+      },
+    },
+    virtualMachines: {
+      includes: [{ name: 'APPDB1-T3Q4', hostName: '192.0.2.194', size: '3,9 TB' }],
+      excludes: { vms: [] },
+    },
+  },
+  '/api/v1/backupInfrastructure/repositories': { data: [{ id: 'repo-6', name: 'SITE1_NAS_BKP06' }] },
+  '/api/v1/backupInfrastructure/proxies': { data: [{ id: 'p1', name: '192.0.2.20' }] },
+  '/api/v1/sessions': { data: [{
+    id: 'sess-bad', jobId: '1',
+    creationTime: '2026-09-16T03:44:58+05:00', endTime: '2026-09-16T03:45:17+05:00',
+    result: { result: 'Failed', message: 'Virtual Machine APPDB1-T3Q4 is unavailable and will be skipped from processing' },
+  }] },
+  '/api/v1/sessions/sess-bad/taskSessions': { data: [{
+    name: 'APPDB1-T3Q4', state: 'Stopped',
+    result: { result: 'Failed', message: 'Getting VM info from vSphere' },
+  }] },
+});
+
+/**
+ * OPS_Kingston_vCenters' night, as Veeam wrote it: the reason, the line that
+ * says DNS, and the connection parameters with the service account in them.
+ * The Job card, the alert and the Job reads each say what is worth showing
+ * of it.
+ */
+const DNS_RAW =
+  'Processing comp01vc01 Error: Cannot get service content.\r\n' +
+  'Soap fault. Temporary failure in name resolution\r\n' +
+  'Logon attempt with parameters [VC/ESX: [vc01cloud];Port: 443;Login: [svc@example.com]]';
+const kingstonNight = (id, day) => ({
+  id, jobId: '1', creationTime: `2026-09-${day}T22:00:00+05:00`, endTime: `2026-09-${day}T22:10:00+05:00`,
+  result: { result: 'Failed', message: DNS_RAW },
+});
 
 /**
  * A throwaway self-signed certificate of the kind Veeam ships with: the name on
@@ -379,11 +490,13 @@ function selfSigned(name = 'Veeam Backup Server Certificate') {
 
 module.exports = {
   selfSigned,
-  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, monitorWorld, job, exchange,
+  CHAT, SERVER, appConfig, telegramConfig, configService, fakeBotApi, world, ear, veeamFake, idleMonitor, idleAnswers, monitorWorld, answersWorld, job, exchange,
+  configuredJob, kingstonNight,
   monitorAccount, evidenceOf, workingOf, VeeamEstateReader,
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramGeneral, TelegramChatAccess,
-  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, monitorOfServers, serverOf, jobReadsOf, printerOf, RepositoryReports,
+  TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, watching, serverOf, jobReadsOf, printerOf, RepositoryReports,
+  EstateAnswers, answersOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };

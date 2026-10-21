@@ -944,6 +944,21 @@ test('the answer log keeps one topic apart from the next, and forgets what Teleg
   assert.equal(ids(log.inTopic('d'))[0], ANSWERS_KEPT + 19, 'the ceiling drops the oldest');
 });
 
+test('answers older than Telegram allows are never offered for deletion', () => {
+  const file = path.join(os.tmpdir(), `veeam-clear-${Math.random().toString(36).slice(2)}.json`);
+  const store = new TelegramStateStore(file, []);
+
+  store.answerLog.remember(CHAT, 5001, 55);
+  // Reach past the interface deliberately: the alternative is a test that
+  // waits two days.
+  const state = JSON.parse(JSON.stringify(store.snapshot()));
+  assert.equal(state.answers[CHAT].length, 1);
+  store.answerLog.forget(CHAT, [5001]);
+
+  assert.deepEqual(store.answerLog.inTopic(CHAT, 55), [], 'забытое не возвращается');
+  fs.rmSync(file, { force: true });
+});
+
 test('a cooldown is armed only when asked, and clears itself when it runs out', () => {
   const { Cooldowns } = require('../dist/telegram/cooldowns');
   const record = { stale: Date.now() - 1 };
@@ -975,7 +990,9 @@ test('the idle monitor the tests use offers exactly what the real one does', asy
   const idle = idleMonitor();
   const real = monitorWorld({}, [job('1', 'A', 'Success')]).monitor;
 
-  for (const member of ['check', 'summary', 'describeJob', 'describeJobById', 'describePoints', 'describePointsById', 'repositoryReport', 'repositoryChoices', 'jobChoices', 'jobReport']) {
+  // The cycle and nothing else: what a command asks about the estate is the
+  // estate's answers', which have idle answers of their own.
+  for (const member of ['servers', 'select', 'check']) {
     assert.equal(typeof real[member], 'function', `MonitorService.${member}`);
     assert.equal(typeof idle[member], 'function', `idle monitor ${member}`);
   }

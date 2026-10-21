@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  CHAT, world, ear, veeamFake, job, monitorAccount, serverOf, monitorOfServers, TelegramStateStore,
+  CHAT, world, ear, veeamFake, job, monitorAccount, serverOf, watching, TelegramStateStore,
 } = require('./world.cjs');
 
 /* ------------------------------------------------------------------ *
@@ -48,11 +48,11 @@ function twoServers({ env = {}, ast = [], baas = [], astRoutes = {}, baasRoutes 
   const veeamAst = recorded(veeamFake(routesOf(() => jobs.ast, astRoutes), 'https://ast.example:9419'));
   const veeamBaas = recorded(veeamFake(routesOf(() => jobs.baas, baasRoutes), 'https://baas.example:9419'));
   const [astEndpoint, baasEndpoint] = w.app.veeam.servers;
-  const monitor = monitorOfServers(w, [
+  const { monitor, answers } = watching(w, [
     serverOf(w, veeamAst, monitorAccount(), undefined, astEndpoint),
     serverOf(w, veeamBaas, monitorAccount(), undefined, baasEndpoint),
   ]);
-  const { commands, updates } = ear(w, monitor);
+  const { commands, updates } = ear(w, monitor, answers);
   return {
     ...w, monitor, commands, updates, veeamAst, veeamBaas,
     setJobs: (next) => (jobs = { ...jobs, ...next }),
@@ -322,8 +322,6 @@ test('the menu under the input field turns into the servers, and a server\'s key
 
 test('the keys of the main menu are answered as the commands they stand for', async () => {
   const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Failed')] });
-  await w.monitor.check();
-  w.api.reset();
 
   await keyed(w, '📊 Сводка').done;
   assert.match(w.api.sent().at(-1).text, /AST · Veeam: сводка по заданиям/);

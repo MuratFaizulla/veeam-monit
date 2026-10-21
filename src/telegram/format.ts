@@ -28,6 +28,15 @@ export const SEVERITY_TOPIC_COLOR: Record<NotificationSeverity, number> = {
 /** Telegram rejects sendMessage over 4096 characters. */
 export const MAX_LENGTH = 4096;
 
+/**
+ * The event, saying which server it is about. First in the title, because
+ * the title is what a notification on a locked phone shows.
+ */
+export const aboutServer = (event: NotificationEvent, server: string): NotificationEvent => ({
+  ...event,
+  title: `${server} · ${event.title}`,
+});
+
 export const renderEvent = (event: NotificationEvent): string => {
   const lines = [`${SEVERITY_ICON[event.severity]} <b>${escapeHtml(event.title)}</b>`];
   if (event.lines) lines.push(...event.lines);

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { TelegramModule } from '../telegram/telegram.module';
 import { VeeamModule } from '../veeam/veeam.module';
+import { EstateAnswers } from './estate-answers';
 import { JobReports } from './job-reports';
 import { ReportPrinter } from './report-printer';
 import { RepositoryReports } from './repository-reports';
@@ -11,12 +13,15 @@ import { ServerEstates } from './server-estates';
  * Summary, and the Job report; across every server, the Repository report.
  * Every request they make goes through that server's estate reader in VeeamModule.
  *
- * The monitor imports it; the live slots do not, and are handed the Evidence
- * the monitor refreshed rather than reaching for it.
+ * The answers to the commands are `EstateAnswers`, which the bot's ear asks
+ * directly: which server a question is about is read from the state file
+ * (TelegramModule), not from the monitor. The monitor imports the rest; the
+ * live slots import nothing of it, and are handed the Evidence the monitor
+ * refreshed rather than reaching for it.
  */
 @Module({
-  imports: [VeeamModule],
-  providers: [ServerEstates, ReportPrinter, RepositoryReports, JobReports],
-  exports: [ServerEstates, RepositoryReports, JobReports],
+  imports: [VeeamModule, TelegramModule],
+  providers: [ServerEstates, ReportPrinter, RepositoryReports, JobReports, EstateAnswers],
+  exports: [ServerEstates, RepositoryReports, EstateAnswers],
 })
 export class EstateModule {}

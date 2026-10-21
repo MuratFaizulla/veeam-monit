@@ -17,8 +17,9 @@ import { VeeamModule } from './veeam/veeam.module';
  * One module per subject, and every import points one way:
  *
  *   Veeam ← Estate ← Monitor ← TelegramUpdates
+ *   Estate ← TelegramUpdates
  *   Live ← Monitor
- *   Telegram (delivery) ← Live, Monitor, TelegramUpdates
+ *   Telegram (delivery) ← Estate, Live, Monitor, TelegramUpdates
  *
  * Listed in that order. Importing TelegramUpdatesModule alone would pull in
  * the rest; they are named here so the shape of the service is readable in one

@@ -31,10 +31,12 @@ test('every module import points one way, and none points back', () => {
     {
       VeeamModule: [],
       TelegramModule: [],
-      EstateModule: ['VeeamModule'],
+      // The estate's answers read which server is selected from the state file.
+      EstateModule: ['TelegramModule', 'VeeamModule'],
       LiveModule: ['TelegramModule'],
       MonitorModule: ['EstateModule', 'LiveModule', 'TelegramModule'],
-      TelegramUpdatesModule: ['MonitorModule', 'TelegramModule'],
+      // The ear asks the monitor about the cycle, and the estate about the rest.
+      TelegramUpdatesModule: ['EstateModule', 'MonitorModule', 'TelegramModule'],
     },
   );
 });

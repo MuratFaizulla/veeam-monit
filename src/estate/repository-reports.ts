@@ -32,6 +32,14 @@ export interface ReportChoice {
   freePercent?: number;
 }
 
+/** What the report's menu offers, and what it says under them of how long the report takes. */
+export interface ReportChoices {
+  /** Every repository there is, in the report's order; none before a cycle or a reading has seen them. */
+  repositories: ReportChoice[];
+  /** A line, HTML. */
+  takes: string;
+}
+
 /**
  * The Repository report, read and printed when somebody asks for it.
  *
@@ -116,13 +124,20 @@ export class RepositoryReports {
     this.seen.set(server, repositories);
   }
 
-  /** Every repository there is, in the report's order. */
-  choices(): ReportChoice[] {
-    return this.known().repositories.map(({ short, site, capacityGB, freePercent }) => ({
-      short,
-      site,
-      ...(capacityGB ? { freePercent } : {}),
-    }));
+  /**
+   * Every repository there is, in the report's order, and how long the report
+   * takes: a minute or two to read every server, seconds while a reading is
+   * kept, as `asked` says it.
+   */
+  choices(): ReportChoices {
+    return {
+      repositories: this.known().repositories.map(({ short, site, capacityGB, freePercent }) => ({
+        short,
+        site,
+        ...(capacityGB ? { freePercent } : {}),
+      })),
+      takes: 'PDF собирается 1–2 минуты, повторный в течение получаса — за секунды.',
+    };
   }
 
   /**

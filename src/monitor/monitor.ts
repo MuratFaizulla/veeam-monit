@@ -1,20 +1,4 @@
 import { DeliveryOutcome } from '../telegram/telegram.service';
-import { Answer } from '../estate/answer';
-import { JobChoice } from '../estate/job-choices';
-import { ReportChoice } from '../estate/repository-reports';
-
-export type { Answer } from '../estate/answer';
-export type { JobChoice, JobMark } from '../estate/job-choices';
-export type { ReportChoice } from '../estate/repository-reports';
-
-/** The Selected server's jobs, for the job menu. */
-export interface JobChoices {
-  /** The server's name. */
-  server: string;
-  /** Undefined when they could not be read; `unavailable` says why, in HTML. */
-  jobs?: JobChoice[];
-  unavailable?: string;
-}
 
 /** The Selected server's side of the monitor, with what it delivered overall. */
 export interface MonitorHealth {
@@ -51,14 +35,20 @@ export interface ServerStatus {
 export type Selection = 'selected' | 'already' | 'unknown';
 
 /**
- * What the rest of the service may ask of the monitor.
+ * What the rest of the service may ask of the monitor: the cycle.
  *
- * The bot's ear and the HTTP surface need a handful of things from it: its
- * health, the servers and which one is selected, a pass on demand, the
- * summary, and a job card by name or by id. They used to take the whole
- * monitor for that — a class with most of the service behind it, so a test of
- * one command had to build a Veeam, an evidence scan and a delivery pipeline or
- * hand-write a stub and hope it matched.
+ * The bot's ear and the HTTP surface need four things from it: its health,
+ * the servers and which one is selected, selecting another, and a pass on
+ * demand. They used to take the whole monitor for that — a class with most of
+ * the service behind it, so a test of one command had to build a Veeam, an
+ * evidence scan and a delivery pipeline or hand-write a stub and hope it
+ * matched.
+ *
+ * What a command asks about the estate — the Summary, a Job card, the job
+ * menu, /points, the reports — is not the cycle's, and is asked of
+ * `EstateAnswers` (src/estate/estate-answers.ts). It used to be nine members
+ * here, each the same pass-through to a server's estate, and every new
+ * command added one.
  *
  * The seam is real: `MonitorService` is one adapter, and the idle monitor the
  * tests give a world with no Veeam is the other.
@@ -75,37 +65,6 @@ export interface Monitor {
   select(key: string): Selection;
   /** One monitoring pass; `busy` when a pass was already running. */
   check(): Promise<'ran' | 'busy'>;
-  /** The Selected server's Summary, as an Answer. */
-  summary(): Promise<Answer>;
-  /** A Job card on the Selected server for a half-remembered name, or the choices when several match. */
-  describeJob(query: string): Promise<Answer>;
-  /**
-   * A Job card for a job a Button addressed by id, on the server the Button
-   * named — or the Selected one, for a Button from before there was a list.
-   */
-  describeJobById(id: string, server?: string): Promise<Answer>;
-  /** Every job on the Selected server, worst first, for the job menu. */
-  jobChoices(): Promise<JobChoices>;
-  /** A job's restore points on the Selected server, named as for `describeJob`. */
-  describePoints(query: string): Promise<Answer>;
-  /** A job's restore points for a Button that addressed it, as for `describeJobById`. */
-  describePointsById(id: string, server?: string): Promise<Answer>;
-  /**
-   * The Repository report of every server, asked for: every repository, or
-   * the ones `query` names. What is said at once — that it is coming and how
-   * long it takes, or, for a name that matches none, the names there are —
-   * and the PDF `later`, when one follows. Read on demand and kept for half
-   * an hour.
-   */
-  repositoryReport(query: string): Answer;
-  /**
-   * One job's report over a month, asked for by a Button that addressed the
-   * job by id on the server it named — or the Selected one: said at once to
-   * be coming, and the PDF `later`.
-   */
-  jobReport(id: string, server?: string): Answer;
-  /** The repositories the report can be asked for, in its order, as the cycles last saw them. */
-  repositoryChoices(): ReportChoice[];
 }
 
 /** Nest's handle for `Monitor`: an interface leaves nothing at runtime to inject by. */
