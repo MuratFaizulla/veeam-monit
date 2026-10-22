@@ -112,8 +112,11 @@ const sizeLines = (sizes: PointSizes | undefined, clock: Clock): string[] => {
   return lines;
 };
 
-/** "≈20%", "<1%". */
-const shareWords = (share: number): string => (share < 0.01 ? '<1%' : `≈${Math.round(share * 100)}%`);
+/**
+ * "≈20%", "<1%" — the second as HTML, because the card is: a bare "<1%" is a
+ * tag to Telegram, which refused the whole answer as "Unsupported start tag".
+ */
+const shareWords = (share: number): string => (share < 0.01 ? '&lt;1%' : `≈${Math.round(share * 100)}%`);
 
 const label = (name: string, value: string | undefined): string | undefined =>
   value === undefined ? undefined : `<b>${name}:</b> ${value}`;

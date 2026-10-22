@@ -795,3 +795,32 @@ test('/points reads the job\'s backup files when asked, and answers without them
   assert.match(without, /🗂 <b>OPS_vCloud_edge<\/b> · точки восстановления/u);
   assert.ok(!/На диске всего/u.test(without), 'the card, without sizes');
 });
+
+test('an increment under a hundredth of its Full is said as HTML Telegram takes, or the whole answer is refused', async () => {
+  const GB = 2 ** 30;
+  const ago = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
+  const routes = {
+    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'OPS_Archive' }] },
+    '/api/v1/restorePoints': {
+      data: [
+        { id: 'i', backupId: 'b1', sessionId: 's2', name: 'arch-01', type: 'Increment', creationTime: ago(1) },
+        { id: 'f', backupId: 'b1', sessionId: 's1', name: 'arch-01', type: 'Full', creationTime: ago(2) },
+      ],
+    },
+    '/api/v1/sessions': { data: [] },
+    '/api/v1/backups/b1/backupFiles': {
+      data: [
+        { name: 'arch-01.vbk', restorePointIds: ['f'], dataSize: 856 * GB, backupSize: 514 * GB },
+        { name: 'arch-01.vib', restorePointIds: ['i'], dataSize: 2 * GB, backupSize: 1 * GB },
+      ],
+    },
+  };
+  const w = answersWorld({}, [job('1', 'OPS_Archive', 'Success')], routes);
+  await scanned(w);
+
+  const text = (await w.answers.describePoints('archive')).text;
+  // "<1%" read as a tag: Telegram answered 400 "Unsupported start tag" and nothing reached the chat.
+  assert.match(text, /<b>Инкремент:<\/b> обычно 2 ГБ данных \(&lt;1% от Full\)/u);
+  assert.doesNotMatch(text, /<(?!\/?(?:b|i|pre|code|a)[ >])/u, 'every < opens a tag Telegram knows');
+});
