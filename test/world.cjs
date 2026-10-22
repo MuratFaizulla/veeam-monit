@@ -33,6 +33,7 @@ const { workingOf } = require('../dist/veeam/estate');
 const { capacities, capacityOf } = require('../dist/estate/repository-capacity');
 const { RepositoryReports } = require('../dist/estate/repository-reports');
 const { JobReports } = require('../dist/estate/job-reports');
+const { PointsReports } = require('../dist/estate/points-reports');
 const { EstateAnswers } = require('../dist/estate/estate-answers');
 const { ServerEstates } = require('../dist/estate/server-estates');
 
@@ -181,6 +182,7 @@ function idleAnswers() {
     describePoints: async (query) => ({ text: `точки ${query}`, about: 'points' }),
     describePointsById: async (id, server) => ({ text: `точки ${id}`, jobId: id, server, about: 'points' }),
     jobChoices: async () => ({ server: SERVER, jobs: [] }),
+    pointsChoices: async () => ({ server: SERVER, jobs: [] }),
     jobReport: (id) => ({
       text: `⏳ отчёт задания ${id}`,
       later: async () => ({ text: `отчёт задания ${id}`, document: { filename: 'job.pdf', content: Buffer.from('%PDF') } }),
@@ -320,13 +322,13 @@ function clockAt(iso) {
 
 /**
  * What a world's commands are answered with about `servers` — the Summary, a
- * Job card, the job menu, /points and both reports — asked of their estates
+ * Job card, the job and points menus, the Points report and the other two — asked of their estates
  * with no cycle behind them. The first server is the Selected one until the
  * store says another. `reports` is the Repository report, when a monitor
  * tells it what repositories its cycles saw.
  */
 function answersOf(w, servers, printer = printerOf(), reports = new RepositoryReports(w.config, estatesOf(servers), printer)) {
-  return new EstateAnswers(estatesOf(servers), w.store, reports, new JobReports(w.config, printer));
+  return new EstateAnswers(estatesOf(servers), w.store, reports, new JobReports(w.config, printer), new PointsReports(w.config, printer));
 }
 
 /**
@@ -371,13 +373,15 @@ function oneServer(env, jobStates, extraRoutes, handlers) {
 /**
  * A world whose commands answer about one Veeam server, with no cycle behind
  * them: the monitor is the idle one. What a test of an answer needs; its
- * Evidence is read, when the test needs one, by `evidence.refresh`.
+ * Evidence is read, when the test needs one, by `evidence.refresh`, and the
+ * reports it prints are kept by `printer`.
  */
 function answersWorld(env, jobStates, extraRoutes = {}, handlers = {}) {
   const w = oneServer(env, jobStates, extraRoutes, handlers);
-  const answers = answersOf(w, [w.server]);
+  const printer = printerOf();
+  const answers = answersOf(w, [w.server], printer);
   const { commands, updates, general } = ear(w, idleMonitor(), answers);
-  return { ...w, commands, updates, general, answers };
+  return { ...w, commands, updates, general, answers, printer };
 }
 
 /** The same, watched by the real monitor, so a cycle — and /check — drives a real pass. */

@@ -534,23 +534,54 @@ test('a button this version does not know is acknowledged and ignored', async ()
   assert.deepEqual(w.api.sent(), [], 'и ничего не отвечено наугад');
 });
 
-test('/points answers in General, offering a refresh and the job\'s card', async () => {
+/** The Buttons under a message, by what they ask. */
+const pressedBy = (message) => message.reply_markup.inline_keyboard.flat().map((button) => button.callback_data);
+
+test('/points with a name says at once that the PDF is coming, then sends it with what it found and the Buttons to ask again or open the card', async () => {
   const w = exchange({}, answersWorld);
   await scanned(w);
 
   await typed(w, '/points exchange');
+  await w.commands.settled();
 
-  const reply = w.api.sent().at(-1);
-  assert.equal(reply.message_thread_id, undefined, 'answered in General');
-  assert.match(reply.text, /🗂 <b>OPS_Exchange<\/b> · точки восстановления/u);
-  assert.match(reply.text, /<b>Точек на ВМ:<\/b> 1/u, 'the point a failed run left is not one');
-  assert.deepEqual(
-    reply.reply_markup.inline_keyboard.flat().map((b) => b.callback_data),
-    [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum'],
-  );
+  const [note] = w.api.sent();
+  assert.equal(note.message_thread_id, undefined, 'answered in General');
+  assert.equal(note.text, '⏳ <b>Готовлю PDF по точкам OPS_Exchange</b> — несколько секунд.');
+  const order = w.api.calls.map((call) => call.method).filter((method) => method === 'sendMessage' || method === 'sendDocument');
+  assert.deepEqual(order, ['sendMessage', 'sendDocument'], 'first the note, then the file');
+  assert.ok(w.api.of('sendChatAction').some((call) => call.action === 'upload_document'));
+
+  const [sent] = w.api.of('sendDocument');
+  assert.match(sent.document.filename, /^Точки OPS_Exchange \d\d\.\d\d\.\d{4}\.pdf$/);
+  // What 🛡 says of the job, its newest point and how far back it goes — the point a failed run left is none — and when it was read.
+  const lines = sent.caption.split('\n');
+  assert.equal(lines[0], '🗂 <b>OPS_Exchange</b> · точки восстановления');
+  assert.match(lines[1], /^🔴 <b>Нет бэкапа \d+ дн(?:я|ей)<\/b>$/u);
+  assert.match(lines[2], /^<i>последний \d\d\.\d\d в \d\d:\d\d<\/i>$/u);
+  assert.match(lines[3], /^Последняя точка \d\d\.\d\d \d\d:\d\d · откат на 1 точку, до \d\d\.\d\d \d\d:\d\d$/u);
+  assert.match(sent.caption, /\n\n<i>localhost · за 35 дней, на \d\d\.\d\d\.\d{4} \d\d:\d\d\.<\/i>$/u);
+  // "<1%" read as a tag once, and Telegram refused the whole answer.
+  assert.doesNotMatch(sent.caption, /<(?!\/?(?:b|i|pre|code|a)[ >])/u, 'every < opens a tag Telegram knows');
+  assert.deepEqual(pressedBy(sent), [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum']);
+  assert.equal(w.printer.pages.length, 1);
+  assert.match(w.printer.pages[0], /<h1 class="job">OPS_Exchange<\/h1>/);
 });
 
-test('/points without a name offers the jobs that need somebody, and a press opens their points', async () => {
+test('/points before the points are read says why at once, and draws nothing', async () => {
+  const w = exchange({}, answersWorld);
+
+  await typed(w, '/points exchange');
+  await w.commands.settled();
+
+  const sent = w.api.sent();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].text, '🗂 <b>OPS_Exchange</b> · точки восстановления\n\nТочки восстановления ещё не прочитаны.');
+  assert.deepEqual(pressedBy(sent[0]), [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum'], 'asking again is one press away');
+  assert.deepEqual(w.api.of('sendDocument'), []);
+  assert.deepEqual(w.printer.pages, []);
+});
+
+test('/points without a name offers the jobs that need somebody, and a press sends their points', async () => {
   const w = exchange({}, answersWorld);
   await scanned(w);
 
@@ -565,7 +596,61 @@ test('/points without a name offers the jobs that need somebody, and a press ope
   // Asking again within seconds is held back; a press a while later is not.
   w.store.cooldowns.clear('command:read');
   await pressed(w, offered.callback_data);
-  assert.match(w.api.sent().at(-1).text, /🗂 <b>OPS_Exchange<\/b> · точки восстановления/u);
+  await w.commands.settled();
+  assert.equal(w.api.sent().at(-1).text, '⏳ <b>Готовлю PDF по точкам OPS_Exchange</b> — несколько секунд.');
+  assert.match(w.api.of('sendDocument').at(-1).caption, /^🗂 <b>OPS_Exchange<\/b> · точки восстановления\n/u);
+});
+
+test('the 🗂 key lists every job by 🛡\'s verdict, the worst first, and a job\'s key sends its points, the list staying for the next', async () => {
+  const ago = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  const w = answersWorld({}, [
+    job('2', 'OPS_Files', 'Success'),
+    { ...job('3', 'OPS_Archive', 'Success'), status: 'Disabled' },
+    job('1', 'OPS_Exchange', 'Failed'),
+  ], {
+    '/api/v1/jobs': { data: ['1', '2', '3'].map((id) => ({ id, schedule: { runAutomatically: true } })) },
+    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1' }, { id: 'b2', jobId: '2' }] },
+    '/api/v1/restorePoints': {
+      data: [
+        { id: 'p2', backupId: 'b2', name: 'fs-01', creationTime: ago(2) },
+        { id: 'p1', backupId: 'b1', name: 'mbx-01', creationTime: ago(24 * 20) },
+      ],
+    },
+    '/api/v1/sessions': { data: [] },
+    '/api/v1/jobs/1': { id: '1' },
+    '/api/v1/backups/b1/backupFiles': { data: [] },
+    '/api/v1/backupInfrastructure/repositories': { data: [] },
+    '/api/v1/backupInfrastructure/proxies': { data: [] },
+  });
+  await scanned(w);
+
+  await typed(w, '🗂 Точки');
+  const list = w.api.sent().at(-1);
+  assert.equal(list.text, [
+    `🗂 <b>Точки восстановления · ${SERVER}</b> — 3`,
+    '',
+    'Нужно внимание: 🔴 1.',
+    '',
+    'Выберите задание кнопкой под полем ввода — придёт PDF по его точкам: сначала те, кому нужно внимание, как в 🛡, дальше по алфавиту.',
+    'Другой сервер — «🖥 Серверы». По части имени — <code>/points часть имени</code>.',
+  ].join('\n'));
+  // 🛡's list first, then the fine, then the one nobody expects points from: Veeam's own result says nothing here.
+  assert.deepEqual(list.reply_markup.keyboard.map((row) => row.map((key) => key.text)), [
+    ['🗂 🔴 OPS_Exchange'], ['🗂 🟢 OPS_Files'], ['🗂 ⚪ OPS_Archive'], ['⬅️ На главную'],
+  ]);
+  assert.equal(list.reply_markup.selective, true, 'only for whoever pressed it');
+  assert.equal(list.reply_parameters.message_id, 50);
+
+  w.api.reset();
+  await typed(w, '🗂 🔴 OPS_Exchange');
+  await w.commands.settled();
+  const [note] = w.api.sent();
+  assert.equal(note.text, '⏳ <b>Готовлю PDF по точкам OPS_Exchange</b> — несколько секунд.');
+  const [file] = w.api.of('sendDocument');
+  assert.match(file.caption, /^🗂 <b>OPS_Exchange<\/b> · точки восстановления\n🔴 <b>Нет бэкапа 20 дней<\/b>\n/u);
+  assert.deepEqual(pressedBy(file), [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum']);
+  // Nothing said since puts another keyboard under the input field: the list is there for the next job.
+  assert.deepEqual(w.api.calls.filter((call) => call.payload?.reply_markup?.keyboard), []);
 });
 
 test('/points with a name several jobs share offers each, and each opens its points', async () => {

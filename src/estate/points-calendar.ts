@@ -1,68 +1,114 @@
-import { Clock, dayKey } from '../telegram/time';
-import { RetainedRun } from './evidence';
+import { MachineFailure, RetainedRun } from './evidence';
+import { FullSchedule, isFullDay } from './full-schedule';
+import { dayIn } from './schedule-planner';
 
 /**
- * A job's retained runs, a week to a row: the days that wrote a Full, the days
- * that wrote an increment, and the days that wrote nothing.
+ * A job's last five weeks, a machine to a row and a day to a cell: the days
+ * each machine was given a Full, an increment, a run that failed it, or
+ * nothing — what /points draws.
  *
- * Open Backup UI draws this as a calendar; a Telegram message holds it as
- * monospaced text. A gap reads as a gap before any number is read:
- * OPS_vCloud_edge went nine nights without a point in September, and a row
- * of dots says so.
+ * Open Backup UI draws a job's points as a calendar, and the bot drew one too,
+ * as monospaced text, a week to a row and the job's runs in it. That said a
+ * job had a point on a day; it could not say that one machine of fifteen did
+ * not. A row a machine says it: OPS_vCloud_edge went nine nights without a
+ * point in September, and one of its VMs went without one for a month while
+ * the others kept theirs.
+ *
+ * A cell is red only on positive evidence that the machine's own run failed
+ * that day — the Evidence's machine outcomes, or what Veeam said of the
+ * machine in a failed attempt. A failed run is not a failed machine: Veeam
+ * marks the whole run failed when one machine of fifteen does.
  */
 
-/** Rows at most: five weeks reaches past a monthly Full and still fits a phone. */
-const WEEKS = 5;
+/** The days drawn: five weeks reach past a weekly Full and the chain before it. */
+export const CALENDAR_DAYS = 35;
+
 const DAY = 86_400_000;
-const WEEKDAYS = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
-
-export const MARKS = { full: '█', increment: '▒', none: '·', today: '○' } as const;
-
-/** The calendar day an instant falls on in the display zone, as a `Date.UTC` midnight. */
-const localDay = (at: number, clock: Clock): number => {
-  const [day, month, year] = dayKey(new Date(at), clock).split('.').map(Number);
-  return Date.UTC(year, month - 1, day);
-};
-
-const mondayOf = (day: number): number => day - ((new Date(day).getUTCDay() + 6) % 7) * DAY;
-
-const dayLabel = (day: number): string => {
-  const date = new Date(day);
-  return `${String(date.getUTCDate()).padStart(2, '0')}.${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-};
 
 /**
- * The calendar's lines, header first, each row labelled with its Monday.
- * Undefined when there is no run to draw.
- *
- * A day before the oldest retained point is left blank rather than dotted:
- * retention took it, and nothing is known about it.
+ * What one machine has of one day: a Full, an increment, a run that failed it,
+ * a day before the oldest point retention kept, or nothing — the day today
+ * still is, until its run writes.
  */
-export const calendarOf = (runs: RetainedRun[], clock: Clock): string[] | undefined => {
-  if (runs.length === 0) return undefined;
-  const today = localDay(clock.now.getTime(), clock);
-  const thisWeek = mondayOf(today);
-  const oldest = Math.min(...runs.map((run) => localDay(run.at, clock)));
-  const first = Math.max(oldest, thisWeek - (WEEKS - 1) * 7 * DAY);
+export type Cell = 'full' | 'increment' | 'failed' | 'retired' | 'none';
 
-  // A Full outranks an increment the same day: it is the one a chain begins with.
-  const written = new Map<number, 'full' | 'increment'>();
-  for (const run of runs) {
-    const day = localDay(run.at, clock);
-    if (written.get(day) !== 'full') written.set(day, run.full ? 'full' : 'increment');
+export interface CalendarDay {
+  /** The calendar day in the operator's zone, as its `Date.UTC` midnight. */
+  day: number;
+  weekend: boolean;
+  /** A day the job's settings owe a Full on. */
+  fullDay: boolean;
+  /** One that passed with no Full: a missed Full, as 🛡 counts it. */
+  missed: boolean;
+}
+
+/** One machine over the days. */
+export interface MachineDays {
+  name: string;
+  /** A cell a day, oldest first. */
+  cells: Cell[];
+  /** The moments it can be restored to: the retained runs holding a point of it, however old. */
+  points: number;
+}
+
+export interface Calendar {
+  days: CalendarDay[];
+  rows: MachineDays[];
+  /** Whether Veeam said which points are full: without it every point is just a point. */
+  typed: boolean;
+}
+
+export interface CalendarInput {
+  /** The job's retained runs, each with the machines it holds a point of. */
+  retained: RetainedRun[];
+  /** The machines' own failures. */
+  failures: MachineFailure[];
+  /** The machines, a row each, in the order drawn. */
+  machines: string[];
+  /** The Fulls the job is set to take; absent when its configuration did not say. */
+  fulls?: FullSchedule[];
+  /** The days a Full was owed and none taken, as `Date.UTC` midnights. */
+  owed: number[];
+  now: number;
+  timezone: string;
+}
+
+/**
+ * The calendar of the five weeks up to `now`. A run is drawn on the day it
+ * began writing, as the Evidence dates it; a day a machine has a point of
+ * outranks a failure of it the same day — a retry saved it — and a Full
+ * outranks an increment, being the one a chain begins with.
+ */
+export const calendarOf = ({ retained, failures, machines, fulls, owed, now, timezone }: CalendarInput): Calendar => {
+  const today = dayIn(now, timezone);
+  const first = today - (CALENDAR_DAYS - 1) * DAY;
+  const missed = new Set(owed);
+  const days: CalendarDay[] = Array.from({ length: CALENDAR_DAYS }, (_, index) => {
+    const day = first + index * DAY;
+    const weekday = new Date(day).getUTCDay();
+    return { day, weekend: weekday === 0 || weekday === 6, fullDay: fulls ? isFullDay(fulls, day) : false, missed: missed.has(day) };
+  });
+
+  // What each machine has of each day, by the day's place in the calendar.
+  const index = (at: number): number => (dayIn(at, timezone) - first) / DAY;
+  const written = new Map<string, Map<number, 'full' | 'increment'>>();
+  for (const run of retained) {
+    const at = index(run.at);
+    for (const machine of run.machines) {
+      const marks = written.get(machine) ?? new Map<number, 'full' | 'increment'>();
+      if (marks.get(at) !== 'full') marks.set(at, run.full ? 'full' : 'increment');
+      written.set(machine, marks);
+    }
   }
+  const failed = new Map<string, Set<number>>();
+  for (const failure of failures) failed.set(failure.machine, (failed.get(failure.machine) ?? new Set()).add(index(failure.at)));
+  // Before the oldest point retention kept, nothing is known but that it went.
+  const kept = retained.length ? Math.min(...retained.map((run) => index(run.at))) : -Infinity;
 
-  const mark = (day: number): string => {
-    if (day < first || day > today) return ' ';
-    const kind = written.get(day);
-    if (kind) return MARKS[kind];
-    return day === today ? MARKS.today : MARKS.none;
-  };
-
-  const rows: string[] = [];
-  for (let monday = mondayOf(first); monday <= thisWeek; monday += 7 * DAY) {
-    const cells = WEEKDAYS.map((_, index) => `  ${mark(monday + index * DAY)}`).join('');
-    rows.push(`${dayLabel(monday)}${cells}`.trimEnd());
-  }
-  return [`${' '.repeat(5)}${WEEKDAYS.map((weekday) => ` ${weekday}`).join('')}`, ...rows];
+  const rows = machines.map((name) => ({
+    name,
+    cells: days.map((_, at): Cell => written.get(name)?.get(at) ?? (failed.get(name)?.has(at) ? 'failed' : at < kept ? 'retired' : 'none')),
+    points: retained.filter((run) => run.machines.includes(name)).length,
+  }));
+  return { days, rows, typed: retained.some((run) => run.full !== undefined) };
 };

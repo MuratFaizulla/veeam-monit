@@ -9,8 +9,8 @@ What one reading of the Veeam estate established: every restore point the server
 holds, every session that wrote one, and every job configuration saying whether
 a job was supposed to run at all.
 
-Two live slots — 🛡 Protection and 🧹 Orphaned backups — /points and the
-**Job report** are questions about one Evidence. Reading it costs around
+Two live slots — 🛡 Protection and 🧹 Orphaned backups — the **Points report**
+/points sends and the **Job report** are questions about one Evidence. Reading it costs around
 twenty requests and about forty seconds, so it happens on its own cadence
 (`TELEGRAM_PROTECTION_INTERVAL_MIN`) and the answer is kept until the next one.
 Only the selected server's Evidence is read. A server that is selected again is
@@ -18,6 +18,9 @@ read again at once, unless its Evidence is less than ten minutes old.
 
 A point written by a failed run is discarded only when its own machine failed
 in that run: Veeam marks the whole run failed when one machine of fifteen does.
+The point set aside is that machine's failure, proven: the Points report draws
+the day red by it. One nobody could say anything of is set aside too, and
+proves nothing of the machine.
 The **machine outcomes** come from the task sessions, or from the session log on a
 Veeam whose REST API has none (1.1). Each failed session is asked once: a
 finished session's outcomes never change. Replicas and other jobs whose points are
@@ -123,10 +126,10 @@ What a Run's points take up, from the job's **backup files**: a point carries
 no size, but each file names the points it holds (a `.vbk` for a Full, a `.vib`
 for an increment), and that is how a file is put in the Run that wrote it — by
 date it would land in the wrong one, a Run beginning at 23:32 whose first point
-appears the next afternoon. /points says the newest Full that has written its
-data, a typical increment (the median: the night after a Full can be ten times
-the others), and what the job takes up altogether. A Full whose file is there
-and empty is "still being written". Read when somebody asks, a request per
+appears the next afternoon. The **Points report** says what each chain's files
+hold and take up, a typical increment (the median: the night after a Full can
+be ten times the others), and what the job takes up altogether. A Full whose
+file is there and empty is "still being written". Read when somebody asks, a request per
 backup; the scan never reads files. The **Job report**'s chain, and the Full
 it holds the next one against, put a file in its Run the same way
 (`runSizesOf`).
@@ -168,8 +171,9 @@ job's own interval times `TELEGRAM_PROTECTION_OVERDUE_FACTOR`, never less
 than `TELEGRAM_PROTECTION_STALE_DAYS`; failing run after run; or past a
 scheduled Full. Anything else is fine. How many Runs it has skipped is said
 beside, not decided by: one late night wakes nobody. 🛡 lists every job by it,
-and /points and the Job report open with it in the same words — without a
-name, /points offers the jobs 🛡 lists, in 🛡's order.
+and the Points report and the Job report open with it in the same words —
+without a name, /points offers the jobs 🛡 lists, in 🛡's order, and the
+points menu lists every job by it, the worst first.
 
 It used to be two topics: 🗂 Restore points listed a job by the Runs it had
 skipped and 🛡 by its deadline, and the two said it of the same job in
@@ -349,6 +353,50 @@ What it says is `src/estate/job-report.ts` and, for the sessions,
 `src/estate/session-report.ts`, pure; reading and answering,
 `src/estate/job-reports.ts`; the page, `src/estate/job-report-page.ts`.
 
+## Points report
+
+One job's restore points, as a PDF: what /points sends, and a key of the
+points menu, the 🗂 Button under a **Job card** and 🔄 under the report
+itself. A page in the look its user drew for it: the job and how it stands
+— the **Verdict** 🛡 lists it by, in 🛡's words — five numbers: the newest
+point, how far back each machine reaches, the **Chain** being written, the
+next Full, the disk; then the last five weeks, a machine to a row and a day to
+a cell; and under them the machines' errors, what to do and the chains on
+disk. A job in trouble trades the chain and the next Full for its last Full
+and how many of its machines fail. The caption says the verdict, the newest
+point and the depth, and the next Full, so that nobody must open the file to
+know; the Buttons under it ask again or open the card.
+
+A machine's day is a Full, an increment, a day its own run failed it, a day
+before the oldest point retention kept, or nothing — which today is until its
+run writes. It is red only on positive evidence: a point the scan set aside
+because its machine failed (the **machine outcomes**), or what Veeam said of
+the machine in one of the job's newest failed attempts, which the **Job
+reads** read when asked. A failed Run is not a failed machine. What to do
+follows from a fact or is not said: a machine failing now, by what Veeam
+said; one the job ran past without a point or a word; why the job writes
+nothing, when no machine says; a **Missed Full**; for information, a machine a
+run saved again, and retention holding more than it keeps because a chain
+goes only whole. «Ничего делать не нужно» is said too.
+
+Its points are the **Evidence**'s, as 🛡 and the Job report have them — the
+same verdict, the same depth, the same chain — and asking reads only what the
+scan does not: the job's backup files (**Point size**), its configuration —
+the repository, the machines it names — and the machines of its newest failed
+attempts. While the Evidence is pending, or for a job **proven by runs**,
+there is nothing to draw: the answer says why at once, as the Job card does,
+and no file follows. Printed by the same browser, one report at a time, in
+the **report envelope**; a job of many machines goes on over further pages,
+the days' header on each.
+
+It used to be a message: a calendar a week to a row in monospaced text, the
+job's runs in it, which could say a job had a point that day and not that one
+machine of fifteen did not.
+
+What it says is `src/estate/points-report.ts` and, for the days,
+`src/estate/points-calendar.ts`, pure; reading and answering,
+`src/estate/points-reports.ts`; the page, `src/estate/points-report-page.ts`.
+
 ## Live slot
 
 A topic holding exactly one message, edited in place rather than appended to.
@@ -357,7 +405,7 @@ numbered, when the list does not fit in Telegram's limit. It lists only the
 jobs that need somebody, two lines each — what is wrong, and under it the
 facts to check it by — and counts the rest, so that is a bad day rather than
 every day; listing all ninety took four messages. The chain, retention and
-totals are on /points, per job. A slot a cycle does not publish is **taken
+totals are in the **Points report**, per job. A slot a cycle does not publish is **taken
 down**: its messages are deleted from every chat, once — a slot that no longer
 exists (**retired**, `RETIRED_SLOTS`), one switched off by its setting, or
 every slot while `TELEGRAM_LIVE` is off. The live module is handed a whole
@@ -491,7 +539,7 @@ What a command needs from the monitor — its health, the servers, selecting
 one, a pass on demand: the cycle — it asks through `Monitor` in
 `src/monitor/monitor.ts`, not through the monitor class. The HTTP surface does
 the same. What it asks about the estate — the **Summary**, a **Job card**, the
-job menu, /points, both reports — it asks the **Estate answers**, which have
+job and points menus, a job's points, the reports — it asks the **Estate answers**, which have
 no cycle behind them. Each seam has two adapters: the real one, and the idle
 one the tests use for a world with no Veeam, which a test keeps in step with
 it.
@@ -784,8 +832,8 @@ Owned by `src/estate/job-card.ts`.
 
 ## Job reads
 
-What a **Job alert**, a **Job card** and the **Job report** ask Veeam about
-one job: its newest attempts, with their messages as worth showing; its own
+What a **Job alert**, a **Job card**, the **Job report** and the **Points
+report** ask Veeam about one job: its newest attempts, with their messages as worth showing; its own
 configuration, the retry policy in it; how the machines of one attempt ended,
 and why; what Veeam wrote while running one attempt — its log, its machines,
 the logs of the longest of them — which the card's **Run speed** is read
@@ -946,13 +994,15 @@ not an address.
 
 A report is answered twice: at once, with what the report says while it is
 read — that it is coming, and how long it takes — and then with its file,
-the Answer that follows (`later`). Both are the report's own.
+the Answer that follows (`later`). Both are the report's own. A job's points
+with nothing to draw — no Evidence yet, a replica — are answered once, at
+once, with why.
 
 ## Estate answers
 
 What a command or a **Button** asks about the estate, answered: the
-**Summary**, a **Job card** by name or by id, the job menu, a job's restore
-points and both reports. **The server a question is about** is decided
+**Summary**, a **Job card** by name or by id, the job menu and the points
+menu, a job's restore points and the reports. **The server a question is about** is decided
 there, once: the one its Button named, else the **Selected server**. A typed
 command names none, nor does a Button from before there was a list; one
 naming a server since taken off the list gets the Selected one. With several
@@ -1019,7 +1069,12 @@ The **Menu** is the other neighbour: the keyboard under the input field,
 which stays until another replaces it. A key sends its label as an ordinary
 message, so the label is the address, declared once in `src/updates/menu.ts`
 and read back there. The main menu stands for commands; the server menu is a
-key per **Server** and one back. A key pressed by one person changes only that
+key per **Server** and one back; the job menu and the points menu a key per
+job of the **Selected server**, fifty a page — marked by how Veeam says the
+job stands, or by its **Verdict** after a 🗂. Every key of the points menu,
+its pages' too, begins with 🗂: that is what tells it from a key of the job
+menu with no list to look it up in, and the main menu's «🗂 Точки» is its
+whole label. A key pressed by one person changes only that
 person's keyboard: the answer replies to the key's message and is selective.
 The bot sees these ordinary messages because it administers the group. The
 keyboard lives as long as the message that put it there, so the bot keeps that

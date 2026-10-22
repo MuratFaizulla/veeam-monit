@@ -7,7 +7,7 @@ import { Answer } from './answer';
  * What every report's file is put in, whatever it says: the document around
  * its pages, with the font inside it and a rule that the browser fetches
  * nothing; and, beside the file, the moment it was read, the caption under
- * it and its name. The Repository report and the Job report both go in it.
+ * it and its name. The Repository report, the Job report and the Points report go in it.
  *
  * It used to be the Repository report's: the Job report's pages borrowed its
  * fonts and its stamp, each page wrote its own document around them, and the
@@ -85,8 +85,12 @@ export const STATUS_WORD: Record<Status, string> = { crit: 'Критично', w
 
 /** What the caption under a printed report says, and what its file is called. */
 export interface Caption {
+  /** Before the title: 📄 for a report, 🗂 for a job's points. */
+  icon?: string;
   /** In bold, as plain text: the job's name, «Репозитории Veeam». */
   title: string;
+  /** After the title, as plain text: what of it the file is, «точки восстановления». */
+  kind?: string;
   /** Beside the title, as plain text: how the job stands, how many repositories there are. */
   beside?: string;
   /** Under it, as HTML: what the report found. */
@@ -109,7 +113,7 @@ export const printedAnswer = (caption: Caption, content: Buffer, at: number, tim
   const stamp = stampOf(at, timezone);
   return {
     text: [
-      `📄 <b>${esc(caption.title)}</b>${caption.beside ? ` — ${esc(caption.beside)}` : ''}`,
+      `${caption.icon ?? '📄'} <b>${esc(caption.title)}</b>${caption.kind ? ` · ${esc(caption.kind)}` : ''}${caption.beside ? ` — ${esc(caption.beside)}` : ''}`,
       ...caption.lines,
       '',
       `<i>${esc(caption.covers)}, на ${stamp}.${caption.hint ? ` ${esc(caption.hint)}` : ''}</i>`,

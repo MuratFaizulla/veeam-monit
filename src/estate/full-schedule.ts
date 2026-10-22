@@ -100,6 +100,10 @@ export const nextFullDay = (
   return undefined;
 };
 
+/** Whether any of `schedules` owes a Full on `day`, a `Date.UTC` midnight: a day /points marks as a Full's. */
+export const isFullDay = (schedules: FullSchedule[], day: number): boolean =>
+  schedules.some((schedule) => isOwed(schedule, day));
+
 /** Whether `schedule` owes a Full on `day`, a `Date.UTC` midnight. */
 const isOwed = (schedule: FullSchedule, day: number): boolean => {
   if (schedule.weekdays) return schedule.weekdays.includes(new Date(day).getUTCDay());

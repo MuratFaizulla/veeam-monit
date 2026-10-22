@@ -59,7 +59,7 @@ export interface RetainedHistory {
   newest: number;
   /** Absent when Veeam did not say which points are full. */
   chain?: ChainShape;
-  /** Every retained run, oldest first: what /points draws its calendar from. */
+  /** Every retained run, oldest first: what /points draws its days and chains from. */
   retained: RetainedRun[];
 }
 
@@ -76,6 +76,20 @@ export interface RetainedRun {
    * which on OPS_vCloud_edge was the next afternoon.
    */
   pointIds: string[];
+  /** The machines it holds a point of: what /points draws a machine's days from. */
+  machines: string[];
+}
+
+/**
+ * A machine's own failure, as the scan proved it: the point a failed run left
+ * of a machine that failed in it, which was set aside. Not the run's failure —
+ * Veeam marks a whole run failed when one machine of fifteen does — and not a
+ * point nobody could say anything of, which is set aside too.
+ */
+export interface MachineFailure {
+  machine: string;
+  /** When the point it left was written, epoch ms. */
+  at: number;
 }
 
 /**
@@ -139,6 +153,8 @@ export interface ScannedEvidence {
   /** Each live job's backups, by id: where its files are asked for. */
   backupsByJob: ReadonlyMap<string, readonly string[]>;
   depthByJob: Map<string, RetainedHistory>;
+  /** Each job's machine failures the scan set a point aside for, oldest first. */
+  machineFailuresByJob: ReadonlyMap<string, MachineFailure[]>;
   orphanChains: OrphanChain[];
   /** Restore points in the estate, orphans and failed runs included. */
   totalPoints: number;
@@ -226,6 +242,7 @@ interface RunTally {
   points: number;
   fulls: number;
   ids: string[];
+  machines: Set<string>;
 }
 
 /**
@@ -348,6 +365,7 @@ export const readingOf = (read: EstateRead): Reading => {
     const nearest = new Map<string, { key: string; at: number }>();
     let failedPoints = 0;
     let keptFromFailed = 0;
+    const machineFailures = new Map<string, MachineFailure[]>();
 
     for (const { id, jobId, at, name, sessionId, run: coveringRun, failedBy, type } of placed) {
       // A failed run is not a failed machine. Veeam marks the whole run failed
@@ -361,6 +379,8 @@ export const readingOf = (read: EstateRead): Reading => {
         // anybody should plan to restore to.
         if (outcome !== 'success' && outcome !== 'warning') {
           failedPoints += 1;
+          // A failure only when the session said so: one that could not be read proves nothing of the machine.
+          if (outcome === 'failed' && name) machineFailures.set(jobId, [...(machineFailures.get(jobId) ?? []), { machine: name, at }]);
           continue;
         }
         keptFromFailed += 1;
@@ -377,11 +397,12 @@ export const readingOf = (read: EstateRead): Reading => {
         newest: at,
         typed: false,
       };
-      const tally = seen.runs.get(run) ?? { at, points: 0, fulls: 0, ids: [] };
+      const tally = seen.runs.get(run) ?? { at, points: 0, fulls: 0, ids: [], machines: new Set<string>() };
       tally.at = Math.min(tally.at, at);
       tally.points += 1;
       if (type === 'full') tally.fulls += 1;
       if (id) tally.ids.push(id);
+      if (name) tally.machines.add(name);
       seen.runs.set(run, tally);
       if (type) seen.typed = true;
       seen.points += 1;
@@ -443,9 +464,13 @@ export const readingOf = (read: EstateRead): Reading => {
                 at: run.at,
                 ...(seen.typed ? { full: isFullRun(run) } : {}),
                 pointIds: run.ids,
+                machines: [...run.machines],
               })),
           },
         ]),
+      ),
+      machineFailuresByJob: new Map(
+        [...machineFailures].map(([jobId, failures]) => [jobId, failures.sort((a, b) => a.at - b.at)]),
       ),
       orphanChains: [...orphans].map(([id, chain]) => ({
         name: orphanNames.get(id) ?? id,

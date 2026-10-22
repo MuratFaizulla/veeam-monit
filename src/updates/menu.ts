@@ -1,5 +1,5 @@
 import { TelegramKey, TelegramReplyKeyboard } from '../telegram/types';
-import type { JobChoice, JobMark } from '../estate/job-choices';
+import type { JobChoice, JobMark, PointsChoice, PointsMark } from '../estate/job-choices';
 import type { CommandName } from './commands';
 
 /**
@@ -29,8 +29,8 @@ const KEYS = {
   check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
   // Offers every job of the Selected server to pick, the worst first.
   job: { label: '📦 Задание', does: 'выбрать задание из списка: карточка, ⚡ скорость, настройки' },
-  // Asked with no name, as it is, offers the jobs that need somebody.
-  points: { label: '🗂 Точки', does: 'точки восстановления задания' },
+  // Offers every job of the Selected server by 🛡's verdict, the worst first.
+  points: { label: '🗂 Точки', does: 'выбрать задание из списка: PDF по его точкам восстановления' },
   status: { label: '🩺 Статус', does: 'отвечает ли Veeam' },
   topics: { label: '📑 Темы', does: 'темы форума, которые знает бот' },
   clear: { label: '🧹 Очистить', does: 'убрать из General всё за двое суток, спросив сначала' },
@@ -51,7 +51,7 @@ const ROWS: readonly (readonly MenuCommand[])[] = [
 /** The name of a command a key of the main menu stands for. */
 export type MenuCommand = keyof typeof KEYS;
 
-/** Back from the server menu, the report menu and the job menu. */
+/** Back from the server menu, the report menu, the job menu and the points menu. */
 const HOME = '⬅️ На главную';
 /** Marks the Selected server in the server menu. */
 const SELECTED = '✅ ';
@@ -77,8 +77,28 @@ export const JOB_MARK: Record<JobMark, string> = {
   disabled: '⏸',
 };
 /**
- * Jobs on one keyboard of the job menu. A keyboard is the markup of one
- * message, and Telegram refuses one too long; a server has over a hundred.
+ * What every key of the points menu begins with — a job's, and the keys that
+ * turn its pages — and what tells it from a key of the job menu, which a
+ * job's standing marks with the same coloured dots, without a list to look
+ * it up in. The main menu's «🗂 Точки» is matched by its whole label first.
+ */
+export const POINTS = '🗂 ';
+/**
+ * What follows `POINTS` on a job's key: how the job stands by 🛡's verdict,
+ * in the icons 🛡 says it with, and ⚪ for a job nobody expects points from,
+ * or every job while the points are not read yet.
+ */
+export const POINTS_MARK: Record<PointsMark, string> = {
+  critical: '🔴',
+  warning: '🟠',
+  notice: '🟡',
+  fine: '🟢',
+  none: '⚪',
+};
+/**
+ * Jobs on one keyboard of the job menu, and of the points menu. A keyboard is
+ * the markup of one message, and Telegram refuses one too long; a server has
+ * over a hundred.
  */
 export const JOBS_PER_PAGE = 50;
 /** Above this many keys the way back is offered on top too, not only after the scroll. */
@@ -148,23 +168,30 @@ export const jobPage = (count: number, page: number): { at: number; pages: numbe
  * the order given, a page at a time. Always selective, and kept while cards
  * are opened from it: a card carries Buttons of its own, not a keyboard.
  */
-export const jobMenu = (jobs: JobChoice[], page = 1): TelegramReplyKeyboard => {
-  const { at, pages } = jobPage(jobs.length, page);
-  const shown = jobs.slice((at - 1) * JOBS_PER_PAGE, at * JOBS_PER_PAGE);
+export const jobMenu = (jobs: JobChoice[], page = 1): TelegramReplyKeyboard =>
+  paged(jobs.map(({ name, mark }) => `${JOB_MARK[mark]} ${name}`), page, '', 'Выберите задание');
+
+/**
+ * The points menu: the job menu's keys, of 🛡's verdict, each beginning with
+ * `POINTS`, its pages turned by keys that begin so too. Kept while the PDFs
+ * are sent from it, as the job menu is while cards are opened.
+ */
+export const pointsMenu = (jobs: PointsChoice[], page = 1): TelegramReplyKeyboard =>
+  paged(jobs.map(({ name, mark }) => `${POINTS}${POINTS_MARK[mark]} ${name}`), page, POINTS, 'Выберите задание — придёт PDF');
+
+/** A key a row, a page at a time, the keys that turn the pages beginning with `prefix`, and the way back. */
+const paged = (labels: string[], page: number, prefix: string, placeholder: string): TelegramReplyKeyboard => {
+  const { at, pages } = jobPage(labels.length, page);
+  const shown = labels.slice((at - 1) * JOBS_PER_PAGE, at * JOBS_PER_PAGE);
   const turns = [
-    ...(at > 1 ? [`${BACK} · ${at - 1}/${pages}`] : []),
-    ...(at < pages ? [`${NEXT} · ${at + 1}/${pages}`] : []),
+    ...(at > 1 ? [`${prefix}${BACK} · ${at - 1}/${pages}`] : []),
+    ...(at < pages ? [`${prefix}${NEXT} · ${at + 1}/${pages}`] : []),
   ];
   return {
-    keyboard: keys([
-      ...(shown.length > LONG ? [[HOME]] : []),
-      ...shown.map(({ name, mark }) => [`${JOB_MARK[mark]} ${name}`]),
-      ...(turns.length ? [turns] : []),
-      [HOME],
-    ]),
+    keyboard: keys([...(shown.length > LONG ? [[HOME]] : []), ...shown.map((label) => [label]), ...(turns.length ? [turns] : []), [HOME]]),
     is_persistent: true,
     resize_keyboard: true,
-    input_field_placeholder: 'Выберите задание',
+    input_field_placeholder: placeholder,
     selective: true,
   };
 };
@@ -179,7 +206,11 @@ export type Pressed =
   /** A key of the job menu: one job, by its name. */
   | { kind: 'job'; name: string }
   /** A page of the job menu. */
-  | { kind: 'jobs'; page: number };
+  | { kind: 'jobs'; page: number }
+  /** A key of the points menu: one job's points, by its name. */
+  | { kind: 'points'; name: string }
+  /** A page of the points menu. */
+  | { kind: 'pointsPage'; page: number };
 
 /**
  * The key `text` is the label of, or undefined for anything else said in the
@@ -194,6 +225,14 @@ export const menuPressed = (text: string, servers: Array<{ name: string }>): Pre
   if (said === EVERY_REPOSITORY) return { kind: 'repository', name: '' };
   if (said.startsWith(REPOSITORY) && said.length > REPOSITORY.length) {
     return { kind: 'repository', name: said.slice(REPOSITORY.length).trim() };
+  }
+  if (said.startsWith(POINTS)) {
+    const key = said.slice(POINTS.length);
+    const turned = TURN.exec(key);
+    if (turned) return { kind: 'pointsPage', page: Number(turned[1]) };
+    const marked = Object.values(POINTS_MARK).find((icon) => key.startsWith(`${icon} `));
+    const name = marked ? key.slice(marked.length + 1).trim() : '';
+    if (name) return { kind: 'points', name };
   }
   const turn = TURN.exec(said);
   if (turn) return { kind: 'jobs', page: Number(turn[1]) };

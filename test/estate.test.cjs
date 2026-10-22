@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   SERVER, world, veeamFake, job, exchange, configuredJob, kingstonNight, monitorAccount, serverOf, jobReadsOf,
-  answersOf, answersWorld, idleAnswers, EstateAnswers,
+  answersOf, answersWorld, idleAnswers, EstateAnswers, telegramConfig,
 } = require('./world.cjs');
 
 /* ------------------------------------------------------------------ *
@@ -574,145 +574,308 @@ test('a running job Veeam still calls disabled is counted as running', async () 
 });
 
 /* ------------------------------------------------------------------ *
- * /points: one job's restore points, by the verdict 🛡 lists it by
+ * The Points report: what /points says of one job, by the verdict 🛡
+ * lists it by, and the page it is printed from
  * ------------------------------------------------------------------ */
 
-const POINTS_NOW = { now: new Date('2026-10-01T10:23:00+05:00'), timezone: 'Asia/Qyzylorda' };
-const local = (iso) => Date.parse(`${iso}+05:00`);
+const { readingOf } = require('../dist/estate/evidence');
+const { judgementOf, thresholdsOf, verdictOf } = require('../dist/estate/job-standing');
+const { pointsReportOf, ELSEWHERE } = require('../dist/estate/points-report');
+const { pointsReportPage } = require('../dist/estate/points-report-page');
+const { jobOf } = require('../dist/veeam/estate');
 
-/** OPS_TelegramBot on 1 October: Active Full on Saturdays, the last one on 5 September. */
-const telegramBot = (over = {}) => ({
-  runs: 17, points: 17, machines: 1, intervalDays: 1,
-  oldest: local('2026-09-05T21:43:00'), newest: local('2026-09-30T21:43:00'),
-  chain: { fulls: 1, lastFull: local('2026-09-05T21:43:00'), sinceFull: 16 },
-  retention: { quantity: 7, unit: 'days' },
-  fulls: [{ kind: 'active', weekdays: [6] }],
+const TZ = 'Asia/Qyzylorda'; // +05:00, no summer time
+const NOW = Date.parse('2026-10-22T09:45:00+05:00'); // a Thursday morning
+const THRESHOLDS = thresholdsOf(telegramConfig());
+const local = (iso) => Date.parse(`${iso}+05:00`);
+const dayAfter = (day, days = 1) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const SNAPSHOT = 'Failed to create VM snapshot. The operation is not allowed in the current state.';
+
+/**
+ * A job's nights as Veeam says them, and the reading its Points report is
+ * made from: every night at 22:00 from `first` to `last`, each machine a
+ * point at 22:05, a Full on the days in `fulls`. On a day of `failed` the
+ * machines named fail, with what Veeam said, and write nothing; of `setAside`
+ * they fail and leave a point the scan sets aside; of `silent` they get
+ * nothing and nothing is said. Its points are the Evidence's, judged as 🛡
+ * judges them; the failures with Veeam's words are the Job reads'.
+ */
+const nightsOf = ({ machines, first, last, fulls, failed = {}, setAside = {}, silent = {}, files = true, job: state = {}, retention = 14 }) => {
+  const job = jobOf({ id: 'j1', name: 'OPS_Exchange', type: 'Backup', status: 'Stopped', lastResult: 'Success', ...state });
+  const configuration = {
+    id: 'j1',
+    schedule: { runAutomatically: true, daily: { isEnabled: true, dailyKind: 'Everyday', localTime: '22:00' } },
+    storage: {
+      retentionPolicy: { type: 'RestorePoints', quantity: retention },
+      advancedSettings: { activeFulls: { isEnabled: true, weekly: { isEnabled: true, days: ['saturday'] } } },
+    },
+  };
+  const sessions = [];
+  const points = [];
+  const written = [];
+  const outcomes = new Map();
+  const failures = [];
+  for (let day = first; day <= last; day = dayAfter(day)) {
+    const id = `s-${day}`;
+    const down = [...Object.keys(failed[day] ?? {}), ...(setAside[day] ?? [])];
+    sessions.push({ id, jobId: 'j1', sessionType: 'BackupJob', creationTime: `${day}T22:00:00+05:00`, endTime: `${day}T22:50:00+05:00`, result: { result: down.length ? 'failed' : 'success' } });
+    if (down.length) outcomes.set(id, new Map(machines.map((machine) => [machine, down.includes(machine) ? 'failed' : 'success'])));
+    for (const [machine, reason] of Object.entries(failed[day] ?? {})) failures.push({ machine, at: local(`${day}T22:00:00`), reason });
+    const full = fulls.includes(day);
+    const ids = machines
+      .filter((machine) => !(failed[day] ?? {})[machine] && !(silent[day] ?? []).includes(machine))
+      .map((machine) => {
+        points.push({ id: `${day}-${machine}`, backupId: 'b1', sessionId: id, name: machine, type: full ? 'Full' : 'Increment', creationTime: `${day}T22:05:00+05:00` });
+        return `${day}-${machine}`;
+      });
+    if (ids.length) written.push({ restorePointIds: ids, dataSize: (full ? 300 : 20) * GB, backupSize: (full ? 100 : 8) * GB });
+  }
+  // Newest first, as Veeam lists them.
+  const evidence = readingOf({ jobs: [job], configurations: [configuration], backups: [{ id: 'b1', jobId: 'j1' }], points: points.reverse(), sessions })
+    .evidence(outcomes, NOW - 5 * 60_000);
+  return {
+    at: NOW,
+    server: 'BAAS',
+    job,
+    evidence: {
+      status: 'ready',
+      scannedAt: evidence.scannedAt,
+      ...judgementOf(job, evidence, { now: new Date(NOW), timezone: TZ }, THRESHOLDS),
+      schedule: evidence.schedulesByJob.get('j1'),
+      setAside: evidence.machineFailuresByJob.get('j1') ?? [],
+    },
+    failures,
+    ...(files ? { files: written } : {}),
+    repository: 'ARCHIVE',
+    named: machines,
+    topic: 'Protection',
+  };
+};
+
+/** A machine's days, a letter a day: F a Full, i an increment, X a failure, · retention's, _ nothing. */
+const drawn = (report, name) =>
+  report.calendar.rows.find((row) => row.name === name).cells.map((cell) => ({ full: 'F', increment: 'i', failed: 'X', retired: '·', none: '_' })[cell]).join('');
+const tiles = (report) => report.tiles.map(({ label, value, note }) => [label, value, note]);
+
+const EXCHANGE = ['ex-mbx-01', 'ex-mbx-03', 'ex-edge-01'];
+/** OPS_Exchange on 22 October: a Full on Saturdays, and none on the 17th; ex-mbx-03 failed twice on its snapshot, ex-edge-01 once. */
+const exchangeNights = (over = {}) => nightsOf({
+  machines: EXCHANGE,
+  first: '2026-10-03',
+  last: '2026-10-21',
+  fulls: ['2026-10-03', '2026-10-10'],
+  failed: { '2026-10-19': { 'ex-mbx-03': SNAPSHOT }, '2026-10-20': { 'ex-mbx-03': SNAPSHOT } },
+  setAside: { '2026-10-14': ['ex-edge-01'] },
   ...over,
 });
 
-/** 🛡's thresholds as configured by default. */
-const POINTS_RULE = { staleDays: 3, overdueFactor: 2.5, minStreak: 3 };
+test('the Points report says of a job what 🛡 says, in its words, and the five numbers under it', () => {
+  const report = pointsReportOf(exchangeNights(), TZ);
 
-/** A /points card as the answer builds it: the job's points, and the verdict 🛡 gives it. */
-const pointsCard = (card) => {
-  const { verdictOf } = require('../dist/estate/job-standing');
-  const { points, failures = 0 } = card;
-  // The Standing /points gathers, from points given as the Evidence holds them.
-  const standing = {
-    id: '1',
-    name: card.name,
-    lastRun: card.lastRun,
-    runs: points?.newest === undefined ? [] : [points.newest],
-    byRuns: Boolean(card.elsewhere),
-    cadenceDays: points?.intervalDays ?? null,
-    failures,
-    depth: points,
-    retention: points?.retention,
-    fulls: points?.fulls,
-  };
-  const verdict = card.excused || card.unavailable ? undefined : verdictOf(standing, POINTS_NOW, POINTS_RULE);
-  return require('../dist/estate/points-card').renderPointsCard({ ...card, verdict }, POINTS_NOW);
-};
-
-test('/points says where one job stands, how far back it reaches and the Fulls it went without', () => {
-  const text = pointsCard({ name: 'OPS_TelegramBot', points: telegramBot() });
-
-  assert.match(text, /^🗂 <b>OPS_TelegramBot<\/b> · точки восстановления$/mu);
-  assert.match(text, /^🟡 <b>Пропущены Full 12\.09, 19\.09, 26\.09<\/b>\n<i>бэкапы идут · последний Full 05\.09<\/i>$/mu);
-  assert.match(text, /^<b>Точек на ВМ:<\/b> 17 · <b>ВМ:<\/b> 1 · <b>в Veeam всего:<\/b> 17$/mu);
-  assert.match(text, /^<b>Самая ранняя:<\/b> 05\.09 в 21:43$/mu);
-  assert.match(text, /^<b>Самая новая:<\/b> вчера в 21:43$/mu);
-  assert.match(text, /^<b>Цепочка:<\/b> Full 05\.09 \+ 16 инкр\.$/mu);
-  assert.match(text, /^<b>Full по расписанию:<\/b> Active Full по сб$/mu);
-  assert.match(text, /^<b>Хранение:<\/b> 7 дней$/mu);
-  assert.match(text, /^<b>Ритм:<\/b> раз в сутки$/mu);
+  assert.equal(report.drawn, true);
+  assert.deepEqual([report.status, report.word], ['warn', 'Внимание']);
+  assert.deepEqual(report.verdict, { icon: '🟡', problem: 'пропущен Full 17.10', facts: ['бэкапы идут', 'последний Full 10.10'] });
+  assert.deepEqual(report.facts, ['Репозиторий ARCHIVE', '3 машины', 'Ежедневно в 22:00, Active Full по сб', 'Хранение 14 точек']);
+  assert.deepEqual(tiles(report).slice(0, 4), [
+    ['Последняя точка', '21.10 22:05', 'у всех 3 машин'],
+    // Nineteen moments each machine can be rolled back to, the nights a failed run left of it not among them.
+    ['Можно откатиться', '19 точек', 'до 03.10 22:05'],
+    ['Текущая цепочка', 'Full 10.10 + 11', 'инкрементов'],
+    ['Следующий Full', 'сб 24.10, 22:00', 'Full 17.10 пропущен'],
+  ]);
+  assert.equal(report.tiles[3].alarm, true);
+  assert.deepEqual(tiles(report)[4], ['На диске', '336 ГБ', 'данных 940 ГБ']);
+  assert.deepEqual([report.newest, report.depth], [local('2026-10-21T22:05:00'), { points: 19, oldest: local('2026-10-03T22:05:00') }]);
 });
 
-test('/points opens with what 🛡 says of the job, in the words 🛡 says it', () => {
-  const late = pointsCard({ name: 'J', points: telegramBot({ newest: local('2026-09-27T21:43:00') }) });
-  assert.match(
-    late,
-    /^🟠 <b>Нет бэкапа 3 дня<\/b>\n<i>последний 27\.09 в 21:43 · обычно раз в сутки · пропущено 2 запуска · не сделан Full 12\.09, 19\.09, 26\.09<\/i>$/mu,
-  );
+test('each machine\'s days are drawn: a Full, an increment, its own failure, retention\'s days and today\'s', () => {
+  const report = pointsReportOf(exchangeNights(), TZ);
+  const { days, rows } = report.calendar;
 
-  const failing = pointsCard({ name: 'J', failures: 4, points: telegramBot({ fulls: undefined }) });
-  assert.match(failing, /^🟠 <b>4 неудачных запуска подряд<\/b>\n<i>последний бэкап вчера в 21:43 · обычно раз в сутки<\/i>$/mu);
+  assert.equal(days.length, 35);
+  assert.deepEqual([days[0].day, days[34].day], [Date.UTC(2026, 8, 18), Date.UTC(2026, 9, 22)]);
+  // Saturdays owe a Full; the 17th went without one.
+  assert.deepEqual(days.flatMap((day, at) => (day.fullDay ? [at] : [])), [1, 8, 15, 22, 29]);
+  assert.deepEqual(days.flatMap((day, at) => (day.missed ? [at] : [])), [29]);
+  assert.deepEqual(rows.map((row) => [row.name, row.points]), [['ex-mbx-01', 19], ['ex-mbx-03', 17], ['ex-edge-01', 18]]);
 
-  const onTime = pointsCard({
-    name: 'J',
-    points: telegramBot({ chain: { fulls: 2, lastFull: local('2026-09-26T22:00:00'), sinceFull: 4 } }),
+  // Before the oldest point retention kept, and today, whose run has not written yet.
+  const before = '·'.repeat(15);
+  assert.equal(drawn(report, 'ex-mbx-01'), `${before}Fiiiiii${'F'}${'i'.repeat(11)}_`);
+  // Red where Veeam said the machine failed, not where the run did: the run of the 19th failed for every machine.
+  assert.equal(drawn(report, 'ex-mbx-03'), `${before}FiiiiiiF${'i'.repeat(8)}XXi_`);
+  // A point the scan set aside is the machine's failure too, said or not.
+  assert.equal(drawn(report, 'ex-edge-01'), `${before}FiiiiiiFiiiXiiiiiii_`);
+});
+
+test('the machines\' errors are grouped by what Veeam said, the newest first, and a night nothing was said of is said so', () => {
+  const report = pointsReportOf(exchangeNights({
+    silent: { '2026-10-21': ['ex-edge-01'] },
+  }), TZ);
+
+  assert.deepEqual(report.errors, [
+    // The job ran on the 21st and ex-edge-01 got neither a point nor a failure.
+    { machines: ['ex-edge-01'], days: [Date.UTC(2026, 9, 21)], failed: false },
+    { machines: ['ex-mbx-03'], days: [Date.UTC(2026, 9, 19), Date.UTC(2026, 9, 20)], reason: SNAPSHOT, failed: true },
+    { machines: ['ex-edge-01'], days: [Date.UTC(2026, 9, 14)], failed: true },
+  ]);
+});
+
+test('what to do follows from what was found: a missed Full first, then a machine saved again, then retention', () => {
+  const report = pointsReportOf(exchangeNights(), TZ);
+
+  assert.deepEqual(report.steps, [
+    {
+      title: 'Запустить Active Full вручную',
+      detail: 'Full 17.10 не было: восстановление последней точки читает 12 файлов. По расписанию следующий — сб 24.10, 22:00.',
+      important: true,
+    },
+    // Failed in the last week, and saved since: worth a look, not urgent. ex-edge-01's failure is older.
+    { title: 'Посмотреть ex-mbx-03', detail: 'Запуски 19.10, 20.10 упали; 21.10 она снова сохранена.', important: false },
+    // Fourteen kept, nineteen held: the chain of the 3rd goes whole, once the one after it holds fourteen.
+    { title: 'Хранение держит 19 точек вместо 14', detail: 'Veeam удаляет цепочку только целиком: цепочка 03.10 уйдёт около 23.10.', important: false },
+  ]);
+  assert.deepEqual(report.chains.spans.map(({ full, from, to, increments, data, disk, current, leaves }) => [full, from, to, increments, data / GB, disk / GB, current, leaves]), [
+    [Date.UTC(2026, 9, 3), 15, 22, 6, 420, 148, false, Date.UTC(2026, 9, 23)],
+    [Date.UTC(2026, 9, 10), 22, 35, 11, 520, 188, true, undefined],
+  ]);
+  assert.deepEqual([report.chains.retired, report.chains.missed], [15, [29]]);
+  assert.deepEqual(report.chains.increment, { data: 20 * GB, disk: 8 * GB });
+});
+
+test('a job in order says so, and that nothing needs doing but what is worth knowing', () => {
+  const report = pointsReportOf(exchangeNights({ fulls: ['2026-10-03', '2026-10-10', '2026-10-17'], failed: {}, setAside: {}, retention: 21 }), TZ);
+
+  assert.deepEqual([report.status, report.word], ['ok', 'Норма']);
+  assert.deepEqual(report.verdict, { icon: '🟢', problem: 'в порядке', facts: ['Full вовремя'] });
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.steps, [], 'twenty-one kept and nineteen held: nothing to say of retention either');
+  assert.deepEqual(tiles(report)[3], ['Следующий Full', 'сб 24.10, 22:00', 'по расписанию']);
+  assert.deepEqual(report.next, { day: Date.UTC(2026, 9, 24), weekday: 'сб', time: '22:00' });
+});
+
+test('a job in trouble trades the chain and the next Full for its last Full and its failing machines, and says what to do about them', () => {
+  // Nothing saved since the 13th: two machines fail on their snapshot, the third gets nothing and nothing is said.
+  const failing = {};
+  const silent = {};
+  for (let day = '2026-10-14'; day <= '2026-10-21'; day = dayAfter(day)) {
+    failing[day] = { 'ex-mbx-01': SNAPSHOT, 'ex-mbx-03': SNAPSHOT };
+    silent[day] = ['ex-edge-01'];
+  }
+  const report = pointsReportOf(exchangeNights({ failed: failing, setAside: {}, silent, job: { lastResult: 'Failed' } }), TZ);
+
+  assert.deepEqual([report.status, report.word], ['crit', 'Критично']);
+  assert.equal(report.verdict.problem, 'нет бэкапа 8 дней');
+  assert.deepEqual(tiles(report).slice(0, 4), [
+    ['Последняя точка', '13.10 22:05', '8 дней назад'],
+    ['Можно откатиться', '11 точек', 'до 03.10 22:05'],
+    ['Последний Full', '10.10', 'Full не было 11 дней'],
+    ['Машины с ошибками', '2 из 3', 'последние запуски упали'],
+  ]);
+  assert.deepEqual(report.steps.map(({ title, important }) => [title, important]), [
+    ['Разобрать ошибку на 2 машинах', true],
+    ['Проверить ex-edge-01', true],
+    ['Запустить Active Full вручную', true],
+  ]);
+  // The first sentence of what Veeam said, and the days.
+  assert.equal(report.steps[0].detail, '«Failed to create VM snapshot.» повторяется 14.10–21.10, 8 дней.');
+  assert.equal(report.steps[1].detail, 'С 14.10 у неё нет точек, хотя задание шло, а ошибки Veeam не записал.');
+  assert.equal(drawn(report, 'ex-edge-01').slice(-9), '________' + '_', 'nothing said is no failure');
+
+  // No machine says why, so the job's own trouble is what to look into.
+  const quiet = pointsReportOf(exchangeNights({ last: '2026-10-13', failed: {}, setAside: {}, job: { lastResult: 'Failed' } }), TZ);
+  assert.deepEqual(quiet.steps[0], {
+    title: 'Выяснить, почему нет новых точек',
+    detail: 'Последний 13.10 в 22:05 · обычно раз в сутки · пропущено 7 запусков · не сделан Full 17.10.',
+    important: true,
   });
-  assert.match(onTime, /^🟢 <b>В порядке<\/b>\n<i>Full вовремя<\/i>$/mu);
-  assert.match(onTime, /^<b>Цепочка:<\/b> Full 26\.09 \+ 4 инкр\. · цепочек в хранении: 2$/mu);
-
-  const fresh = pointsCard({ name: 'J', points: telegramBot({ intervalDays: null, fulls: undefined }) });
-  assert.match(fresh, /^🟢 <b>В порядке<\/b>\n<i>ритм ещё не ясен<\/i>$/mu);
-  assert.ok(!/Full по расписанию/u.test(fresh), 'nothing said about Fulls nobody configured');
 });
 
-test('/points calls a nightly job two days without a point fine, as 🛡 does, and says the run it skipped', () => {
-  // 🗂's verdict, which /points kept after 🗂 became part of 🛡, called this
-  // job behind; 🛡 counted it among the fine ones.
-  const text = pointsCard({
-    name: 'J',
-    points: telegramBot({
-      newest: local('2026-09-29T08:00:00'),
-      chain: { fulls: 2, lastFull: local('2026-09-26T22:00:00'), sinceFull: 3 },
-    }),
-  });
-  assert.match(text, /^🟢 <b>В порядке<\/b>\n<i>пропущен 1 запуск · Full вовремя<\/i>$/mu);
-  assert.ok(!/Отстаёт/u.test(text), text);
+test('with no Evidence yet, or points the scan does not read, there is nothing to draw and the report says why', () => {
+  const reading = exchangeNights();
+  const pending = pointsReportOf({ ...reading, evidence: { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' } }, TZ);
+  assert.deepEqual(pending, { drawn: false, at: NOW, server: 'BAAS', name: 'OPS_Exchange', why: 'Точки восстановления ещё не прочитаны.' });
+
+  // A replica is judged by its runs, as 🛡 judges it.
+  const verdict = verdictOf({ id: 'j1', name: 'R', runs: [], byRuns: true, cadenceDays: null, failures: 0 }, { now: new Date(NOW), timezone: TZ }, THRESHOLDS);
+  const replica = pointsReportOf({ ...reading, evidence: { ...reading.evidence, byRuns: true, verdict, points: undefined } }, TZ);
+  assert.equal(replica.drawn, false);
+  assert.equal(replica.verdict.problem, 'нет успешных запусков');
+  assert.equal(replica.why, ELSEWHERE);
+
+  // A job switched off is drawn, and not judged.
+  const { verdict: _, ...judged } = reading.evidence;
+  const off = pointsReportOf({ ...reading, evidence: { ...judged, excused: 'disabled' } }, TZ);
+  assert.deepEqual([off.status, off.word, off.verdict.problem, off.steps], ['unknown', 'Выключено в Veeam', 'новых точек от него не ждут', []]);
 });
 
-test('/points does not judge a job nobody expects points from, and says why there are none', () => {
-  const off = pointsCard({ name: 'J', excused: 'disabled', points: telegramBot() });
-  assert.match(off, /^⚪ <b>Выключено в Veeam<\/b>/mu);
-  assert.ok(!/В порядке|Нет бэкапа|Пропущен/u.test(off), off);
-  assert.match(off, /<b>Точек на ВМ:<\/b> 17/u, 'what it kept is still shown');
+test('the page is the one drawn: the head, the five numbers, the days a machine to a row and the three cards, with nothing fetched and no emoji', () => {
+  const reading = exchangeNights({ job: { name: 'OPS_<b>Exchange</b>' } });
+  const html = pointsReportPage(pointsReportOf(reading, TZ), TZ);
 
-  assert.match(pointsCard({ name: 'J' }), /^🔴 <b>Нет ни одной точки<\/b>$/mu);
-  const replica = pointsCard({ name: 'J', elsewhere: true });
-  assert.match(replica, /^🔴 <b>Нет успешных запусков<\/b>$/mu, 'judged by its runs, as 🛡 judges it');
-  assert.match(replica, /хранит отдельно/u);
-  assert.match(pointsCard({ name: 'J', unavailable: 'Точки ещё не прочитаны.' }), /Точки ещё не прочитаны\./u);
+  assert.equal(html.match(/<section class="page">/g).length, 1);
+  // The envelope: Inter inside it, and a rule that nothing is fetched.
+  assert.match(html, /@font-face[^}]+url\(data:font\/woff2;base64,/);
+  assert.match(html, /content="default-src 'none';/);
+  assert.match(html, /font-family: 'Inter Variable'/);
+  assert.doesNotMatch(html, /\p{Extended_Pictographic}/u, 'the server\'s browser may have no font for emoji');
+  assert.match(html, /<h1 class="job">OPS_&lt;b&gt;Exchange&lt;\/b&gt;<\/h1>/);
+  assert.doesNotMatch(html, /OPS_<b>Exchange/);
+  assert.match(html, />Внимание<\/span>/);
+  assert.match(html, /<div class="verdict">Пропущен Full 17\.10 — бэкапы идут · последний Full 10\.10\.<\/div>/);
+  // «сб 24.10, 22:00» is drawn smaller than «19 точек», and stays on its line.
+  assert.match(html, /<div class="tl-v m">сб 24\.10, 22:00<\/div><div class="tl-s bad">Full 17\.10 пропущен<\/div>/);
+  assert.match(html, /<h2>Точки по дням, 18\.09–22\.10<\/h2>/);
+  assert.match(html, /<span class="hd we fd miss">17<\/span>/);
+  assert.match(html, /<span class="lg"><span class="sw c i mf"><\/span>Full не выполнен<\/span>/);
+  assert.match(html, /<span class="nm">ex-mbx-03<\/span>(?:<i class="c [^"]+"><\/i>){35}<span class="cnt bad">17<\/span>/);
+  assert.match(html, /<i class="c x"><\/i><i class="c x"><\/i><i class="c i"><\/i><i class="c e"><\/i><span class="cnt bad">17/);
+  assert.match(html, /<h3>Ошибки машин<\/h3><p class="err"><span class="who"><b>ex-mbx-03<\/b> · 19\.10, 20\.10<\/span><span class="errt">Failed to create VM snapshot\./);
+  assert.match(html, /<b>1\. Запустить Active Full вручную<\/b><span class="ad">Full 17\.10 не было: восстановление последней точки читает 12 файлов\.<span class="imp">Важно<\/span>/);
+  assert.match(html, /<b>2\. Посмотреть ex-mbx-03<\/b><span class="ad">[^<]+<span class="note">К сведению<\/span>/);
+  assert.match(html, /Full 03\.10, уйдёт ~23\.10/);
+  assert.match(html, /<tr><td>Full 10\.10 \(текущая\)<\/td><td class="n">11<\/td><td class="n">520 ГБ<\/td><td class="n">188 ГБ<\/td><\/tr>/);
+  assert.match(html, /Точки — как их видит тема Protection, чтение 22\.10 09:40/);
+
+  const calm = pointsReportPage(pointsReportOf(exchangeNights({ fulls: ['2026-10-03', '2026-10-10', '2026-10-17'], failed: {}, setAside: {}, retention: 21 }), TZ), TZ);
+  assert.match(calm, /<b>Ничего делать не нужно\.<\/b><\/p><p class="act calm">Следующий Full — сб 24\.10 в 22:00, по расписанию\.<\/p>/);
+  assert.match(calm, /<p class="err">Ошибок за 35 дней нет\.<\/p>/);
+  assert.doesNotMatch(calm, /Full не выполнен/, 'no missed Full, nothing in the legend for one');
 });
 
-test('/points draws the last weeks a day to a mark, in the operator\'s zone', () => {
-  // OPS_vCloud_edge on 1 October: a Full on Saturday 19 September, then
-  // nothing for nine nights, then increments. The run at 02:00 on the 30th is
-  // the 29th in UTC, and the calendar is the operator's.
-  const retained = [
-    { at: local('2026-09-19T23:58:00'), full: true, pointIds: [] },
-    { at: local('2026-09-29T23:35:00'), full: false, pointIds: [] },
-    { at: local('2026-09-30T02:00:00'), full: false, pointIds: [] },
-  ];
-  const text = pointsCard({ name: 'OPS_vCloud_edge', points: telegramBot({ retained }) });
+test('a job of many machines goes on over further pages, the days\' header on each, and its errors and steps hold what fits', () => {
+  const machines = Array.from({ length: 60 }, (_, at) => `farm-app-${String(at + 1).padStart(2, '0')}`);
+  const failing = {};
+  for (let day = '2026-10-14'; day <= '2026-10-21'; day = dayAfter(day)) {
+    failing[day] = Object.fromEntries(machines.slice(0, 30).map((machine, at) => [machine, at < 20 ? SNAPSHOT : 'The method is disabled by \'vShield_SVM\'']));
+  }
+  const report = pointsReportOf(nightsOf({ machines, first: '2026-10-03', last: '2026-10-21', fulls: ['2026-10-03', '2026-10-10'], failed: failing, silent: Object.fromEntries(Object.keys(failing).map((day) => [day, machines.slice(30, 40)])) }), TZ);
+  const html = pointsReportPage(report, TZ);
 
-  const calendar = [
-    '      пн вт ср чт пт сб вс',
-    '14.09                 █  ·',
-    '21.09  ·  ·  ·  ·  ·  ·  ·',
-    '28.09  ·  ▒  ▒  ○',
-  ];
-  assert.ok(text.includes(`<pre>${calendar.join('\n')}</pre>`), text);
-  assert.match(text, /^<i>█ Full {2}▒ инкремент {2}· нет точки {2}○ сегодня ещё нет<\/i>$/mu);
-
-  // A server that does not type its points draws points, not Fulls.
-  const untyped = pointsCard({ name: 'J', points: telegramBot({ retained: retained.map(({ at }) => ({ at, pointIds: [] })) }) });
-  assert.match(untyped, /<i>▒ точка {2}· нет точки/u);
-  assert.ok(!/█/u.test(untyped));
-
-  assert.ok(!/<pre>/u.test(pointsCard({ name: 'J', points: telegramBot() })), 'nothing drawn without the runs');
+  const pages = html.split('<section class="page">').slice(1);
+  assert.equal(pages.length, 3);
+  assert.deepEqual(pages.map((page) => (page.match(/<span class="nm">/g) ?? []).length), [8, 26, 26]);
+  for (const [at, page] of pages.entries()) {
+    assert.match(page, /<span class="hd" style="text-align:left">Машина<\/span>/, `page ${at + 1} has the days' header`);
+    assert.match(page, new RegExp(`стр\\. ${at + 1} из 3`));
+  }
+  assert.match(pages[1], /Точки по дням, 18\.09–22\.10 · продолжение/);
+  assert.match(pages[1], /Машины 9–34 из 60/);
+  assert.match(pages[2], /<span class="nm">farm-app-60<\/span>/);
+  // Three groups of errors, two of them shown; three steps.
+  assert.equal(report.errors.length, 3);
+  assert.equal((pages[0].match(/<p class="err">/g) ?? []).length, 2);
+  assert.match(pages[0], /<span class="more">и ещё 1 — в сетке<\/span>/);
+  assert.equal((pages[0].match(/<p class="act">/g) ?? []).length, 3);
 });
 
 test('a backup file is put in the run whose points it holds, and a Full still being written is said as such', () => {
   const { sizesOf } = require('../dist/estate/points-sizes');
-  const GB = 2 ** 30;
   const runs = [
-    { at: local('2026-09-19T23:32:00'), full: true, pointIds: ['vcd3', 'vcd5'] },
-    { at: local('2026-09-29T23:32:00'), full: false, pointIds: ['vcd3-29'] },
-    { at: local('2026-09-30T23:32:00'), full: false, pointIds: ['vcd3-30'] },
-    { at: local('2026-09-30T23:50:00'), full: true, pointIds: ['writing'] },
+    { at: local('2026-09-19T23:32:00'), full: true, pointIds: ['vcd3', 'vcd5'], machines: ['vcd3', 'vcd5'] },
+    { at: local('2026-09-29T23:32:00'), full: false, pointIds: ['vcd3-29'], machines: ['vcd3'] },
+    { at: local('2026-09-30T23:32:00'), full: false, pointIds: ['vcd3-30'], machines: ['vcd3'] },
+    { at: local('2026-09-30T23:50:00'), full: true, pointIds: ['writing'], machines: ['vcd5'] },
   ];
   const sizes = sizesOf([
     // Per-machine files: two of them make the Full.
@@ -729,13 +892,8 @@ test('a backup file is put in the run whose points it holds, and a Full still be
   assert.equal(sizes.fullWriting, runs[3].at);
   assert.equal(sizes.increment.runs, 2);
 
-  const text = pointsCard({ name: 'OPS_vCloud_edge', points: telegramBot(), sizes });
-  assert.match(text, /^<b>Full 19\.09:<\/b> 856 ГБ данных → 514 ГБ на диске · новый Full с 30\.09 ещё пишется$/mu);
-  assert.match(text, /^<b>Инкремент:<\/b> обычно 212 ГБ данных \(≈25% от Full\) → 75\.6 ГБ на диске$/mu);
-  assert.match(text, /^<b>На диске всего:<\/b> 675 ГБ$/mu);
-
   // CUST_ERP_ISMR: about 100 GB a night, and 1.3 TB the night after its Full.
-  const nights = [100, 110, 1300].map((gb, n) => ({ at: local(`2026-09-2${n}T00:05:00`), full: false, pointIds: [`n${n}`] }));
+  const nights = [100, 110, 1300].map((gb, n) => ({ at: local(`2026-09-2${n}T00:05:00`), full: false, pointIds: [`n${n}`], machines: ['erp'] }));
   const typical = sizesOf(nights.map((night, n) => ({ restorePointIds: night.pointIds, dataSize: [100, 110, 1300][n] * GB, backupSize: GB })), nights);
   assert.equal(typical.increment.data, 110 * GB, 'one heavy night does not make every night look like it');
 
@@ -746,17 +904,15 @@ test('a backup file is put in the run whose points it holds, and a Full still be
 
 test('sizes are written as the Veeam console writes them, in binary units', () => {
   const { sizeWords } = require('../dist/telegram/words');
-  const GB = 2 ** 30;
   assert.deepEqual(
     [1.5 * GB, 0.9 * GB, 40 * GB, 75.6 * GB, 856 * GB, 15900 * GB].map(sizeWords),
     ['1.5 ГБ', '922 МБ', '40 ГБ', '75.6 ГБ', '856 ГБ', '15.5 ТБ'],
   );
 });
 
-test('/points reads the job\'s backup files when asked, and answers without them when Veeam will not give them', async () => {
-  const GB = 2 ** 30;
+test('a job\'s points are read when asked: its backup files once, the machines of its failed attempts, and never by the scan', async () => {
   const ago = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
-  let filesAsked = 0;
+  const asked = [];
   let refused = false;
   const routes = {
     '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
@@ -767,9 +923,16 @@ test('/points reads the job\'s backup files when asked, and answers without them
         { id: 'f', backupId: 'b1', sessionId: 's1', name: 'vcd3', type: 'Full', creationTime: ago(2) },
       ],
     },
-    '/api/v1/sessions': { data: [] },
-    '/api/v1/backups/b1/backupFiles': () => {
-      filesAsked += 1;
+    // Yesterday's attempt, before its point: vcd4 failed in it, and the scan has no point of it to ask about.
+    '/api/v1/sessions': { data: [{ id: 's3', jobId: '1', sessionType: 'BackupJob', creationTime: ago(1.01), endTime: ago(1.005), result: { result: 'Failed' } }] },
+    '/api/v1/sessions/s3/taskSessions': { data: [
+      { name: 'vcd4', result: { result: 'Failed', message: 'Processing vcd4 Error: Failed to create VM snapshot.\nLogon attempt with parameters [VC/ESX: [vc01];Login: [svc@example.com]]' } },
+    ] },
+    '/api/v1/jobs/1': { id: '1', storage: { backupRepositoryId: 'r1' }, virtualMachines: { includes: [{ type: 'VirtualMachine', name: 'vcd3' }, { type: 'VirtualMachine', name: 'vcd4' }] } },
+    '/api/v1/backupInfrastructure/repositories': { data: [{ id: 'r1', name: 'ARCHIVE' }] },
+    '/api/v1/backupInfrastructure/proxies': { data: [] },
+    '/api/v1/backups/b1/backupFiles': (req) => {
+      asked.push(req.path);
       if (refused) throw new Error('HTTP 403 Forbidden');
       return {
         data: [
@@ -781,46 +944,24 @@ test('/points reads the job\'s backup files when asked, and answers without them
   };
   const w = answersWorld({}, [job('1', 'OPS_vCloud_edge', 'Success')], routes);
   await scanned(w);
-  assert.equal(filesAsked, 0, 'the scan never reads files; only a question does');
+  assert.equal(asked.length, 0, 'the scan never reads files; only a question does');
 
-  const text = (await w.answers.describePoints('edge')).text;
-  assert.equal(filesAsked, 1);
-  assert.match(text, /<pre> {6}пн вт ср чт пт сб вс\n/u);
-  assert.match(text, /<b>Full \d\d\.\d\d:<\/b> 856 ГБ данных → 514 ГБ на диске/u);
-  assert.match(text, /<b>Инкремент:<\/b> обычно 150 ГБ данных \(≈18% от Full\) → 40 ГБ на диске/u);
-  assert.match(text, /<b>На диске всего:<\/b> 554 ГБ/u);
+  const said = await w.answers.describePoints('edge');
+  assert.equal(said.text, '⏳ <b>Готовлю PDF по точкам OPS_vCloud_edge</b> — несколько секунд.');
+  assert.equal(asked.length, 0, 'nothing is read before it is said to be coming');
+  const file = await said.later();
+  assert.equal(asked.length, 1);
+  assert.deepEqual([file.jobId, file.about, file.server], ['1', 'points', SERVER]);
+  const [page] = w.printer.pages;
+  assert.match(page, /<div class="tl-v">554 ГБ<\/div><div class="tl-s">данных 1,0 ТБ<\/div>/);
+  // The job names a machine no point holds: it has a row, red where its attempt said it failed, and what Veeam said —
+  // without the service account Veeam wrote after it.
+  assert.match(page, /Репозиторий ARCHIVE · 2 машины/);
+  assert.match(page, /<span class="nm">vcd4<\/span>(?:<i class="c r"><\/i>){32}(?:<i class="c [ex]"><\/i>){3}<span class="cnt bad">0<\/span>/);
+  assert.match(page, /<span class="who"><b>vcd4<\/b> · \d\d\.\d\d<\/span><span class="errt">Failed to create VM snapshot\.<\/span>/);
+  assert.doesNotMatch(page, /svc@example\.com|Logon attempt/);
 
   refused = true;
-  const without = (await w.answers.describePoints('edge')).text;
-  assert.match(without, /🗂 <b>OPS_vCloud_edge<\/b> · точки восстановления/u);
-  assert.ok(!/На диске всего/u.test(without), 'the card, without sizes');
-});
-
-test('an increment under a hundredth of its Full is said as HTML Telegram takes, or the whole answer is refused', async () => {
-  const GB = 2 ** 30;
-  const ago = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
-  const routes = {
-    '/api/v1/jobs': { data: [{ id: '1', schedule: { runAutomatically: true } }] },
-    '/api/v1/backups': { data: [{ id: 'b1', jobId: '1', name: 'OPS_Archive' }] },
-    '/api/v1/restorePoints': {
-      data: [
-        { id: 'i', backupId: 'b1', sessionId: 's2', name: 'arch-01', type: 'Increment', creationTime: ago(1) },
-        { id: 'f', backupId: 'b1', sessionId: 's1', name: 'arch-01', type: 'Full', creationTime: ago(2) },
-      ],
-    },
-    '/api/v1/sessions': { data: [] },
-    '/api/v1/backups/b1/backupFiles': {
-      data: [
-        { name: 'arch-01.vbk', restorePointIds: ['f'], dataSize: 856 * GB, backupSize: 514 * GB },
-        { name: 'arch-01.vib', restorePointIds: ['i'], dataSize: 2 * GB, backupSize: 1 * GB },
-      ],
-    },
-  };
-  const w = answersWorld({}, [job('1', 'OPS_Archive', 'Success')], routes);
-  await scanned(w);
-
-  const text = (await w.answers.describePoints('archive')).text;
-  // "<1%" read as a tag: Telegram answered 400 "Unsupported start tag" and nothing reached the chat.
-  assert.match(text, /<b>Инкремент:<\/b> обычно 2 ГБ данных \(&lt;1% от Full\)/u);
-  assert.doesNotMatch(text, /<(?!\/?(?:b|i|pre|code|a)[ >])/u, 'every < opens a tag Telegram knows');
+  await (await w.answers.describePoints('edge')).later();
+  assert.match(w.printer.pages[1], /<div class="tl-v">—<\/div><div class="tl-s">файлы не прочитаны<\/div>/, 'the report, without sizes');
 });

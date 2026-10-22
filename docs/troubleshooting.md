@@ -71,6 +71,8 @@ A server outside the domain does not know a domain account at all: give it a loc
 
 **⚡ on `/job` shows only the bottleneck and the load**, without how much was read, the transport modes and the proxies: the server speaks REST API 1.1, which has no task sessions to read them from.
 
-**`/points` has no sizes**: Veeam did not give the job's backup files when asked. The rest of the answer stands, and the log says why: `Backup files could not be read: …`.
+**The `/points` PDF has no sizes** («На диске — файлы не прочитаны», files not read; «—» in the chains' table): Veeam did not give the job's backup files when asked. The rest of the report stands, and the log says why: `Backup files could not be read: …`.
+
+**`/points` says the points have not been read yet, and sends no PDF**: as below — the report draws the last scan's points, and there is none yet.
 
 **🛡 says the points have not been read yet**: the restore point scan runs once an hour, and on the server selected in the menu only. After the bot starts, or after another server is selected, the first scan takes up to a minute.

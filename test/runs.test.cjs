@@ -526,6 +526,8 @@ test('a point is placed in the run that was on the clock, not the one whose id i
   assert.equal(evidence.totalPoints, 2);
   assert.equal(evidence.depthByJob.get('1').runs, 1, 'only the point a successful run wrote is retained');
   assert.equal(evidence.depthByJob.get('1').newest, Date.parse('2026-08-23T01:31:12+05:00'));
+  // The point set aside is the machine's own failure that night: what /points draws a red day from.
+  assert.deepEqual(evidence.machineFailuresByJob.get('1'), [{ machine: 'MTA', at: Date.parse('2026-09-14T00:19:03+05:00') }]);
 });
 
 test('a failed run\'s point counts for a machine that got through it, and not when nobody could say', () => {
@@ -540,6 +542,9 @@ test('a failed run\'s point counts for a machine that got through it, and not wh
   const unread = reading.evidence(new Map(), Date.now());
   assert.equal(unread.failedPoints, 1);
   assert.equal(unread.depthByJob.get('1').runs, 1);
+  // Nor is it a failure of the machine's: nobody said it failed.
+  assert.equal(unread.machineFailuresByJob.get('1'), undefined);
+  assert.equal(through.machineFailuresByJob.get('1'), undefined);
 });
 
 test('a point written outside every session is judged by the id it carries, and kept when nothing proves it failed', () => {
@@ -661,9 +666,9 @@ test('a job whose every run is a Full has no increments; a server that does not 
   assert.equal(evidence.retentionByJob.has('1'), false, 'no configuration, no retention');
 });
 
-test('each retained run is kept with when it began, whether it was a Full, and its points; each job with its backups', () => {
-  // What /points draws its calendar from, and puts each backup file in the
-  // run that wrote it by.
+test('each retained run is kept with when it began, whether it was a Full, its points and its machines; each job with its backups', () => {
+  // What /points draws a machine's days from, and puts each backup file in
+  // the run that wrote it by.
   const now = Date.parse('2026-10-01T12:00:00Z');
   const evidence = readingOver({
     jobs: [job('1', 'J', 'Success')],
@@ -680,8 +685,8 @@ test('each retained run is kept with when it began, whether it was a Full, and i
   }).evidence(new Map(), now);
 
   assert.deepEqual(evidence.depthByJob.get('1').retained, [
-    { at: now - 2 * DAY, full: true, pointIds: ['f1', 'f2'] },
-    { at: now - DAY, full: false, pointIds: ['i1'] },
+    { at: now - 2 * DAY, full: true, pointIds: ['f1', 'f2'], machines: ['vm1', 'vm2'] },
+    { at: now - DAY, full: false, pointIds: ['i1'], machines: ['vm1'] },
   ]);
   assert.deepEqual(evidence.backupsByJob.get('1'), ['b1', 'b2']);
   assert.equal(evidence.backupsByJob.has('gone'), false, 'an orphan chain is nobody\'s to ask about');

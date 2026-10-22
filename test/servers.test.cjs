@@ -343,7 +343,7 @@ test('the keys of the main menu are answered as the commands they stand for', as
   assert.deepEqual(w.api.sent(), []);
 });
 
-test('the points key offers the jobs that need somebody, as the command does asked with no name', async () => {
+test('a key that stands for a command is answered as the command, and /job and /points typed with no name offer the jobs that need somebody', async () => {
   // Two worlds each, so the rate limit armed by one cannot answer the other.
   const answerTo = async (said) => {
     const w = twoServers({ ast: [job('a1', 'SQL Daily', 'Failed')] });
@@ -351,15 +351,46 @@ test('the points key offers the jobs that need somebody, as the command does ask
     return w.api.sent().at(-1);
   };
 
-  for (const [label, command] of [['🗂 Точки', '/points'], ['📑 Темы', '/topics']]) {
-    const [key, typed] = [await answerTo(label), await answerTo(command)];
-    assert.equal(key.text, typed.text, `${label} = ${command}`);
-    assert.deepEqual(key.reply_markup?.inline_keyboard, typed.reply_markup?.inline_keyboard);
-  }
-  // /job typed with no name still offers the one that failed, under the message.
+  const [key, typed] = [await answerTo('📑 Темы'), await answerTo('/topics')];
+  assert.equal(key.text, typed.text, '📑 Темы = /topics');
+  assert.deepEqual(key.reply_markup?.inline_keyboard, typed.reply_markup?.inline_keyboard);
+  // Typed with no name, under the message; the 📦 and 🗂 keys list every job instead.
   const card = await answerTo('/job');
   assert.match(card.text, /Укажите задание/);
   assert.equal(card.reply_markup.inline_keyboard[0][0].text, 'SQL Daily', 'and offers the one that failed');
+  assert.match((await answerTo('/points')).text, /Укажите задание[^]*<code>\/points OPS_Exchange<\/code>/);
+});
+
+test('a key of the points menu is told from a key of the job menu by its label alone, and so are its pages', () => {
+  const { jobMenu, menuPressed, pointsMenu } = require('../dist/updates/menu');
+  const MARKS = ['critical', 'warning', 'notice', 'none'];
+  const jobs = Array.from({ length: 120 }, (_, at) => ({ name: `Job ${String(at + 1).padStart(3, '0')}`, mark: MARKS[at] ?? 'fine' }));
+
+  // 🛡's colours, after the 🗂 every key of the points menu begins with; fifty a page, and the way back on top too.
+  let keys = labels(pointsMenu(jobs));
+  assert.deepEqual(keys.slice(0, 7), [
+    ['⬅️ На главную'], ['🗂 🔴 Job 001'], ['🗂 🟠 Job 002'], ['🗂 🟡 Job 003'], ['🗂 ⚪ Job 004'], ['🗂 🟢 Job 005'], ['🗂 🟢 Job 006'],
+  ]);
+  assert.equal(keys.filter(([key]) => /^🗂 \S+ Job/u.test(key)).length, 50);
+  assert.deepEqual(keys.slice(-2), [['🗂 ➡️ Дальше · 2/3'], ['⬅️ На главную']]);
+  keys = labels(pointsMenu(jobs, 2));
+  assert.deepEqual(keys[1], ['🗂 🟢 Job 051']);
+  assert.deepEqual(keys.at(-2), ['🗂 ⬅️ Назад · 1/3', '🗂 ➡️ Дальше · 3/3']);
+  assert.equal(pointsMenu(jobs).selective, true, 'for whoever pressed it');
+  // The job menu is as it was.
+  assert.deepEqual(labels(jobMenu([{ name: 'Job 001', mark: 'failed' }])), [['🔴 Job 001'], ['⬅️ На главную']]);
+
+  // Read back by the label, with no list to look it up in.
+  const read = (label) => menuPressed(label, [{ name: 'BAAS' }]);
+  assert.deepEqual(read('🗂 🔴 Job 001'), { kind: 'points', name: 'Job 001' });
+  assert.deepEqual(read('🗂 ⚪ OPS 🗂 Archive'), { kind: 'points', name: 'OPS 🗂 Archive' });
+  assert.deepEqual(read('🗂 ➡️ Дальше · 3/3'), { kind: 'pointsPage', page: 3 });
+  assert.deepEqual(read('🗂 ⬅️ Назад · 1/3'), { kind: 'pointsPage', page: 1 });
+  assert.deepEqual(read('🔴 Job 001'), { kind: 'job', name: 'Job 001' }, 'a key of the job menu opens the card');
+  assert.deepEqual(read('➡️ Дальше · 2/3'), { kind: 'jobs', page: 2 });
+  assert.deepEqual(read('🗂 Точки'), { kind: 'command', name: 'points' }, 'the main menu\'s key opens the points menu');
+  assert.deepEqual(read('BAAS'), { kind: 'server', name: 'BAAS' });
+  for (const said of ['🗂 🔴', '🗂 ', '🗂 Job 001', '🗂 🔵 Job 001']) assert.equal(read(said), undefined, said);
 });
 
 test('the 📦 key lists every job of the shown server, the worst first, and a job\'s key opens its card', async () => {

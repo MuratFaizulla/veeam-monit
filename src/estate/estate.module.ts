@@ -3,6 +3,7 @@ import { TelegramModule } from '../telegram/telegram.module';
 import { VeeamModule } from '../veeam/veeam.module';
 import { EstateAnswers } from './estate-answers';
 import { JobReports } from './job-reports';
+import { PointsReports } from './points-reports';
 import { ReportPrinter } from './report-printer';
 import { RepositoryReports } from './repository-reports';
 import { ServerEstates } from './server-estates';
@@ -21,7 +22,7 @@ import { ServerEstates } from './server-estates';
  */
 @Module({
   imports: [VeeamModule, TelegramModule],
-  providers: [ServerEstates, ReportPrinter, RepositoryReports, JobReports, EstateAnswers],
+  providers: [ServerEstates, ReportPrinter, RepositoryReports, JobReports, PointsReports, EstateAnswers],
   exports: [ServerEstates, RepositoryReports, EstateAnswers],
 })
 export class EstateModule {}

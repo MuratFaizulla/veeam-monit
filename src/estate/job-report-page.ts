@@ -44,7 +44,7 @@ const runsWord = (count: number) => plural(count, 'запуск', 'запуск�
 const timeOf = (at: number, timezone: string): string =>
   new Intl.DateTimeFormat('ru-RU', { timeZone: timezone || undefined, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at));
 /** "db-01 (4f2edb3f-…)" is how vCloud names a machine; the id says nothing on this page. */
-const shortName = (name: string) => name.replace(/\s\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)$/i, '');
+export const shortName = (name: string) => name.replace(/\s\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)$/i, '');
 /** A replica keeps its points on the target host, where the restore points the bot reads are not. */
 const isReplica = (report: JobReport) => /replica/i.test(report.type ?? '');
 

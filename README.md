@@ -91,7 +91,7 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
 <table>
   <tr>
     <th>⚡ <code>/job</code>: a job's card and what held its last run back</th>
-    <th>🗂 <code>/points</code>: the last weeks of a job, a day to a mark</th>
+    <th>🗂 <code>/points</code>: the last weeks of a job (now sent as a PDF)</th>
   </tr>
   <tr>
     <td valign="top">
@@ -165,7 +165,7 @@ Rather not build? Every release is published as an image, `ghcr.io/muratfaizulla
 | `/servers` | The Veeam servers and their state; choose the one the live topics show |
 | `/digest` | Every job of the selected server, and which ones are not fine |
 | `/job <name>` | One job's card: last result and reason, runs, schedule, settings, what held the last run back |
-| `/points <name>` | One job's restore points: calendar, chain, missed Fulls, retention, sizes |
+| `/points <name>` | One job's restore points as a PDF: 🛡's verdict, five weeks a machine to a row, errors, what to do, chains and sizes |
 | `/check` | Poll Veeam now |
 | `/topics` | The forum topics the bot knows |
 | `/clear` | Empty General of the last two days, then put the menu back |

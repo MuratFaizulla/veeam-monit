@@ -61,7 +61,7 @@ export interface Answers {
   check(): Promise<Reply>;
   summary(): Promise<Reply>;
   job(name: string): Promise<Reply>;
-  points(name: string): Promise<Reply>;
+  points(asked: Asked): Promise<Reply>;
   repositories(asked: Asked): Reply;
   knownTopics(asked: Asked): Reply;
   clear(asked: Asked): Promise<Reply>;
@@ -160,13 +160,13 @@ const DECLARED = [
   {
     name: 'points',
     argument: '<имя>',
-    menu: 'Точки восстановления задания: /points часть имени',
+    menu: 'Точки восстановления задания в PDF: /points часть имени',
     help: [
-      'точки восстановления одного задания: на сколько моментов можно откатить',
-      'каждую ВМ, цепочка, Active Full по расписанию и пропущенные, хранение.',
+      'точки восстановления одного задания в PDF: что о нём говорит 🛡, пять недель',
+      'по машинам и дням, ошибки машин, что сделать, цепочки на диске и их размер.',
       'Имя — как для <code>/job</code>: <code>/points exchange</code>. Без имени — те, кому нужно внимание.',
     ],
-    answer: (answers, asked) => answers.points(asked.argument),
+    answer: (answers, asked) => answers.points(asked),
   },
   {
     name: 'repos',

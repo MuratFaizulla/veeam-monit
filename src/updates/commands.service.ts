@@ -16,6 +16,8 @@ import {
   mainMenu,
   MENU_TEXT,
   menuPressed,
+  POINTS_MARK,
+  pointsMenu,
   Pressed,
   REPOSITORY,
   reportMenu,
@@ -184,10 +186,13 @@ export class TelegramCommandsService implements Answers {
     if (key.kind === 'repository') return this.repositories({ ...asked, argument: key.name });
     if (key.kind === 'job') return this.job(key.name);
     if (key.kind === 'jobs') return this.jobChoices(key.page);
+    if (key.kind === 'points') return this.points({ ...asked, argument: key.name });
+    if (key.kind === 'pointsPage') return this.pointsChoices(key.page);
     // Asked which repository first, as the server key asks which server.
     if (key.name === 'repos') return this.reportChoices();
-    // And which job, rather than typing its name.
+    // And which job, rather than typing its name: for its card, or its points.
     if (key.name === 'job') return this.jobChoices();
+    if (key.name === 'points') return this.pointsChoices();
     // A key is pressed by accident far more easily than a command is typed,
     // and this one deletes: it asks first, with the Button that does it.
     if (key.name === 'clear') {
@@ -237,7 +242,7 @@ export class TelegramCommandsService implements Answers {
       return this.reading(() => this.estate.describeJobById(action.id, action.server));
     }
     if (action.kind === 'points') {
-      return this.reading(() => this.estate.describePointsById(action.id, action.server));
+      return this.reading(() => this.estate.describePointsById(action.id, action.server), [], asked);
     }
     if (action.kind === 'report') return this.jobReport(asked, action.id, action.server);
     return commandPressed(action.kind)?.answer(this, asked);
@@ -333,8 +338,13 @@ export class TelegramCommandsService implements Answers {
     return this.reading(() => this.estate.describeJob(name), SUMMARY_BUTTON);
   }
 
-  points(name: string): Promise<Reply> {
-    return this.reading(() => this.estate.describePoints(name), SUMMARY_BUTTON);
+  /**
+   * `/points`, a key of the points menu, and a Button for one job's points:
+   * a PDF, so what is said at once is that it is coming, and the PDF follows;
+   * the choices, when the name is none or several jobs share it.
+   */
+  points(asked: Asked): Promise<Reply> {
+    return this.reading(() => this.estate.describePoints(asked.argument), SUMMARY_BUTTON, asked);
   }
 
   /**
@@ -429,6 +439,42 @@ export class TelegramCommandsService implements Answers {
         'Другой сервер — «🖥 Серверы». По части имени — <code>/job часть имени</code>.',
       ],
       markup: jobMenu(jobs, at),
+    };
+  }
+
+  /**
+   * The 🗂 key: which job's points to send. The keyboard turns into a key per
+   * job of the Selected server for whoever pressed it, by 🛡's verdict, the
+   * worst first, and stays so while the PDFs are sent from it.
+   *
+   * Not rate-limited, as the job menu is not: one request, the job list.
+   */
+  private async pointsChoices(page = 1): Promise<Reply> {
+    const { server, jobs, unavailable, pending } = await this.estate.pointsChoices();
+    if (!jobs) return { lines: [unavailable ?? '⚠️ Veeam не ответил.'], markup: mainKeyboard() };
+    if (!jobs.length) {
+      return { lines: [`🗂 <b>Точки восстановления · ${escapeHtml(server)}</b>`, '', 'На этом сервере нет заданий.'], markup: mainKeyboard() };
+    }
+    const counted = (['critical', 'warning', 'notice'] as const)
+      .map((mark) => [mark, jobs.filter((job) => job.mark === mark).length] as const)
+      .filter(([, count]) => count)
+      .map(([mark, count]) => `${POINTS_MARK[mark]} ${count}`);
+    const { at, pages } = jobPage(jobs.length, page);
+    return {
+      lines: [
+        `🗂 <b>Точки восстановления · ${escapeHtml(server)}</b> — ${jobs.length}`,
+        '',
+        pending
+          ? `${escapeHtml(pending)} Пока задания — по алфавиту.`
+          : counted.length
+            ? `Нужно внимание: ${counted.join(' · ')}.`
+            : '🟢 Внимание не нужно ни одному.',
+        '',
+        'Выберите задание кнопкой под полем ввода — придёт PDF по его точкам: сначала те, кому нужно внимание, как в 🛡, дальше по алфавиту.',
+        ...(pages > 1 ? [`Страница ${at} из ${pages}.`] : []),
+        'Другой сервер — «🖥 Серверы». По части имени — <code>/points часть имени</code>.',
+      ],
+      markup: pointsMenu(jobs, at),
     };
   }
 
@@ -564,8 +610,9 @@ export class TelegramCommandsService implements Answers {
   private async reading(
     ask: () => Promise<Answer>,
     tail: ButtonRow = [],
+    asked?: Asked,
   ): Promise<Reply> {
-    return this.tooSoon() ?? this.answered(ask, tail);
+    return this.tooSoon() ?? this.answered(ask, tail, asked);
   }
 
   /** The rate limit on reads: what is said when it holds, and otherwise it is armed. */
@@ -580,10 +627,13 @@ export class TelegramCommandsService implements Answers {
     return undefined;
   }
 
-  /** The Answer to `ask` and what it lets somebody do next, or why there is none. */
-  private async answered(ask: () => Promise<Answer>, tail: ButtonRow = []): Promise<Reply> {
+  /**
+   * The Answer to `ask` and what it lets somebody do next, or why there is
+   * none; and the one it says is coming, said to `asked`'s chat once made.
+   */
+  private async answered(ask: () => Promise<Answer>, tail: ButtonRow = [], asked?: Asked): Promise<Reply> {
     try {
-      return this.offered(await ask(), tail);
+      return this.offered(await ask(), tail, asked);
     } catch (error) {
       this.logger.error(`Telegram command failed: ${(error as Error).message}`);
       return {
@@ -601,15 +651,19 @@ export class TelegramCommandsService implements Answers {
    * text: a button has to address a job, and the name printed in the message
    * is not an address.
    */
-  private offered(answer: Answer, tail: ButtonRow): Reply {
+  private offered(answer: Answer, tail: ButtonRow, asked?: Asked): Reply {
     const lines = [answer.text];
-    // A file is its own next step: nothing to press under it.
-    if (answer.document) return { lines, document: answer.document };
     const points = answer.about === 'points';
+    // An answer about one job offers it again — its points' file too: ask
+    // again, or open its card.
     if (answer.jobId) {
       const markup = points ? pointsKeyboard(answer.jobId, answer.server) : cardKeyboard(answer.jobId, answer.server);
-      return { lines, markup };
+      return { lines, markup, ...(answer.document ? { document: answer.document } : {}) };
     }
+    // Any other file is its own next step: nothing to press under it.
+    if (answer.document) return { lines, document: answer.document };
+    // Said to be coming: the answer that follows offers what it offers.
+    if (answer.later) return { lines, ...(asked ? { later: this.sending(asked, answer.later) } : {}) };
     if (answer.jobs && answer.jobs.length > 0) {
       return { lines, markup: jobsKeyboard(answer.jobs, tail, answer.server, points ? 'points' : 'job') };
     }

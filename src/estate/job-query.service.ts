@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { Clock } from '../telegram/time';
@@ -13,13 +12,13 @@ import { retryWindowOf, runsOf } from './runs';
 import { BackupEvidenceService } from './backup-evidence.service';
 import { addressable, summarise } from './digest';
 import { isBadResult, isDisabled } from './job-state';
-import { JobChoice, jobChoicesOf } from './job-choices';
+import { JobChoice, jobChoicesOf, PointsChoice, pointsChoicesOf } from './job-choices';
 import { JobCard, machinesOf, matchJob, renderChoices, renderJobCard, settingsOf } from './job-card';
 import { FailedObject, JobReads, JobSession, RECENT_SESSIONS } from './job-reads';
-import { RetainedRun } from './evidence';
-import { assessProtection, judgementOf, standingsOf, thresholdsOf } from './job-standing';
-import { PointsCard, renderPointsCard } from './points-card';
-import { PointSizes, sizesOf } from './points-sizes';
+import { assessProtection, standingsOf, thresholdsOf } from './job-standing';
+
+/** What a job's Button says when the job it addresses is no longer there. */
+const GONE = '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.';
 
 /**
  * Reads one job on demand without changing the background monitor's health.
@@ -28,7 +27,6 @@ import { PointSizes, sizesOf } from './points-sizes';
  * the server whose reader and Evidence it was handed.
  */
 export class JobQueryService {
-  private readonly logger = new Logger(JobQueryService.name);
   private readonly config: AppConfig['telegram'];
 
   constructor(
@@ -101,15 +99,8 @@ export class JobQueryService {
    * between the message and the press.
    */
   async describeJobById(id: string): Promise<Answer> {
-    const read = await this.jobsNow();
-    if (!read.ok) return { text: read.message };
-    const job = read.jobs.find((candidate) => candidate.id === id);
-    if (!job) {
-      return {
-        text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.',
-      };
-    }
-    return this.cardAnswer(job);
+    const found = await this.jobById(id);
+    return 'job' in found ? this.cardAnswer(found.job) : found.answer;
   }
 
   private async cardAnswer(job: Job): Promise<Answer> {
@@ -120,100 +111,65 @@ export class JobQueryService {
   }
 
   /**
-   * One job's restore points, named approximately — /job's search, answered
-   * from the Evidence rather than from the job's sessions.
-   *
-   * Asked without a name, it offers the jobs whose points are behind their
-   * rhythm, past a scheduled Full or too new to judge, which is what "show me
-   * the points" most often means.
+   * The job somebody asks the points of, named approximately — /job's search
+   * — or what is said instead. Asked without a name, it offers the jobs 🛡
+   * lists, in 🛡's order, which is what "show me the points" most often
+   * means; a name several jobs share offers each of them, never a guess.
    */
-  async describePoints(query: string): Promise<Answer> {
+  async pointsOf(query: string): Promise<{ job: Job } | { answer: Answer }> {
     const read = await this.jobsNow();
-    if (!read.ok) return { text: read.message };
+    if (!read.ok) return { answer: { text: read.message } };
 
     if (!query.trim()) {
       const needing = this.needingAttention(read.jobs);
       return {
-        text: [
-          '🔎 <b>Укажите задание</b>',
-          '',
-          'Например: <code>/points OPS_Exchange</code>',
-          'Имя можно писать частями и в любом регистре: <code>/points kingston db</code>',
-          '',
-          needing.length > 0
-            ? 'Или выберите из тех, которым нужно внимание:'
-            : 'Сейчас все задания в порядке.',
-        ].join('\n'),
-        jobs: needing.map(({ id, name }) => ({ id, name })),
-        about: 'points',
+        answer: {
+          text: [
+            '🔎 <b>Укажите задание</b>',
+            '',
+            'Например: <code>/points OPS_Exchange</code>',
+            'Имя можно писать частями и в любом регистре: <code>/points kingston db</code>',
+            '',
+            needing.length > 0
+              ? 'Или выберите из тех, которым нужно внимание:'
+              : 'Сейчас все задания в порядке.',
+          ].join('\n'),
+          jobs: needing.map(({ id, name }) => ({ id, name })),
+          about: 'points',
+        },
       };
     }
 
     const match = matchJob(read.jobs, query);
     if (match.found === 'none') {
       return {
-        text: [
-          `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
-          '',
-          `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
-        ].join('\n'),
+        answer: {
+          text: [
+            `🔎 <b>Задание «${escapeHtml(query)}» не найдено</b>`,
+            '',
+            `Просмотрено ${read.jobs.length}. Достаточно любой части имени — проверьте, не опечатка ли.`,
+          ].join('\n'),
+        },
       };
     }
     if (match.found === 'many') {
       return {
-        text: renderChoices(match.jobs, query),
-        jobs: match.jobs.map(({ id, name }) => ({ id, name })),
-        about: 'points',
+        answer: {
+          text: renderChoices(match.jobs, query),
+          jobs: match.jobs.map(({ id, name }) => ({ id, name })),
+          about: 'points',
+        },
       };
     }
-    return this.pointsAnswer(match.job);
+    return { job: match.job };
   }
 
-  /** The same, addressed by id: what a /points Button presses. */
-  async describePointsById(id: string): Promise<Answer> {
+  /** The job a Button addressed by id, or what is said when it is gone. */
+  async jobById(id: string): Promise<{ job: Job } | { answer: Answer }> {
     const read = await this.jobsNow();
-    if (!read.ok) return { text: read.message };
+    if (!read.ok) return { answer: { text: read.message } };
     const job = read.jobs.find((candidate) => candidate.id === id);
-    if (!job) {
-      return {
-        text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.',
-      };
-    }
-    return this.pointsAnswer(job);
-  }
-
-  private async pointsAnswer(job: Job): Promise<Answer> {
-    const evidence = this.evidence.evidence;
-    let card: PointsCard;
-    if (evidence.status === 'ready') {
-      // By the verdict 🛡 lists the job by, so the two cannot disagree about it.
-      const { byRuns, ...judged } = judgementOf(job, evidence, this.clock(), thresholdsOf(this.config));
-      card = {
-        name: job.name,
-        ...judged,
-        sizes: judged.points ? await this.sizesOf(evidence.backupsByJob.get(job.id) ?? [], judged.points.retained ?? []) : undefined,
-        elsewhere: byRuns,
-      };
-    } else {
-      card = { name: job.name, unavailable: evidence.reason };
-    }
-    return { text: renderPointsCard(card, this.clock()), jobId: job.id, about: 'points' };
-  }
-
-  /**
-   * What a job's points take up, from its backups' files: a request per
-   * backup, asked only when somebody asks about the job, never by the scan.
-   * Never throws: a card without sizes is still the answer.
-   */
-  private async sizesOf(backups: readonly string[], runs: RetainedRun[]): Promise<PointSizes | undefined> {
-    if (backups.length === 0) return undefined;
-    try {
-      const files = await Promise.all(backups.map((backup) => this.reader.backupFiles(backup)));
-      return sizesOf(files.flat(), runs);
-    } catch (error) {
-      this.logger.warn(`Backup files could not be read: ${(error as Error).message}`);
-      return undefined;
-    }
+    return job ? { job } : { answer: { text: GONE } };
   }
 
   /** The jobs 🛡 lists, in its order: the worst first. */
@@ -230,6 +186,18 @@ export class JobQueryService {
     return risks.map(({ id, name }) => ({ id, name }));
   }
 
+  /**
+   * Every job by 🛡's verdict, for the points menu: one request, the job
+   * list, judged by the Evidence already read — or, while there is none,
+   * every job by name and why.
+   */
+  async pointsChoices(): Promise<{ ok: true; jobs: PointsChoice[]; pending?: string } | { ok: false; message: string }> {
+    const read = await this.jobsNow();
+    if (!read.ok) return read;
+    const evidence = this.evidence.evidence;
+    const jobs = pointsChoicesOf(read.jobs, evidence, this.clock(), thresholdsOf(this.config));
+    return evidence.status === 'ready' ? { ok: true, jobs } : { ok: true, jobs, pending: evidence.reason };
+  }
 
   /** Every job, for the job menu: one request, the job list. */
   async choices(): Promise<{ ok: true; jobs: JobChoice[] } | { ok: false; message: string }> {

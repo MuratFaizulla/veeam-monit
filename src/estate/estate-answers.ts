@@ -3,8 +3,9 @@ import { aboutServer, escapeHtml, renderEvent } from '../telegram/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { Answer } from './answer';
 import { addressable, digestEvent, summarise } from './digest';
-import { JobChoice } from './job-choices';
+import { JobChoice, PointsChoice } from './job-choices';
 import { JobReports } from './job-reports';
+import { PointsReports } from './points-reports';
 import { ReportChoices, RepositoryReports } from './repository-reports';
 import { ServerEstate, ServerEstates, workingOn } from './server-estates';
 
@@ -15,6 +16,17 @@ export interface JobChoices {
   /** Undefined when they could not be read; `unavailable` says why, in HTML. */
   jobs?: JobChoice[];
   unavailable?: string;
+}
+
+/** The Selected server's jobs by 🛡's verdict, for the points menu. */
+export interface PointsChoices {
+  /** The server's name. */
+  server: string;
+  /** Undefined when they could not be read; `unavailable` says why, in HTML. */
+  jobs?: PointsChoice[];
+  unavailable?: string;
+  /** Why they are not judged yet: the Evidence is pending. */
+  pending?: string;
 }
 
 /**
@@ -47,6 +59,7 @@ export class EstateAnswers {
     private readonly store: TelegramStateStore,
     private readonly reports: RepositoryReports,
     private readonly jobReports: JobReports,
+    private readonly pointsReports: PointsReports,
   ) {
     this.named = estates.all.length > 1;
   }
@@ -104,16 +117,30 @@ export class EstateAnswers {
     return read.ok ? { server: estate.name, jobs: read.jobs } : { server: estate.name, unavailable: read.message };
   }
 
-  /** A job's restore points on the Selected server, named as for `describeJob`. */
+  /**
+   * A job's restore points on the Selected server, named as for
+   * `describeJob`: said at once to be coming, and the PDF `later` — or the
+   * choices, when the name is none or several jobs share it.
+   */
   async describePoints(query: string): Promise<Answer> {
     const estate = asked(this.estates, this.store);
-    return about(estate, await estate.jobs.describePoints(query), this.named);
+    const found = await estate.jobs.pointsOf(query);
+    return about(estate, 'job' in found ? this.pointsReports.asked(estate, found.job) : found.answer, this.named);
   }
 
   /** A job's restore points for a Button that addressed it, as for `describeJobById`. */
   async describePointsById(id: string, server?: string): Promise<Answer> {
     const estate = asked(this.estates, this.store, server);
-    return about(estate, await estate.jobs.describePointsById(id), this.named);
+    const found = await estate.jobs.jobById(id);
+    return about(estate, 'job' in found ? this.pointsReports.asked(estate, found.job) : found.answer, this.named);
+  }
+
+  /** Every job on the Selected server by 🛡's verdict, the worst first, for the points menu. */
+  async pointsChoices(): Promise<PointsChoices> {
+    const estate = asked(this.estates, this.store);
+    const read = await estate.jobs.pointsChoices();
+    if (!read.ok) return { server: estate.name, unavailable: read.message };
+    return { server: estate.name, jobs: read.jobs, ...(read.pending ? { pending: read.pending } : {}) };
   }
 
   /**

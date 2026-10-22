@@ -15,7 +15,7 @@ export interface Answer {
    * job it was labelled with.
    */
   server?: string;
-  /** A file the answer is, with `text` as its caption: the Repository report's PDF. */
+  /** A file the answer is, with `text` as its caption: a report's PDF. */
   document?: AnswerDocument;
   /**
    * The Answer this one says is coming: a report, read and printed once this
