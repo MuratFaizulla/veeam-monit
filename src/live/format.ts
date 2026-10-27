@@ -1,6 +1,7 @@
 import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
 import { dayKey, dayOf, duration, Clock, moment, plural, stampOf, timeOnly } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
+import { RunWrites } from '../estate/full-schedule';
 import { ScheduledRun } from '../estate/schedule-planner';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
@@ -366,6 +367,14 @@ export const renderRunning = (running: LiveRunning, clock: Clock): string => {
  * Today's schedule
  * ------------------------------------------------------------------ */
 
+/** What a start writes, as 📅 says it; a Full in bold, being the night's heavy run. */
+const WRITES: Record<RunWrites, string> = {
+  active: '<b>Full</b>',
+  synthetic: '<b>Synthetic Full</b>',
+  first: '<b>первый Full</b>',
+  increment: '<i>инкремент</i>',
+};
+
 export const renderSchedule = (schedule: LiveSchedule, clock: Clock): string => {
   if (schedule.unavailable) {
     return truncate(
@@ -403,8 +412,8 @@ export const renderSchedule = (schedule: LiveSchedule, clock: Clock): string => 
         '',
       ];
       for (const run of runs.slice(0, shown)) {
-        const kind = run.scheduleKind ? ` <i>· ${escapeHtml(run.scheduleKind)}</i>` : '';
-        lines.push(`${timeOnly(run.at, clock)} · ${escapeHtml(run.name)}${kind}`);
+        const writes = run.writes ? ` · ${WRITES[run.writes]}` : '';
+        lines.push(`${timeOnly(run.at, clock)} · ${escapeHtml(run.name)}${writes}`);
       }
       const rest = runs.length - shown;
       if (rest > 0) {

@@ -6,6 +6,7 @@ import { Job, WorkingSessions } from '../veeam/estate';
 import { VeeamServer } from '../veeam/servers';
 import { VeeamSession } from '../veeam/types';
 import { Evidence } from '../estate/evidence';
+import { startWrites } from '../estate/full-schedule';
 import { ProtectionSnapshot, Standings, assessProtection, standingsOf, thresholdsOf } from '../estate/job-standing';
 import { isDisabled, isRunningNow } from '../estate/job-state';
 import { RepositoryCapacity } from '../estate/repository-capacity';
@@ -178,10 +179,16 @@ export class LiveSnapshotsService {
         unavailable: 'Расписание не удалось прочитать: Veeam не ответил на этот цикл.',
       };
     }
+    if (evidence.status !== 'ready') return { upcoming: upcomingRuns(jobs), next: upcomingRuns(jobs)[0] ?? null };
+    const writes = (jobId: string, at: number) => {
+      const fulls = evidence.fullsByJob.get(jobId);
+      // A replica's points, a file share's, a tape's are not on disk here to
+      // say whether its chain has begun.
+      if (!fulls || evidence.provenByRuns.has(jobId)) return undefined;
+      return startWrites(fulls, evidence.depthByJob.get(jobId)?.retained.at(-1), at, clock.timezone);
+    };
     return {
-      upcoming: evidence.status === 'ready'
-        ? todayRuns(jobs, evidence.schedulesByJob, clock.now, clock.timezone)
-        : upcomingRuns(jobs),
+      upcoming: todayRuns(jobs, evidence.schedulesByJob, clock.now, clock.timezone, writes),
       next: upcomingRuns(jobs)[0] ?? null,
     };
   }

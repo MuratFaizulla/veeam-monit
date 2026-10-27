@@ -546,13 +546,52 @@ test('the planner keeps only today and excludes manual or disabled jobs', () => 
     ['disabled', { runAutomatically: true, daily: { isEnabled: true, days: ['tuesday'] } }],
   ]);
 
-  const runs = todayRuns(jobs, schedules, now, 'Asia/Qyzylorda');
+  const runs = todayRuns(jobs, schedules, now, 'Asia/Qyzylorda', (jobId) => (jobId === 'daily' ? 'active' : undefined));
   assert.equal(runs.filter((run) => run.name === 'Daily').length, 1);
   assert.equal(runs.filter((run) => run.name === 'Tue Thu').length, 1);
   assert.equal(runs.filter((run) => run.name === 'Monthly').length, 0);
   assert.ok(!runs.some((run) => run.name === 'Manual'));
   assert.ok(!runs.some((run) => run.name === 'Disabled'));
-  assert.equal(runs.find((run) => run.name === 'Daily').scheduleKind, 'ежедневно');
+  assert.equal(runs.find((run) => run.name === 'Daily').writes, 'active');
+  assert.ok(!('writes' in runs.find((run) => run.name === 'Tue Thu')), 'a job nobody can tell about says nothing');
+});
+
+test('📅 says whether a start writes a Full or an increment', () => {
+  const { startWrites } = require('../dist/estate/full-schedule');
+  const { renderSchedule } = require('../dist/live/format');
+  const saturdays = [{ kind: 'active', weekdays: [6] }];
+  const sundays = [{ kind: 'synthetic', weekdays: [0] }];
+  const at = (iso) => Date.parse(iso);
+  const friday = { at: at('2026-09-18T22:00:00Z'), full: false };
+
+  // Saturday is 19.09: the Full the settings owe, and an increment on the other days.
+  assert.equal(startWrites(saturdays, friday, at('2026-09-19T22:00:00Z'), 'UTC'), 'active');
+  assert.equal(startWrites(saturdays, friday, at('2026-09-21T22:00:00Z'), 'UTC'), 'increment');
+  assert.equal(startWrites(sundays, friday, at('2026-09-20T22:00:00Z'), 'UTC'), 'synthetic');
+  assert.equal(startWrites([], friday, at('2026-09-19T22:00:00Z'), 'UTC'), 'increment');
+  // Veeam takes the day's Full once: a second start that Saturday adds to it.
+  assert.equal(startWrites(saturdays, { at: at('2026-09-19T01:00:00Z'), full: true }, at('2026-09-19T22:00:00Z'), 'UTC'), 'increment');
+  // The day is the server's: 20:00 UTC on Saturday is already Sunday in Qyzylorda.
+  assert.equal(startWrites(saturdays, friday, at('2026-09-19T20:00:00Z'), 'Asia/Qyzylorda'), 'increment');
+  // Nothing on disk yet: the chain begins with a Full, whatever the day.
+  assert.equal(startWrites(saturdays, undefined, at('2026-09-21T22:00:00Z'), 'UTC'), 'first');
+
+  const text = renderSchedule(
+    {
+      upcoming: [
+        { name: 'OPS_vCloud_vcd02', at: '2026-09-19T20:00:00.000Z', writes: 'increment' },
+        { name: 'SQL Daily Backup', at: '2026-09-19T21:00:00.000Z', writes: 'active' },
+        { name: 'OPS_New', at: '2026-09-19T22:00:00.000Z', writes: 'first' },
+        { name: 'OPS_Replica', at: '2026-09-19T23:00:00.000Z' },
+      ],
+    },
+    { now: new Date('2026-09-19T12:00:00Z'), timezone: 'UTC' },
+  );
+  assert.match(text, /20:00 · OPS_vCloud_vcd02 · <i>инкремент<\/i>/);
+  assert.match(text, /21:00 · SQL Daily Backup · <b>Full<\/b>/);
+  assert.match(text, /22:00 · OPS_New · <b>первый Full<\/b>/);
+  assert.match(text, /23:00 · OPS_Replica\n/);
+  assert.ok(!/ежедневно|по выбранным дням/.test(text));
 });
 
 test('a cycle Veeam did not answer leaves the schedule honest about it', async () => {

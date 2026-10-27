@@ -1,5 +1,6 @@
 import { fromServerClock, Job } from '../veeam/estate';
 import { VeeamBackupWindow, VeeamSchedule } from '../veeam/types';
+import type { RunWrites } from './full-schedule';
 import { isDisabled } from './job-state';
 
 /**
@@ -8,7 +9,7 @@ import { isDisabled } from './job-state';
  * `timetableOf` is the one reading of `daily`, `monthly` and `periodically`.
  * The starts a schedule owes (`scheduledStarts`, which the Job report counts
  * its missed starts against), the words the Job card and the reports say it
- * in, 📅's kind of schedule and the Repository report's chart all ask it, and
+ * in and the Repository report's chart all ask it, and
  * a Full's day of the month is read by the same rule. The model used to be
  * read four times: here twice, by the Repository report for its chart, and by
  * the Job report for its missed starts — daily ones only, with a weekday table
@@ -258,10 +259,10 @@ const atOf = (minute: number | undefined): string =>
  * The schedule in one line: "пн, ср, пт в 03:12", "ежедневно в 22:00",
  * "только вручную".
  *
- * Said from the one reading, like 📅's shorter `scheduleKind` below: a
- * reading of `dailyKind` living next to a renderer would be another copy of a
- * rule that already exists twice in Veeam's own UI. A copy of its own said a
- * job on the fourth Saturday ran on the 1st, the date Veeam fills in beside it.
+ * Said from the one reading: a reading of `dailyKind` living next to a
+ * renderer would be another copy of a rule that already exists twice in
+ * Veeam's own UI. A copy of its own said a job on the fourth Saturday ran on
+ * the 1st, the date Veeam fills in beside it.
  */
 export const describeSchedule = (schedule: VeeamSchedule | undefined): string | undefined => {
   const timetable = timetableOf(schedule);
@@ -305,25 +306,6 @@ export const describeRetry = (schedule: VeeamSchedule | undefined): string | und
   return count ? `${count} раза${wait}` : `включён${wait}`;
 };
 
-/** "ежедневно", "по рабочим дням": how the schedule is set, for 📅. */
-const scheduleKind = (schedule: VeeamSchedule | undefined): string | undefined => {
-  const timetable = timetableOf(schedule);
-  switch (timetable?.kind) {
-    case 'daily':
-      return timetable.days === 'every' ? 'ежедневно' : timetable.days === 'weekdays' ? 'по рабочим дням' : 'по выбранным дням';
-    case 'monthly':
-      return 'ежемесячно';
-    case 'periodic':
-      return 'периодически';
-    case 'continuous':
-      return 'непрерывно';
-    case 'after':
-      return 'после другой задачи';
-    default:
-      return undefined;
-  }
-};
-
 /* ------------------------------------------------------------------ *
  * 📅
  * ------------------------------------------------------------------ */
@@ -333,16 +315,25 @@ export interface ScheduledRun {
   name: string;
   /** ISO instant of the next scheduled start. */
   at: string;
-  /** "ежедневно", "по рабочим дням" — how the schedule is set, not a Cadence. */
-  scheduleKind?: string;
+  /**
+   * A Full or an increment, which is what an operator plans a night by; how
+   * the schedule is set says nothing about the load. Absent for a job that
+   * keeps no chain the scan reads, a replica among them.
+   */
+  writes?: RunWrites;
 }
 
-/** Today's authoritative nextRun values, checked against each job's config. */
+/**
+ * Today's authoritative nextRun values, checked against each job's config.
+ * `writes` says what a start writes; the Full schedules it reads are not this
+ * module's to know.
+ */
 export const todayRuns = (
   jobs: Job[],
   schedules: ReadonlyMap<string, VeeamSchedule>,
   now: Date,
   timezone: string,
+  writes: (jobId: string, at: number) => RunWrites | undefined,
 ): ScheduledRun[] => {
   const today = dayIn(now.getTime(), timezone);
   return jobs
@@ -353,10 +344,11 @@ export const todayRuns = (
       if (dayIn(at, timezone) !== today) return [];
       const schedule = schedules.get(job.id);
       if (schedule?.runAutomatically === false) return [];
+      const kind = writes(job.id, at);
       return [{
         name: job.name,
         at: new Date(at).toISOString(),
-        scheduleKind: scheduleKind(schedule),
+        ...(kind ? { writes: kind } : {}),
       }];
     })
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));

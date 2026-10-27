@@ -104,6 +104,29 @@ export const nextFullDay = (
 export const isFullDay = (schedules: FullSchedule[], day: number): boolean =>
   schedules.some((schedule) => isOwed(schedule, day));
 
+/** What one start of a job writes: either kind of Full, a job's first Full, or an increment. */
+export type RunWrites = FullSchedule['kind'] | 'first' | 'increment';
+
+/**
+ * What a job's start at `at` writes, for 📅.
+ *
+ * The Full its settings owe that day, unless the newest run on disk already
+ * wrote that day's — Veeam takes it once, with the first run of the day, as
+ * /points reads it too. A job with nothing on disk begins its chain with a
+ * Full whatever the day, which is how a job moved to another server starts.
+ */
+export const startWrites = (
+  schedules: FullSchedule[],
+  newest: { at: number; full?: boolean } | undefined,
+  at: number,
+  timezone: string,
+): RunWrites => {
+  if (!newest) return 'first';
+  const day = dayIn(at, timezone);
+  if (newest.full === true && dayIn(newest.at, timezone) === day) return 'increment';
+  return schedules.find((schedule) => isOwed(schedule, day))?.kind ?? 'increment';
+};
+
 /** Whether `schedule` owes a Full on `day`, a `Date.UTC` midnight. */
 const isOwed = (schedule: FullSchedule, day: number): boolean => {
   if (schedule.weekdays) return schedule.weekdays.includes(new Date(day).getUTCDay());
