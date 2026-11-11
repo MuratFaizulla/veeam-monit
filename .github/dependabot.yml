@@ -24,6 +24,17 @@ updates:
       # overrides in package.json stand in for it until then.
       - dependency-name: "@nestjs/*"
         update-types: ["version-update:semver-major"]
+      # Each is tied to something else here, so its major is not an update
+      # either: the types of Node to the Node the image runs (22), the types
+      # of Express to the Express Nest 10 carries (4), and TypeScript to the
+      # Nest 10 CLI that builds with it. Offered together they failed CI for
+      # a month with nothing to merge.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/express"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
