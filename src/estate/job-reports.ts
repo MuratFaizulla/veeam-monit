@@ -9,12 +9,19 @@ import { JOB_REPORT_DAYS, JobReading, jobReportOf } from './job-report';
 import { judgementOf, ProtectionThresholds, thresholdsOf } from './job-standing';
 import { printedAnswer, STATUS_ICON, STATUS_WORD } from './report-envelope';
 import { ReportPrinter } from './report-printer';
-import { jobsWriting, writesTo } from './repository-writers';
+import { jobsWriting, ReportJob, writesTo } from './repository-writers';
 import { ServerEstate } from './server-estates';
 import { jobReportPage } from './job-report-page';
 import { sessionReportOf } from './session-report';
 
 const DAY = 86_400_000;
+/**
+ * Who writes where is kept this long for a server: every job's settings are
+ * its slowest read by far — six to eight seconds of a report's ten on a
+ * server of a hundred jobs — and a job moves to another repository a few
+ * times a year.
+ */
+const WRITERS_FRESH_MS = 30 * 60_000;
 
 /**
  * The Job report, read and printed when somebody presses its Button under a
@@ -31,6 +38,8 @@ export class JobReports {
   private readonly logger = new Logger(JobReports.name);
   private readonly timezone: string;
   private readonly thresholds: ProtectionThresholds;
+  /** Each server's jobs and where they write, as last read. */
+  private readonly writers = new Map<string, { at: number; jobs: Promise<ReportJob[]> }>();
 
   constructor(
     config: ConfigService,
@@ -51,7 +60,7 @@ export class JobReports {
       text: [
         '⏳ <b>Готовлю отчёт по заданию</b>',
         '',
-        `Читаю запуски и машины за ${JOB_REPORT_DAYS} дней — это 20–30 секунд.`,
+        `Читаю запуски и машины за ${JOB_REPORT_DAYS} дней — это около 10 секунд.`,
         'PDF придёт сюда, а бот пока отвечает на другие команды.',
       ].join('\n'),
       later: () => this.answer(estate, id),
@@ -60,7 +69,7 @@ export class JobReports {
 
   /** The report on job `id` of `estate`, as a PDF; a job that is gone is said so. */
   async answer(estate: ServerEstate, id: string): Promise<Answer> {
-    const reading = await readJob(estate, id, Date.now(), this.timezone, this.thresholds);
+    const reading = await readJob(estate, id, Date.now(), this.timezone, this.thresholds, JOB_REPORT_DAYS, () => this.writersOf(estate));
     if (!reading) return { text: '🔎 <b>Это задание больше не найдено</b>\n\nВозможно, его удалили или переименовали.' };
     if (reading.error) this.logger.warn(`Job report: ${estate.name} ${reading.job.name} read in part: ${reading.error}`);
     const report = jobReportOf(reading, this.timezone);
@@ -78,6 +87,27 @@ export class JobReports {
       this.timezone,
     );
   }
+
+  /**
+   * A Job card of `estate` was asked for, and its report may be next: who
+   * writes where begins to be read now, so that it is there by the time the
+   * Button under the card is pressed. Never throws, and waits for nothing.
+   */
+  expect(estate: ServerEstate): void {
+    void this.writersOf(estate).catch(() => undefined);
+  }
+
+  /** The jobs of `estate` and where they write: read once for the reports asked within half an hour, and again after a read that failed. */
+  private writersOf(estate: ServerEstate): Promise<ReportJob[]> {
+    const kept = this.writers.get(estate.name);
+    if (kept && Date.now() - kept.at < WRITERS_FRESH_MS) return kept.jobs;
+    const jobs = jobsWriting(estate.reader);
+    this.writers.set(estate.name, { at: Date.now(), jobs });
+    jobs.catch(() => {
+      if (this.writers.get(estate.name)?.jobs === jobs) this.writers.delete(estate.name);
+    });
+    return jobs;
+  }
 }
 
 /**
@@ -87,6 +117,10 @@ export class JobReports {
  * the server's Evidence's, judged against `now` by `thresholds` as 🛡 judges
  * them; while there is none, why not. What else could not be read, of the
  * month or beside it, is said in `error`, and the rest is kept.
+ *
+ * What does not wait for the job's month is asked beside it, not after: the
+ * repositories, the backups, and who writes where — `writers`, the caller's
+ * to keep between reports.
  */
 export const readJob = async (
   estate: Pick<ServerEstate, 'name' | 'reader' | 'reads' | 'evidence'>,
@@ -95,10 +129,19 @@ export const readJob = async (
   timezone: string,
   thresholds: ProtectionThresholds,
   days = JOB_REPORT_DAYS,
+  writers: () => Promise<ReportJob[]> = () => jobsWriting(estate.reader),
 ): Promise<JobReading | undefined> => {
   const { reader } = estate;
   const job = (await reader.jobStates()).find((candidate) => candidate.id === id);
   if (!job) return undefined;
+  // Begun now, awaited where each is used; one that fails is said there, not here.
+  const early = <T>(work: Promise<T>): Promise<T> => {
+    work.catch(() => undefined);
+    return work;
+  };
+  const repositories = early(reader.repositoryStates());
+  const jobBackups = early(reader.backups());
+  const writing = early(writers());
   const { missing, ...month } = await estate.reads.historyOf(job, now - days * DAY);
   // Every restore point of the server, read again for one job, is what the scan read already.
   const scanned = estate.evidence.evidence;
@@ -115,17 +158,17 @@ export const readJob = async (
 
   const repositoryId = reading.configured?.storage?.backupRepositoryId ?? reading.configured?.jobSettings?.metadataRepositoryId;
   await step('репозиторий', async () => {
-    if (repositoryId) reading.repository = (await reader.repositoryStates()).find((repository) => repository.id === repositoryId);
+    if (repositoryId) reading.repository = (await repositories).find((repository) => repository.id === repositoryId);
   });
   await step('бэкапы', async () => {
-    const backups = (await reader.backups()).filter((backup) => backup.id && backup.jobId === id);
+    const backups = (await jobBackups).filter((backup) => backup.id && backup.jobId === id);
     // A job has a backup or two: nothing to take turns over.
     reading.files = (await Promise.all(backups.map((backup) => reader.backupFiles(backup.id as string)))).flat();
   });
   await step('соседи', async () => {
     if (!repositoryId) return;
     // A replica among them, which names the repository only in its own settings, as the Repository report has it.
-    reading.neighbours = (await jobsWriting(reader)).flatMap((other) => (other.id !== id && writesTo(other, repositoryId) ? [{ id: other.id, name: other.name }] : []));
+    reading.neighbours = (await writing).flatMap((other) => (other.id !== id && writesTo(other, repositoryId) ? [{ id: other.id, name: other.name }] : []));
     const newest = instantOf(reading.attempts[0]?.session.creationTime, timezone);
     if (newest === undefined || !reading.neighbours.length) return;
     const theirs = new Set(reading.neighbours.map((neighbour) => neighbour.id));

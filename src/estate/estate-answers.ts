@@ -98,6 +98,7 @@ export class EstateAnswers {
   /** A Job card on the Selected server for a half-remembered name, or the choices when several match. */
   async describeJob(query: string): Promise<Answer> {
     const estate = asked(this.estates, this.store);
+    this.jobReports.expect(estate);
     return about(estate, await estate.jobs.describeJob(query), this.named);
   }
 
@@ -107,6 +108,7 @@ export class EstateAnswers {
    */
   async describeJobById(id: string, server?: string): Promise<Answer> {
     const estate = asked(this.estates, this.store, server);
+    this.jobReports.expect(estate);
     return about(estate, await estate.jobs.describeJobById(id), this.named);
   }
 

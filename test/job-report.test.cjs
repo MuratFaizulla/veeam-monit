@@ -780,6 +780,47 @@ test('what could not be read, of the month or beside it, is said, and the rest i
   assert.equal(await readJob(estate, 'gone', NOW, TZ, THRESHOLDS), undefined);
 });
 
+test('who writes where is read once for the reports of a server asked within half an hour, and again after a read that failed', async () => {
+  const w = world();
+  let listed = 0;
+  let fails = false;
+  const { veeam } = edgeServer({
+    '/api/v1/jobs': () => {
+      listed += 1;
+      if (fails) throw new Error('no answer');
+      return { data: [{ id: 'j1', name: 'OPS_Edge', storage: { backupRepositoryId: 'r1' } }, { id: 'n1', name: 'OPS_Files', storage: { backupRepositoryId: 'r1' } }] };
+    },
+  });
+  const estate = { name: 'BAAS', reader: new VeeamEstateReader(veeam, monitorAccount()), reads: edgeMonth(), evidence: { evidence: edgeEvidence() } };
+  const printer = printerOf();
+  const reports = new JobReports(w.config, printer);
+
+  await reports.answer(estate, 'j1');
+  await reports.answer(estate, 'j1');
+  assert.equal(listed, 1, 'every job\'s settings are the slowest read of a report: asked once');
+  assert.match(printer.pages[1], /Кто ещё писал в BKP03[\s\S]*OPS_Files/);
+
+  // A Job card begins the read, so that the Button under it finds it done.
+  const ahead = new JobReports(w.config, printerOf());
+  ahead.expect(estate);
+  await ahead.answer(estate, 'j1');
+  assert.equal(listed, 2, 'asked when the card was, not again for the report');
+  listed = 1;
+
+  // Another server's are its own.
+  await reports.answer({ ...estate, name: 'MAIN' }, 'j1');
+  assert.equal(listed, 2);
+
+  // A read that failed is not what the next report is given.
+  const failing = new JobReports(w.config, printerOf());
+  fails = true;
+  const partial = await failing.answer(estate, 'j1');
+  assert.match(partial.text, /Прочитано не всё/);
+  fails = false;
+  const whole = await failing.answer(estate, 'j1');
+  assert.doesNotMatch(whole.text, /Прочитано не всё/);
+});
+
 test('the report says of a job what 🛡 says, on the same Evidence: its verdict, how far back it goes, its newest point', async () => {
   // OPS_Edge saved both its machines three nights running, three weeks ago;
   // the one night since failed, and the point it wrote of db-01, which failed
@@ -856,7 +897,7 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
     '⏳ <b>Готовлю отчёт по заданию</b>',
     '',
     // Its points are the last scan's: it reads none.
-    'Читаю запуски и машины за 30 дней — это 20–30 секунд.',
+    'Читаю запуски и машины за 30 дней — это около 10 секунд.',
     'PDF придёт сюда, а бот пока отвечает на другие команды.',
   ].join('\n'));
   const order = w.api.calls.map((call) => call.method).filter((method) => method === 'sendMessage' || method === 'sendDocument');
