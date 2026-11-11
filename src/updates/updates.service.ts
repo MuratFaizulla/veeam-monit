@@ -10,6 +10,9 @@ import { TelegramTopicsService } from '../telegram/topics.service';
 import { TelegramTransportService } from '../telegram/transport.service';
 import { TelegramChat, TelegramUpdate } from '../telegram/types';
 
+/** How long before a start of polling that failed is tried again. */
+const POLLING_RETRY_MS = 15_000;
+
 /**
  * How the bot hears from Telegram.
  *
@@ -202,7 +205,24 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Tried once while the bot starts, and then again until it works: a bot
+   * started while Telegram could not be reached — the host's DNS down for the
+   * minute of a deploy, as on 12.11.2026 — used to give up here, and then
+   * heard no command and no Button until somebody restarted it, long after
+   * Telegram was back.
+   */
   private async startPolling(): Promise<void> {
+    if (await this.pollingBegun()) return;
+    void (async () => {
+      while (!this.stopping) {
+        await new Promise((resolve) => setTimeout(resolve, POLLING_RETRY_MS));
+        if (this.stopping || (await this.pollingBegun())) return;
+      }
+    })();
+  }
+
+  private async pollingBegun(): Promise<boolean> {
     try {
       // getUpdates and webhooks are mutually exclusive. Removing a stale
       // webhook makes local, domain-free operation deterministic.
@@ -210,8 +230,10 @@ export class TelegramUpdatesService implements OnModuleInit, OnModuleDestroy {
       this.polling = true;
       this.logger.log('Telegram long polling enabled (no public domain required)');
       void this.pollUpdates();
+      return true;
     } catch (error) {
-      this.logger.error(`Telegram polling could not start: ${(error as Error).message}`);
+      this.logger.error(`Telegram polling could not start, trying again in ${POLLING_RETRY_MS / 1000} s: ${(error as Error).message}`);
+      return false;
     }
   }
 
