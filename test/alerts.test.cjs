@@ -92,6 +92,62 @@ test('a repository under the threshold warns, and under half of it is critical',
   assert.match(bySubject.BKP_low.title, /Repository BKP_low is low on space/);
 });
 
+/** One share as a server attaches it: Veeam's own id and name there, the folder the same. */
+const attached = (id, name, host, freePercent = 5) => ({
+  id, name, type: 'Smb', capacityGB: 4096, freeGB: freePercent * 40.96,
+  hostName: host, path: `\\\\${host}\\backup\\BKP03`,
+});
+const localDisk = (id, freePercent = 5) => ({
+  id, name: `Local_${id}`, type: 'WinLocal', capacityGB: 1000, freeGB: freePercent * 10, hostName: 'vbr', path: 'D:\\Backup',
+});
+
+test('a share attached to several servers is spoken for by the first of them, which names the others', () => {
+  const { spokenFor } = require('../dist/monitor/repository-alarms');
+  const spoken = spokenFor([
+    { name: 'AST', repositories: capacities([attached('a1', 'BKP03_1', '192.0.2.13'), localDisk('a2')]) },
+    { name: 'BAAS', repositories: capacities([attached('b1', 'BKP03', 'nas01.example.com'), localDisk('b2')]) },
+    { name: 'KB28', repositories: capacities([attached('c1', 'BKP03', '192.0.2.13')]) },
+  ]);
+
+  assert.deepEqual(spoken.map((s) => s.repositories.map((r) => r.key).sort()), [['a1', 'a2'], ['b2'], []]);
+  assert.deepEqual([...spoken[0].alsoOn], [['a1', ['BAAS', 'KB28']]], 'whatever address reaches the folder');
+  assert.equal(spoken[1].alsoOn.size, 0, 'a local disk is its server\'s own');
+});
+
+test('a server that did not answer speaks for nothing, and the next one that attaches the share does', () => {
+  const { spokenFor } = require('../dist/monitor/repository-alarms');
+  const spoken = spokenFor([
+    { name: 'AST', repositories: undefined },
+    { name: 'BAAS', repositories: capacities([attached('b1', 'BKP03', '192.0.2.13')]) },
+    { name: 'KB28', repositories: capacities([attached('c1', 'BKP03', '192.0.2.13')]) },
+  ]);
+  assert.deepEqual(spoken.map((s) => s.repositories.map((r) => r.key)), [[], ['b1'], []]);
+  assert.deepEqual([...spoken[1].alsoOn], [['b1', ['KB28']]]);
+});
+
+test('two shares that name their folder alike but differ in size stay two', () => {
+  const { spokenFor } = require('../dist/monitor/repository-alarms');
+  const spoken = spokenFor([
+    { name: 'AST', repositories: capacities([attached('a1', 'BKP03', '192.0.2.13')]) },
+    { name: 'ALM', repositories: capacities([{ ...attached('d1', 'BKP03', '198.51.100.7'), capacityGB: 20480 }]) },
+  ]);
+  assert.deepEqual(spoken.map((s) => s.repositories.map((r) => r.key)), [['a1'], ['d1']]);
+});
+
+test('the alarm of a shared repository says which other servers attach it', async () => {
+  const { sendRepositoryAlarms } = require('../dist/monitor/repository-alarms');
+  const sending = recording();
+  await sendRepositoryAlarms(
+    capacities([attached('a1', 'BKP03_1', '192.0.2.13'), localDisk('a2')]),
+    { thresholdPercent: 10, cooldownMs: 60_000 },
+    sending,
+    new Map([['a1', ['BAAS', 'KB28']]]),
+  );
+  const also = (subject) => sending.sent.find((e) => e.subject === subject).fields.find(([label]) => label === 'Also attached to')[1];
+  assert.equal(also('BKP03_1'), 'BAAS, KB28');
+  assert.equal(also('Local_a2'), undefined, 'and a field with nothing to say is not drawn');
+});
+
 test('with the threshold off, no repository raises or clears anything', async () => {
   const { sendRepositoryAlarms } = require('../dist/monitor/repository-alarms');
   const sending = recording();

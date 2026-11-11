@@ -44,7 +44,32 @@ export interface RepositoryCapacity {
    */
   freePercent?: number;
   isOnline?: boolean;
+  /**
+   * The folder it points at, as `folderKeyOf` names it: the same on every
+   * server the share is attached to. Undefined for a local disk, which is
+   * nobody's but its server's.
+   */
+  folder?: string;
 }
+
+/** The folder a repository points at, lower-cased, whatever address reaches it; undefined for a local disk. */
+export const folderOf = (path: string | undefined): string | undefined => {
+  const plain = (path ?? '').toLowerCase().replace(/[\\/]+$/, '');
+  if (plain.startsWith('\\\\')) return plain.split('\\').slice(3).join('\\') || undefined;
+  const nfs = /^nfs\d*:\/\/[^:/]+:?(\/.*)$/.exec(plain);
+  return nfs ? nfs[1].replace(/^\/+/, '') || undefined : undefined;
+};
+
+/**
+ * What tells one physical repository from another across servers: a share
+ * attached to four servers is four repositories to Veeam and one disk to
+ * everybody else. The kind of share, its folder and its size in terabytes, so
+ * two shares that happen to name a folder alike stay two.
+ */
+export const folderKeyOf = (repository: Pick<VeeamRepositoryState, 'type' | 'path' | 'capacityGB'>): string | undefined => {
+  const folder = folderOf(repository.path);
+  return folder && `${(repository.type ?? '').toLowerCase()}:${folder}:${Math.round((repository.capacityGB ?? 0) / 1024)}`;
+};
 
 export const capacityOf = (repository: VeeamRepositoryState): RepositoryCapacity => {
   const capacity = positive(repository.capacityGB);
@@ -69,6 +94,7 @@ export const capacityOf = (repository: VeeamRepositoryState): RepositoryCapacity
       capacity === undefined || used === undefined ? undefined : share(used, capacity),
     freePercent: capacity === undefined || free === undefined ? undefined : share(free, capacity),
     isOnline: repository.isOnline,
+    folder: folderKeyOf(repository),
   };
 };
 

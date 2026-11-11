@@ -10,7 +10,7 @@ import { NotificationEvent } from '../telegram/types';
 import { EventCooldowns } from '../telegram/cooldowns';
 import { capacities, RepositoryCapacity } from '../estate/repository-capacity';
 import { digestDue, digestEvent, summarise } from '../estate/digest';
-import { sendRepositoryAlarms } from './repository-alarms';
+import { sendRepositoryAlarms, spokenFor } from './repository-alarms';
 import { JobAlerts } from './job-alerts';
 import { ServerSending } from './server-sending';
 import { ServerWatch } from './server-watch';
@@ -199,6 +199,9 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       // hold up another's alerts by thirty seconds.
       const passes = await Promise.all(this.watches.map((watch) => this.pass(watch, watch === shown)));
       const pass = passes[this.watches.indexOf(shown)];
+      // After every server was read, not within each one's pass: which of
+      // them speaks for a share they all attach is known only then.
+      await this.repositoryAlarms(passes);
       // Last, so it reports what this cycle actually found — including the
       // cycles where Veeam answered nothing at all.
       await this.step(shown, 'live', () => this.publishLive(shown, pass));
@@ -328,25 +331,34 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   }
 
   private async checkRepositories(watch: Watch): Promise<RepositoryCapacity[]> {
-    let repositories: RepositoryCapacity[];
     try {
       const states = await watch.estate.reader.repositoryStates();
       // The report's menu lists them from here rather than asking again.
       this.reports.saw(watch.estate.name, states);
-      repositories = capacities(states);
+      return capacities(states);
     } catch (error) {
       this.logger.warn(
         `Repository capacity check skipped on ${watch.estate.name}: ${(error as Error).message}`,
       );
       throw error;
     }
+  }
 
-    await sendRepositoryAlarms(
-      repositories,
-      { thresholdPercent: this.config.repositoryFreePercent, cooldownMs: this.config.repositoryAlertCooldownMs },
-      watch.sending,
+  /** One alarm a repository short of space, whichever servers attach it. */
+  private async repositoryAlarms(passes: Pass[]): Promise<void> {
+    const spoken = spokenFor(
+      this.watches.map((watch, index) => ({ name: watch.estate.name, repositories: passes[index].repositories })),
     );
-    return repositories;
+    const policy = {
+      thresholdPercent: this.config.repositoryFreePercent,
+      cooldownMs: this.config.repositoryAlertCooldownMs,
+    };
+    for (const [index, watch] of this.watches.entries()) {
+      const { repositories, alsoOn } = spoken[index];
+      await this.step(watch, 'repository alarms', () =>
+        sendRepositoryAlarms(repositories, policy, watch.sending, alsoOn),
+      );
+    }
   }
 
   /** Whether this server's once-a-day roll-up is due and not yet sent. */

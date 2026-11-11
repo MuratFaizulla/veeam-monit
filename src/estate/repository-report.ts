@@ -2,6 +2,7 @@ import { ReportSite } from '../config/configuration';
 import { VeeamRepositoryState, VeeamSchedule } from '../veeam/types';
 import { plural } from '../telegram/time';
 import { Status } from './report-envelope';
+import { folderKeyOf, folderOf } from './repository-capacity';
 import { ReportJob, writesTo } from './repository-writers';
 import { Load, Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
@@ -321,13 +322,6 @@ export const planOf = (schedule: VeeamSchedule | undefined): Plan => {
   }
 };
 
-/** The folder a repository points at, lower-cased, whatever address reaches it; undefined for a local disk. */
-const folderOf = (path: string | undefined): string | undefined => {
-  const plain = (path ?? '').toLowerCase().replace(/[\\/]+$/, '');
-  if (plain.startsWith('\\\\')) return plain.split('\\').slice(3).join('\\') || undefined;
-  const nfs = /^nfs\d*:\/\/[^:/]+:?(\/.*)$/.exec(plain);
-  return nfs ? nfs[1].replace(/^\/+/, '') || undefined : undefined;
-};
 const tailOf = (folder: string): string => folder.split(/[\\/]/).pop() ?? folder;
 const bare = (name: string): string => name.toLowerCase().replace(/_\d+$/, '');
 
@@ -361,10 +355,9 @@ export const reportOf = (reading: RepositoryReading, sites: readonly ReportSite[
   for (const server of reading.servers) {
     for (const repository of server.repositories) {
       if (isDefault(repository)) continue;
-      const folder = folderOf(repository.path);
-      const key = folder
-        ? `${(repository.type ?? '').toLowerCase()}:${folder}:${Math.round((repository.capacityGB ?? 0) / 1024)}`
-        : `${server.server}:${(repository.path ?? repository.name ?? repository.id ?? '').toLowerCase()}`;
+      const key =
+        folderKeyOf(repository) ??
+        `${server.server}:${(repository.path ?? repository.name ?? repository.id ?? '').toLowerCase()}`;
       groups.set(key, [...(groups.get(key) ?? []), { server, repository }]);
     }
   }
