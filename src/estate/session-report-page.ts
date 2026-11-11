@@ -116,50 +116,55 @@ const clockOf = (at: number, timezone: string): string =>
   plain(new Intl.DateTimeFormat('en-US', { timeZone: timezone || undefined, month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(at))).replace(',', '');
 
 /* ------------------------------------------------------------------ *
- * Veeam's look: its colours, its grey rules, its bold labels
+ * A session a card: its head in the colour of how it ended
  * ------------------------------------------------------------------ */
 
 /**
  * Everything under `.vr`, so that it can share a document with the Job
  * report's first page, whose pages have no margins of their own: the
- * sessions go on pages named `sessions`, which have.
+ * sessions go on pages named `sessions`, which have. The colours are the
+ * first page's: Veeam's green, an amber and a coral.
  */
 export const SESSION_STYLE = `
 @page sessions { size: 297mm 210mm; margin: 9mm 10mm; }
 html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.vr { page: sessions; font-family: 'Inter Variable', Tahoma, sans-serif; font-size: 7.9pt; line-height: 1.3; color: #000; background: #fff; }
+.vr { page: sessions; font-family: 'Inter Variable', 'Segoe UI', sans-serif; font-size: 7.8pt; line-height: 1.32; color: #232323; background: #fff; font-feature-settings: 'tnum' 1; }
 .vr * { box-sizing: border-box; margin: 0; padding: 0; }
-.vr .vt, .vr .vf { display: flex; justify-content: space-between; color: #626365; font-size: 7.6pt; }
-.vr .vt { margin-bottom: 3mm; }
-.vr .vt b { color: #000; }
-.vr .vf { margin-top: 2mm; }
-.vr .empty { color: #626365; font-size: 10pt; padding: 10mm 0; }
-.vr .vb { margin-bottom: 5mm; }
+.vr .vt, .vr .vf { display: flex; justify-content: space-between; color: #505861; font-size: 7.4pt; }
+.vr .vt { padding-bottom: 2.2mm; margin-bottom: 3.4mm; border-bottom: 0.3mm solid #dcdee2; }
+.vr .vt b { color: #232323; }
+.vr .vf { margin-top: 2mm; color: #adacaf; }
+.vr .empty { color: #505861; font-size: 10pt; padding: 10mm 0; }
+.vr .vb { margin-bottom: 4.6mm; border: 0.3mm solid #dcdee2; border-radius: 2.4mm; overflow: hidden; }
 .vr table { width: 100%; border-collapse: collapse; }
 .vr .vh { break-after: avoid; }
-.vr .vh td { color: #fff; font-weight: 700; font-size: 11pt; height: 15mm; vertical-align: bottom; padding: 0 0 3.4mm 3.6mm; }
+.vr .vh td { font-weight: 720; font-size: 10.4pt; padding: 2.2mm 3.4mm; vertical-align: middle; background: #eef4f6; color: #232323; }
 .vr .vh-t { width: 80%; }
-.vr .vh-d { font-size: 7.9pt; margin-top: 1mm; }
-.vr .vh.ok td { background: #00b050; }
-.vr .vh.warn td { background: #ffd96c; }
-.vr .vh.bad td { background: #fb9895; }
-.vr .vh.run td { background: #7ea7d0; }
+.vr .vh-s { text-align: right; white-space: nowrap; }
+.vr .vh-d { font-size: 7.2pt; font-weight: 400; margin-top: 0.4mm; opacity: 0.92; }
+.vr .vh.ok td { background: #00d15f; color: #fff; }
+.vr .vh.bad td { background: #ff5a5f; color: #fff; }
+.vr .vh.warn td { background: #ffb224; }
+.vr .vh.run td { background: #e3eefe; }
 .vr .vi { table-layout: auto; }
 .vr .vi col.c1 { width: 46mm; }
 .vr .vi col.cv { width: 21mm; }
-.vr .vi td { border: 0.25mm solid #a7a9ac; padding: 0.5mm 0.8mm; vertical-align: top; }
+.vr .vi td { border-bottom: 0.25mm solid #f0f0f0; padding: 0.8mm 1.2mm 0.8mm 3.4mm; vertical-align: top; }
 .vr .vi tbody.keep { break-inside: avoid; }
-.vr .vi tbody.keep td:not(.note):not(.vd) { white-space: nowrap; }
+.vr .vi tbody.keep td { font-weight: 650; white-space: nowrap; }
 .vr .vi tr { break-inside: avoid; }
-.vr .vi td.vd { height: 8mm; background: #f3f4f4; color: #626365; font-size: 11pt; vertical-align: middle; padding: 1mm 0 0 3.6mm; }
-.vr .k { font-weight: 700; white-space: nowrap; }
-.vr .th td { background: #e3e3e3; font-weight: 700; border-top: none; white-space: nowrap; }
+.vr .vi td.k { font-weight: 400; color: #505861; }
+.vr .vi td.note { font-weight: 400; white-space: normal; }
+.vr .vi td.vd, .vr .vi .th td { font-size: 6.6pt; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #505861; }
+.vr .vi td.vd { padding-top: 1.8mm; border-bottom: 0.3mm solid #dcdee2; }
+.vr .vi .th td { background: #f5f7f8; }
 .vr .nw { white-space: nowrap; }
-.vr .vm { word-break: break-word; }
-.vr .note { font-size: 6.6pt; word-break: break-word; }
-.vr .dim { color: #626365; }
-.vr .st.ok { color: #00b050; }
-.vr .st.warn { color: #d9a300; }
-.vr .st.bad { color: #ff0000; }
-.vr .st.run { color: #2f6fb0; }
+.vr .vm { word-break: break-word; font-weight: 600; }
+.vr .note { font-size: 6.6pt; word-break: break-word; color: #505861; }
+.vr .dim { color: #adacaf; }
+.vr .st { font-weight: 700; }
+.vr .st.ok { color: #00d15f; }
+.vr .st.warn { color: #c77d00; }
+.vr .st.bad { color: #e63946; }
+.vr .st.run { color: #3700ff; }
 `;

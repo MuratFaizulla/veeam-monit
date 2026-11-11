@@ -252,10 +252,10 @@ test('the chain is the Evidence\'s, a day a row: a Full where most of a run\'s p
     const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
     return html.slice(html.indexOf('Цепочка на диске'));
   };
-  assert.match(quiet(), /<td class="v">13\.10<\/td><td class="v">инкремент<\/td><td class="v">4,0 ГБ<\/td><td class="v">18 ГБ<\/td>/);
-  assert.match(quiet(), /<td class="v">10\.10<\/td><td class="v">Full<\/td><td class="v">100 ГБ<\/td><td class="v">400 ГБ<\/td>/);
-  assert.match(quiet({}, []), /<td colspan="4" class="js-dim">У задания нет ни одной точки восстановления\.<\/td>/);
-  assert.match(quiet({ evidence: { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' } }), /<td colspan="4" class="js-dim">Точки восстановления ещё не прочитаны\.<\/td>/);
+  assert.match(quiet(), /<span class="nw">13\.10<\/span><span class="js-tag">инкремент<\/span>.*?<b>4,0 ГБ<\/b><\/span><span class="r nw js-dim">18 ГБ<\/span>/);
+  assert.match(quiet(), /<span class="nw">10\.10<\/span><span class="js-tag full">Full<\/span>.*?<b>100 ГБ<\/b><\/span><span class="r nw js-dim">400 ГБ<\/span>/);
+  assert.match(quiet({}, []), /<div class="js-dim">У задания нет ни одной точки восстановления\.<\/div>/);
+  assert.match(quiet({ evidence: { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' } }), /<div class="js-dim">Точки восстановления ещё не прочитаны\.<\/div>/);
 });
 
 test('who else writes to the repository is whoever was writing while the newest run was', () => {
@@ -488,13 +488,14 @@ test('the file opens with a page that says how the job stands, and the sessions 
   const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
 
   assert.equal(html.match(/<section class="js">/g).length, 1, 'one page before the sessions');
-  assert.match(html, /Задание: OPS_&lt;b&gt;Edge&lt;\/b&gt;/);
-  assert.match(html, /Сводка/);
+  assert.match(html, /Отчёт по заданию<\/div><h1>OPS_<wbr>&lt;b&gt;Edge&lt;\/b&gt;<\/h1>/);
+  // Veeam's logo heads it, inside the page like everything else on it.
+  assert.match(html, /<svg class="veeam-logo"/);
   assert.match(html, /1 из 3 машин не сохранена ни разу за 30 дней/);
   // A machine is saved by a run of the month, whatever points a failed one left of it.
-  assert.match(html, /Машины сохранены<\/td><td class="v"><span class="js-bad">2 из 3<\/span>/);
-  assert.match(html, /Не сохранены<\/td><td class="v"><span class="js-bad">1<\/span>/);
-  assert.match(html, /Откат<\/td><td class="v">на 3 точки, до 10\.10</);
+  assert.match(html, /js-tile bad"><div class="js-tk">Машины сохранены<\/div><div class="js-tv">2<small> из 3<\/small>/);
+  assert.match(html, /не сохранены: 1</);
+  assert.match(html, /откат на 3 точки, до 10\.10</);
   assert.match(html, /Запуски за 30 дней/);
   assert.match(html, /Что сделать/);
   assert.match(html, /Исключить из задания 1 служебную машину NSX/);
@@ -549,7 +550,7 @@ test('a run still going leaves "all failed" to the ones that ended, and a machin
 test('machines Veeam would not give are not called never saved, nor gone from vCenter: the page says what it could not read', () => {
   const NOT_READ = 'The Veeam server did not respond within 30000 ms';
   const page = (reading) => jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
-  const machinesOf = (html) => html.slice(html.indexOf('js-vms'), html.indexOf('</table>', html.indexOf('js-vms')));
+  const machinesOf = (html) => html.slice(html.indexOf('<table class="js-vms"'), html.indexOf('</table>', html.indexOf('<table class="js-vms"')));
 
   // Not one session's machines: every machine of the job is unknown, not unsaved.
   const none = page(edgeReading({
@@ -571,7 +572,7 @@ test('machines Veeam would not give are not called never saved, nor gone from vC
     error: `машины 2 сессий из 6: ${NOT_READ}`,
   });
   const newest = page(newestReading);
-  assert.match(machinesOf(newest), /app-01<\/td><td><div class="js-hist">(<i [^>]+><\/i>)+<\/div><\/td><td class="v"><span class="js-dim">—<\/span><\/td><td class="v"><span class="js-dim">нет сведений<\/span>/);
+  assert.match(machinesOf(newest), /app-01<\/span><\/div><\/div><\/td><td><div class="js-hist">(<i [^>]+><\/i>)+<\/div><\/td><td class="r nw"><span class="js-dim">—<\/span><\/td><td class="r nw"><span class="js-dim">нет сведений<\/span>/);
   // Last: a machine never saved is the one to look at first.
   assert.deepEqual(jobReportOf(newestReading, TZ).machines.map((machine) => machine.name), ['edge-01', 'db-01', 'web-01', 'app-01']);
   assert.doesNotMatch(newest, /ни один запуск не обработал|Найти в vCenter/);
@@ -581,8 +582,8 @@ test('machines Veeam would not give are not called never saved, nor gone from vC
     job: { id: 'j1', name: 'OPS_Replica', type: 'VSphereReplica', result: 'failed' },
     attempts: edgeReading().attempts.map(({ session }) => ({ session, unread: true })),
   }));
-  assert.match(replica, /Машины реплицированы<\/td><td class="v">—</);
-  assert.match(replica, /Без удачной<\/td><td class="v">—</);
+  assert.match(replica, /Машины реплицированы<\/div><div class="js-tv">—</);
+  assert.doesNotMatch(replica, /без удачной/);
 });
 
 test('sizes and durations are written as Veeam writes them', () => {
@@ -761,7 +762,7 @@ test('who else writes to the job\'s repository counts a replica, which names it 
   assert.deepEqual(reading.neighbourRuns.map((run) => run.jobId), ['n1', 'n2']);
   // On the page, with whoever else wrote there during the newest run.
   const html = jobReportPage(jobReportOf(reading, TZ), sessionReportOf(reading, TZ), TZ);
-  assert.match(html, /Кто ещё писал в BKP03[\s\S]*OPS_Replica[\s\S]*2 из 2 заданий/);
+  assert.match(html, /Кто ещё писал в BKP03[\s\S]*2 из 2 заданий[\s\S]*OPS_Replica/);
 });
 
 test('what could not be read, of the month or beside it, is said, and the rest is kept; a job that is gone is none', async () => {
@@ -825,9 +826,9 @@ test('the report says of a job what 🛡 says, on the same Evidence: its verdict
   assert.doesNotMatch(answer.text, /Прочитано не всё/);
   // Three moments a machine, the failed night's not among them, as /points counts them.
   const [page] = printer.pages;
-  const moment = (daysAgo) => `${dayLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)} ${timeLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)}`;
-  assert.match(page, new RegExp(`Последняя точка</td><td class="v">${moment(20)}<`));
-  assert.match(page, new RegExp(`Откат</td><td class="v">на 3 точки, до ${dayLabel(Date.parse(recent(24 * 22)), clock.timezone)}<`));
+  const moment = (daysAgo) => `${dayLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)}<small> ${timeLabel(Date.parse(recent(24 * daysAgo)), clock.timezone)}</small>`;
+  assert.match(page, new RegExp(`Последняя точка</div><div class="js-tv">${moment(20)}<`));
+  assert.match(page, new RegExp(`откат на 3 точки, до ${dayLabel(Date.parse(recent(24 * 22)), clock.timezone)}<`));
 });
 
 /* ------------------------------------------------------------------ *
@@ -870,8 +871,8 @@ test('the 📄 Button under a Job card says the report is coming, then sends it 
   assert.match(printer.pages[0], />Details</);
   // No scan has read this server's points yet: said as the Job card says it, and nothing claimed of them.
   assert.match(printer.pages[0], /<div class="js-partial">Точки восстановления ещё не прочитаны\.<\/div>/);
-  assert.match(printer.pages[0], /Последняя точка<\/td><td class="v">—<\/td>/);
-  assert.match(printer.pages[0], /Откат<\/td><td class="v">—<\/td>/);
+  assert.match(printer.pages[0], /Последняя точка<\/div><div class="js-tv">—<\/div>/);
+  assert.doesNotMatch(printer.pages[0], /откат на/);
 });
 
 test('a job\'s report Button carries its server and id within Telegram\'s 64 bytes, and reads back', () => {

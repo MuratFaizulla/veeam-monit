@@ -1,20 +1,22 @@
 import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
-import { calendarLabel, dayLabel, JobReport, JobRun, ReportMachine, sizeOf, spanOf } from './job-report';
-import { envelope, ReportDocument, stampOf, STATUS_WORD } from './report-envelope';
+import { calendarLabel, dayLabel, JobReport, JobRun, Outcome, ReportMachine, sizeOf, spanOf } from './job-report';
+import { envelope, ReportDocument, stampOf, Status, STATUS_WORD } from './report-envelope';
 import { STAGE_NAMES } from './repository-report';
 import { SessionReport } from './session-report';
 import { SESSION_STYLE, sessionsHtml } from './session-report-page';
+import { VEEAM_LOGO } from './veeam-logo';
 
 /**
  * The Job report as one HTML document for the browser to print: first a page
- * that says at a glance how the job stands — the verdict, its numbers, the
- * month of runs, what to do, its machines and who else writes where it
- * does — then every session, newest first. Both in the look of Veeam's own
- * report: a header coloured by the result, grey section bars, ruled tables,
- * Veeam's colours. The first page is in Russian, the sessions in Veeam's
- * English.
+ * that says at a glance how the job stands, then every session, newest
+ * first. The first page is a dark panel — Veeam's logo, the job, how it is
+ * set up, its last run, its repository and its Fulls — beside the verdict,
+ * five numbers, the month of runs, the machines, what to do, and who else
+ * writes where it does. In the colours veeam.com is drawn in: its green for
+ * what went well, an amber and a coral of the same strength for what did
+ * not. The first page is in Russian, the sessions in Veeam's English.
  */
 export const jobReportPage = (report: JobReport, sessions: SessionReport, timezone: string): ReportDocument => {
   const stamp = stampOf(report.at, timezone);
@@ -27,17 +29,24 @@ export const jobReportPage = (report: JobReport, sessions: SessionReport, timezo
 };
 
 /** What fits the first page by construction: the browser grows a row to its content when it prints. */
-const MACHINE_ROWS = 6;
-const STEP_ROWS = 3;
+const MACHINE_ROWS = 8;
+const STEP_ROWS = 2;
 const NEIGHBOUR_ROWS = 4;
 const ERROR_ROWS = 3;
-const CHAIN_ROWS = 5;
+const CHAIN_ROWS = 6;
 
-/** Veeam's colours, as its own report has them. */
-const COLOUR = { success: '#00b050', warning: '#e8b32c', failed: '#e8645f', none: '#8fa9c4', empty: '#e3e3e3' } as const;
-const BAND = { crit: '#fb9895', warn: '#ffd96c', ok: '#00b050', unknown: '#a7a9ac' } as const;
-/** White on Veeam's yellow does not read; its other colours keep Veeam's white. */
-const INK = { crit: '#fff', warn: '#3d3d3d', ok: '#fff', unknown: '#fff' } as const;
+/** One family: Veeam's green, and an amber and a coral as strong as it is. */
+const COLOUR = { success: '#00d15f', warning: '#ffb224', failed: '#ff5a5f', none: '#adacaf', empty: '#e9edf0' } as const;
+
+/** A state is its mark and its word, never the colour alone. */
+const MARK: Record<Status, string> = {
+  crit: `<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${COLOUR.failed}"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  warn: `<svg class="js-mk" viewBox="0 0 16 16"><path d="M8 1.2 15.4 14.2H.6z" fill="${COLOUR.warning}"/><path d="M8 6v4" stroke="#3d2a00" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="#3d2a00"/></svg>`,
+  ok: `<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${COLOUR.success}"/><path d="M4.6 8.3l2.3 2.3 4.5-4.9" stroke="#010d35" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  unknown: '<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#adacaf"/><path d="M5.4 8h5.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+};
+/** How a run ended, as the panel says its last one. */
+const RESULT: Record<Outcome, [Status, string]> = { success: ['ok', 'Успешно'], warning: ['warn', 'С предупреждением'], failed: ['crit', 'Ошибка'], none: ['unknown', 'Идёт'] };
 
 const machinesWord = (count: number) => plural(count, 'машина', 'машины', 'машин');
 const runsWord = (count: number) => plural(count, 'запуск', 'запуска', 'запусков');
@@ -49,40 +58,66 @@ export const shortName = (name: string) => name.replace(/\s\([0-9a-f]{8}-[0-9a-f
 const isReplica = (report: JobReport) => /replica/i.test(report.type ?? '');
 
 // --- The first page
-const summary = (report: JobReport, timezone: string, stamp: string): string => {
-  const replica = isReplica(report);
-  const total = report.machines.length;
-  const facts = [
-    jobTypeWord(report.type),
-    total ? `${total} ${machinesWord(total)}` : '',
-    report.repository && `репозиторий ${report.repository.short}`,
-    report.schedule,
-    report.retry && `повторы ${report.retry}`,
-    report.retention,
-    report.fulls,
-  ].filter(Boolean);
-  return `<section class="js">
-  <table class="js-hd" style="--band:${BAND[report.status]};--ink:${INK[report.status]}"><tr><td>Задание: ${esc(report.name)}<div class="js-d">${facts.map((fact) => esc(String(fact))).join(' · ')}</div></td><td class="js-s">${STATUS_WORD[report.status]}<div class="js-d">${esc(report.server)} · ${stamp} · за ${report.days} дней</div></td></tr></table>
-  <table class="js-t"><tr><td class="js-verdict">${esc(report.verdict)}.</td></tr></table>
-  ${report.partial ? `<div class="js-partial">Прочитано не всё: ${esc(report.partial.slice(0, 220))}</div>` : ''}
-  ${report.pointsUnavailable ? `<div class="js-partial">${esc(report.pointsUnavailable)}</div>` : ''}
-  <div><div class="js-band">Сводка</div>${numbers(report, timezone, replica)}</div>
-  <div class="js-two">
-    <div class="js-col">
-      <div class="js-band">Запуски за ${report.days} дней</div>
-      <div class="js-box">${chart(report, timezone)}<div class="js-legend"><span><i style="background:${COLOUR.success}"></i>успешно</span><span><i style="background:${COLOUR.warning}"></i>с предупреждением</span><span><i style="background:${COLOUR.failed}"></i>ошибка</span><span><i class="run"></i>идёт</span><span><b>×</b>не было запуска по расписанию</span></div></div>
-      <div class="js-band">Машины</div>${machinesTable(report, timezone)}
+const summary = (report: JobReport, timezone: string, stamp: string): string => `<section class="js">
+  ${side(report, timezone, stamp)}
+  <div class="js-main">
+    <div class="js-verdict ${report.status}">${esc(report.verdict)}.</div>
+    ${report.partial ? `<div class="js-partial">Прочитано не всё: ${esc(report.partial.slice(0, 220))}</div>` : ''}
+    ${report.pointsUnavailable ? `<div class="js-partial">${esc(report.pointsUnavailable)}</div>` : ''}
+    ${numbers(report, timezone, isReplica(report))}
+    <div class="js-panel"><div class="js-ph"><h3>Запуски за ${report.days} дней</h3><div class="js-legend"><span><i style="background:${COLOUR.success}"></i>успешно</span><span><i style="background:${COLOUR.warning}"></i>с предупреждением</span><span><i style="background:${COLOUR.failed}"></i>ошибка</span><span><i class="run"></i>идёт</span><span><b>×</b> не было запуска по расписанию</span>${report.usual ? `<span><i class="dash"></i>обычно ${spanOf(report.usual)}</span>` : ''}</div></div>${chart(report, timezone)}</div>
+    <div class="js-two">
+      <div class="js-panel"><h3>Машины</h3>${machinesTable(report, timezone)}</div>
+      <div class="js-col">
+        <div class="js-panel"><h3>Что сделать</h3>${stepsTable(report)}</div>
+        ${report.neighbours.jobs && report.neighbours.window ? neighboursTable(report, timezone) : report.errors.length ? errorsTable(report, timezone) : chainTable(report)}
+      </div>
     </div>
-    <div class="js-col">
-      <div class="js-band">Что сделать</div>${stepsTable(report)}
-      ${report.neighbours.jobs && report.neighbours.window ? neighboursTable(report, timezone) : report.errors.length ? errorsTable(report, timezone) : chainTable(report)}
-    </div>
+    <div class="js-next"><span>Дальше — каждая сессия за ${report.days} дней, новые сверху: цифры сессии и каждая машина с тем, что Veeam о ней написал.</span><span>1</span></div>
   </div>
-  <div class="js-next">Дальше — каждая сессия за ${report.days} дней, новые сверху: цифры сессии и каждая машина с тем, что Veeam о ней написал.</div>
 </section>`;
+
+/** The dark panel: what the job is, how it is set up, and its last run, repository and Fulls. */
+const side = (report: JobReport, timezone: string, stamp: string): string => {
+  const total = report.machines.length;
+  const { repository } = report;
+  const free = repository ? (100 * repository.freeGB) / repository.capacityGB : 0;
+  const facts: Array<[string, string | undefined | false]> = [
+    ['Тип', `${jobTypeWord(report.type)}${total ? ` · ${total} ${machinesWord(total)}` : ''}`],
+    ['Сервер', report.server],
+    ['Расписание', report.schedule],
+    ['Повторы', report.retry],
+    ['Хранение', report.retention],
+    ['Full', report.fulls],
+  ];
+  const last = report.runs.at(-1);
+  const cards: string[] = [];
+  if (last) {
+    const [status, word] = RESULT[last.result];
+    cards.push(
+      `<div class="js-sc"><div class="js-sk">Последний запуск</div><div class="js-sv">${MARK[status]}<b>${word}</b></div><div class="js-sd">${dayLabel(last.start, timezone)} в ${timeOf(last.start, timezone)} · шёл ${spanOf(last.minutes)}${last.machines ? ` · машин ${last.saved ?? 0} из ${last.machines}` : ''}${last.pieces.length > 1 ? ` · попыток ${last.pieces.length}` : ''}</div></div>`,
+    );
+  }
+  if (repository) {
+    cards.push(
+      `<div class="js-sc"><div class="js-sk">Репозиторий ${esc(repository.short)}</div><div class="js-sbar"><i class="${free < 10 ? 'crit' : free < 20 ? 'warn' : ''}" style="width:${(100 - free).toFixed(1)}%"></i></div><div class="js-sd"><b>${(repository.freeGB / 1024).toFixed(1).replace('.', ',')} ТБ</b> свободно из ${Math.round(repository.capacityGB / 1024)} ТБ · ${Math.round(free)}%${report.disk ? ` · задание занимает ${sizeOf(report.disk)}` : ''}</div></div>`,
+    );
+  }
+  if (report.lastFull || report.nextFull) {
+    cards.push(
+      `<div class="js-sc"><div class="js-sk">Полные бэкапы</div><div class="js-s2">${report.lastFull ? `<div><span>последний</span><b>${dayLabel(report.lastFull.at, timezone)}</b><small>${sizeOf(report.lastFull.disk)} на диске</small></div>` : ''}${report.nextFull ? `<div><span>следующий</span><b>${calendarLabel(report.nextFull.day)}</b><small>${report.nextFull.kind === 'synthetic' ? 'Synthetic Full' : 'Active Full'}</small></div>` : ''}</div></div>`,
+    );
+  }
+  return `<div class="js-side">
+    <div class="js-brand">${VEEAM_LOGO}<span>Backup &amp; Replication</span></div>
+    <div><div class="js-kind">Отчёт по заданию</div><h1>${esc(report.name).replace(/_/g, '_<wbr>')}</h1><div class="js-status">${MARK[report.status]}${STATUS_WORD[report.status]}</div></div>
+    <dl class="js-facts">${facts.map(([label, value]) => (value ? `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>` : '')).join('')}</dl>
+    <div class="js-cards">${cards.join('')}</div>
+    <div class="js-stamp"><span>${esc(report.server)} · за ${report.days} дней</span><span>${stamp}</span></div>
+  </div>`;
 };
 
-/** Three rows of three: what a reader asks first. A replica is told by its runs. */
+/** Five numbers: what a reader asks first. A replica is told by its runs. */
 const numbers = (report: JobReport, timezone: string, replica: boolean): string => {
   const { runs, machines } = report;
   const good = runs.filter((run) => run.result === 'success' || run.result === 'warning').length;
@@ -96,100 +131,106 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
   // Until the scan has read them, nothing is said of the points: not even that there are none.
   const unknown = !replica && report.pointsUnavailable !== undefined;
   const sent = machines.reduce((sum, machine) => sum + (machine.transferred ?? 0), 0);
-  const bad = (text: string, when: boolean) => (when ? `<span class="js-bad">${text}</span>` : text);
-  const cell = (label: string, value: string) => `<td class="k">${label}</td><td class="v">${value}</td>`;
-  const rows = [
-    [
-      cell('Запуски', bad(`${good} успешно из ${runs.length}`, runs.length > 0 && good === 0)),
-      cell(replica ? 'Последняя удачная' : 'Последняя точка', Number.isFinite(newest) ? `${dayLabel(newest, timezone)} ${timeOf(newest, timezone)}` : unknown ? '—' : bad(replica ? 'не было' : 'точек нет', true)),
-      cell('Обычно идёт', report.usual ? spanOf(report.usual) : '—'),
-    ],
-    [
-      cell('С ошибкой', `${bad(String(failed), failed > 0)}${going ? ` · идёт ${going}` : ''}${report.missed.length ? ` · не было ${report.missed.length}` : ''}`),
-      replica
-        ? cell('Передано', sent ? `${sizeOf(sent)} при последней удачной` : '—')
-        : cell('Откат', report.depth ? `на ${report.depth.points} ${plural(report.depth.points, 'точку', 'точки', 'точек')}, до ${dayLabel(report.depth.oldest, timezone)}` : '—'),
-      cell('Дольше всего', report.longest ? `${spanOf(report.longest.minutes)} · ${dayLabel(report.longest.start, timezone)}` : '—'),
-    ],
-    [
-      cell(replica ? 'Машины реплицированы' : 'Машины сохранены', total ? bad(`${saved} из ${total}`, saved < total) : '—'),
-      cell(replica ? 'Без удачной' : 'Не сохранены', total ? bad(String(total - saved), saved < total) : '—'),
-      replica
-        ? cell('Узкое место', report.bottleneck ? STAGE_NAMES[report.bottleneck] : '—')
-        : cell('На диске', report.disk ? `${sizeOf(report.disk)}${report.data ? ` · данных ${sizeOf(report.data)}` : ''}` : '—'),
-    ],
+  const tile = (label: string, value: string, detail: string, bad = false) =>
+    `<div class="js-tile${bad ? ' bad' : ''}"><div class="js-tk">${label}</div><div class="js-tv">${value}</div><div class="js-td">${detail}</div></div>`;
+  const tiles = [
+    tile(
+      'Запуски',
+      `${good}<small> из ${runs.length}</small>`,
+      `успешно${failed ? ` · с ошибкой ${failed}` : ''}${going ? ` · идёт ${going}` : ''}${report.missed.length ? ` · не было ${report.missed.length}` : ''}`,
+      runs.length > 0 && good === 0,
+    ),
+    tile(replica ? 'Машины реплицированы' : 'Машины сохранены', total ? `${saved}<small> из ${total}</small>` : '—', total ? (saved < total ? `${replica ? 'без удачной' : 'не сохранены'}: ${total - saved}` : 'все') : '', saved < total),
+    tile(
+      replica ? 'Последняя удачная' : 'Последняя точка',
+      Number.isFinite(newest) ? `${dayLabel(newest, timezone)}<small> ${timeOf(newest, timezone)}</small>` : unknown ? '—' : replica ? 'не было' : 'точек нет',
+      replica ? (sent ? `передано ${sizeOf(sent)}` : '') : report.depth ? `откат на ${report.depth.points} ${plural(report.depth.points, 'точку', 'точки', 'точек')}, до ${dayLabel(report.depth.oldest, timezone)}` : '',
+      !Number.isFinite(newest) && !unknown,
+    ),
+    tile('Обычно идёт', report.usual ? spanOf(report.usual) : '—', report.longest ? `дольше всего ${spanOf(report.longest.minutes)} · ${dayLabel(report.longest.start, timezone)}` : ''),
+    replica
+      ? tile('Узкое место', report.bottleneck ? STAGE_NAMES[report.bottleneck] : '—', '')
+      : tile('На диске', report.disk ? sizeOf(report.disk) : '—', `${report.data ? `данных ${sizeOf(report.data)}` : ''}${report.bottleneck ? `${report.data ? ' · ' : ''}узкое место ${STAGE_NAMES[report.bottleneck]}` : ''}`),
   ];
-  return `<table class="js-t">${rows.map((row) => `<tr>${row.join('')}</tr>`).join('')}</table>`;
+  return `<div class="js-tiles">${tiles.join('')}</div>`;
 };
 
 /**
  * The month of runs: a run a bar where it started, its height how long it
  * took on a scale of ten minutes, an hour, six hours, a day and three — so
  * that a twenty-minute run and a three-day one both read, with no bar cut
- * short and no label over another.
+ * short and no label over another. The dashed line is the usual run.
  */
 const chart = (report: JobReport, timezone: string): string => {
   const W = 1000;
-  const H = 360;
-  const left = 64;
-  const right = 24;
-  const top = 12;
-  const bottom = 34;
+  const H = 158;
+  const left = 58;
+  const right = 14;
+  const top = 10;
+  const bottom = 30;
   const from = report.at - report.days * 86_400_000;
   const x = (at: number) => left + ((W - left - right) * (at - from)) / (report.at - from);
   const longest = Math.max(0, ...report.runs.map((run) => run.minutes));
   const ticks: Array<[number, string]> = [[10, '10 мин'], [60, '1 ч'], [360, '6 ч'], [1440, '1 сут'], [4320, '3 сут'], [10080, '7 сут']];
-  const ceiling = Math.max(5760, longest * 1.15);
+  const ceiling = Math.max(1440, longest * 1.25);
   const lo = Math.log(5);
   const hi = Math.log(ceiling);
   const y = (minutes: number) => top + (H - top - bottom) * (1 - (Math.log(Math.max(5, Math.min(ceiling, minutes))) - lo) / (hi - lo));
   const base = H - bottom;
-  const barWidth = Math.max(3, Math.min(14, ((W - left - right) / report.days) * 0.55));
+  const barWidth = Math.max(4, Math.min(16, ((W - left - right) / report.days) * 0.6));
   const lines = ticks
     .filter(([minutes]) => minutes <= ceiling)
-    .map(([minutes, label]) => `<line x1="${left}" x2="${W - right}" y1="${y(minutes).toFixed(1)}" y2="${y(minutes).toFixed(1)}" class="g"/><text x="${left - 8}" y="${(y(minutes) + 5).toFixed(1)}" text-anchor="end">${label}</text>`)
+    .map(([minutes, label]) => `<line x1="${left}" x2="${W - right}" y1="${y(minutes).toFixed(1)}" y2="${y(minutes).toFixed(1)}" class="g"/><text x="${left - 8}" y="${(y(minutes) + 4.5).toFixed(1)}" text-anchor="end">${label}</text>`)
     .join('');
+  const usual = report.usual ? `<line x1="${left}" x2="${W - right}" y1="${y(report.usual).toFixed(1)}" y2="${y(report.usual).toFixed(1)}" class="u"/>` : '';
   const days = Array.from({ length: Math.floor(report.days / 5) + 1 }, (_, step) => from + step * 5 * 86_400_000);
   const dates = days
-    .map((at, index) => `<line x1="${x(at).toFixed(1)}" x2="${x(at).toFixed(1)}" y1="${top}" y2="${base}" class="g"/><text x="${x(at).toFixed(1)}" y="${base + 22}" text-anchor="${index === 0 ? 'start' : x(at) > W - right - 30 ? 'end' : 'middle'}">${dayLabel(at, timezone)}</text>`)
+    .map((at, index) => `<text x="${x(at).toFixed(1)}" y="${base + 20}" text-anchor="${index === 0 ? 'start' : x(at) > W - right - 30 ? 'end' : 'middle'}">${dayLabel(at, timezone)}</text>`)
     .join('');
   const bar = (run: JobRun) => {
-    const height = Math.max(2, base - y(run.minutes));
+    const height = Math.max(4, base - y(run.minutes));
     const going = run.result === 'none' && run.end === undefined;
-    const colour = COLOUR[run.result] ?? COLOUR.none;
-    return `<rect x="${(x(run.start) - barWidth / 2).toFixed(1)}" y="${(base - height).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${height.toFixed(1)}" ${going ? `fill="#fff" stroke="${COLOUR.none}" stroke-width="2"` : `fill="${colour}"`}/>`;
+    const r = Math.min(2, barWidth / 2);
+    const X = x(run.start) - barWidth / 2;
+    const Y = base - height;
+    const path = `M${X.toFixed(1)} ${base} V${(Y + r).toFixed(1)} Q${X.toFixed(1)} ${Y.toFixed(1)} ${(X + r).toFixed(1)} ${Y.toFixed(1)} H${(X + barWidth - r).toFixed(1)} Q${(X + barWidth).toFixed(1)} ${Y.toFixed(1)} ${(X + barWidth).toFixed(1)} ${(Y + r).toFixed(1)} V${base} Z`;
+    return `<path d="${path}" ${going ? `fill="#fff" stroke="${COLOUR.none}" stroke-width="1.6"` : `fill="${COLOUR[run.result] ?? COLOUR.none}"`}/>`;
   };
   const missed = report.missed.map((at) => `<text x="${x(at).toFixed(1)}" y="${base - 5}" text-anchor="middle" class="m">×</text>`).join('');
   const empty = report.runs.length ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">За ${report.days} дней запусков не было</text>`;
-  return `<svg class="js-chart" viewBox="0 0 ${W} ${H}">${lines}${dates}<line x1="${left}" x2="${W - right}" y1="${base}" y2="${base}" class="a"/>${report.runs.map(bar).join('')}${missed}${empty}</svg>`;
+  return `<svg class="js-chart" viewBox="0 0 ${W} ${H}">${lines}${usual}${dates}<line x1="${left}" x2="${W - right}" y1="${base}" y2="${base}" class="a"/>${report.runs.map(bar).join('')}${missed}${empty}</svg>`;
 };
 
 /** How often a machine was saved of the runs it was in, and when last: in red when not every time, or never. */
 const saves = (machine: ReportMachine, timezone: string): string =>
-  `<td class="v">${machine.succeeded < machine.tookPart || !machine.tookPart ? `<span class="js-bad">${machine.succeeded} из ${machine.tookPart}</span>` : `${machine.succeeded} из ${machine.tookPart}`}</td><td class="v">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<span class="js-bad">никогда</span>'}</td>`;
+  `<td class="r nw">${machine.succeeded < machine.tookPart || !machine.tookPart ? `<b class="js-bad">${machine.succeeded}</b>` : `<b>${machine.succeeded}</b>`}<span class="js-dim"> из ${machine.tookPart}</span></td><td class="r nw">${machine.lastSaved ? dayLabel(machine.lastSaved, timezone) : '<b class="js-bad">никогда</b>'}</td>`;
 
 /** A machine none of the runs read took on, while Veeam would not give some: not known, which is not "never". */
-const UNREAD = '<td class="v"><span class="js-dim">—</span></td><td class="v"><span class="js-dim">нет сведений</span></td>';
+const UNREAD = '<td class="r nw"><span class="js-dim">—</span></td><td class="r nw"><span class="js-dim">нет сведений</span></td>';
+
+const machineMark = (machine: ReportMachine): string =>
+  machine.unread ? MARK.unknown : machine.failing ? MARK.crit : machine.succeeded < machine.tookPart || !machine.tookPart ? MARK.warn : MARK.ok;
 
 const machinesTable = (report: JobReport, timezone: string): string => {
   const shown: ReportMachine[] = report.machines.slice(0, MACHINE_ROWS);
-  if (!shown.length) return '<table class="js-t"><tr><td class="js-dim">Сведений по машинам нет: запусков не было, или Veeam их не отдал.</td></tr></table>';
+  if (!shown.length) return '<div class="js-dim">Сведений по машинам нет: запусков не было, или Veeam их не отдал.</div>';
   const rows = shown
     .map(
-      (machine) => `<tr><td class="v js-name">${esc(shortName(machine.name))}</td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}<td><div class="js-err">${esc(machine.error ?? '')}${machine.errorTone === 'healed' ? ' <span class="js-dim">· повтор помог</span>' : ''}</div></td></tr>`,
+      (machine) =>
+        `<tr><td><div class="js-name">${machineMark(machine)}<div><span>${esc(shortName(machine.name))}</span>${machine.error ? `<div class="js-err">${esc(machine.error)}${machine.errorTone === 'healed' ? ' · повтор помог' : ''}</div>` : ''}</div></div></td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}</tr>`,
     )
     .join('');
   const more = report.machines.length - shown.length;
-  return `<table class="js-t js-vms"><tr class="th"><td>Машина</td><td>По ${report.history.byDay ? 'дням' : 'запускам'}</td><td>Успешно</td><td>Сохранена</td><td>Последняя ошибка</td></tr>${rows}</table>${more > 0 ? `<div class="js-more">и ещё ${more} — в сессиях на следующих страницах</div>` : ''}`;
+  return `<table class="js-vms"><thead><tr><th>Машина</th><th>По ${report.history.byDay ? 'дням' : 'запускам'}</th><th class="r">Успешно</th><th class="r">Сохранена</th></tr></thead><tbody>${rows}</tbody></table>${more > 0 ? `<div class="js-more">и ещё ${more} — в сессиях на следующих страницах</div>` : ''}`;
 };
 
 const stepsTable = (report: JobReport): string => {
   const shown = report.steps.slice(0, STEP_ROWS);
   const rows = shown
-    .map((step, index) => `<tr class="${step.severity}"><td class="k">${index + 1}</td><td><b>${esc(step.title)}</b><p>${esc(step.detail)}${step.tags.length ? ` ${esc(step.tags.slice(0, 3).map(shortName).join(', '))}` : ''}</p></td></tr>`)
+    .map((step, index) => `<div class="js-step ${step.severity}"><span class="n">${index + 1}</span><div><b>${esc(step.title)}</b><p>${esc(step.detail)}</p>${step.tags.length ? `<div class="js-tags">${step.tags.slice(0, 4).map((tag) => `<span>${esc(shortName(tag))}</span>`).join('')}</div>` : ''}</div></div>`)
     .join('');
   const rest = report.steps.slice(STEP_ROWS);
-  return `<table class="js-t js-steps">${rows}</table>${rest.length ? `<div class="js-more">Ещё: ${rest.map((step) => esc(step.title.charAt(0).toLowerCase() + step.title.slice(1))).join('; ')}.</div>` : ''}`;
+  return `<div class="js-steps">${rows}</div>${rest.length ? `<div class="js-more">Ещё: ${rest.map((step) => esc(step.title.charAt(0).toLowerCase() + step.title.slice(1))).join('; ')}.</div>` : ''}`;
 };
 
 const neighboursTable = (report: JobReport, timezone: string): string => {
@@ -198,79 +239,136 @@ const neighboursTable = (report: JobReport, timezone: string): string => {
   const position = (at: number) => Math.max(0, Math.min(100, (100 * (at - neighbours.origin)) / 86_400_000));
   const rows = neighbours.rows.slice(0, NEIGHBOUR_ROWS + 1);
   const more = neighbours.jobs - (rows.length - 1);
-  return `<div class="js-band">Кто ещё писал в ${esc(repository?.short ?? 'репозиторий')} ${dayLabel(window.start, timezone)}</div>
-  <table class="js-t js-nb">${rows
+  return `<div class="js-panel"><h3>Кто ещё писал в ${esc(repository?.short ?? 'репозиторий')} ${dayLabel(window.start, timezone)}</h3><div class="js-sub">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${STAGE_NAMES[report.bottleneck]}` : ''}</div>
+  <div class="js-nb">${rows
     .map(
       (row) =>
-        `<tr><td class="v js-name">${row.own ? `<b>${esc(row.name)}</b>` : esc(row.name)}</td><td class="js-track">${row.spans.map(({ start, end }) => `<i class="${row.own ? 'own' : ''}" style="left:${position(start).toFixed(1)}%;width:${Math.max(0.8, position(end) - position(start)).toFixed(1)}%"></i>`).join('')}</td><td class="v">${timeOf(row.spans[0].start, timezone)}–${timeOf(row.spans[0].end, timezone)}${row.spans.length > 1 ? ` <span class="js-dim">+${row.spans.length - 1}</span>` : ''}</td></tr>`,
+        `<div class="js-nr"><span class="js-nn${row.own ? ' own' : ''}">${esc(row.name)}</span><span class="js-track">${row.spans.map(({ start, end }) => `<i class="${row.own ? 'own' : ''}" style="left:${position(start).toFixed(1)}%;width:${Math.max(0.8, position(end) - position(start)).toFixed(1)}%"></i>`).join('')}</span><span class="js-nt">${timeOf(row.spans[0].start, timezone)}–${timeOf(row.spans[0].end, timezone)}${row.spans.length > 1 ? ` +${row.spans.length - 1}` : ''}</span></div>`,
     )
-    .join('')}<tr><td class="js-dim">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${STAGE_NAMES[report.bottleneck]}` : ''}</td><td><div class="js-axis">${[12, 15, 18, 21, 0, 3, 6, 9].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</div></td><td></td></tr></table>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}`;
+    .join('')}<div class="js-nr"><span></span><span class="js-axis">${[12, 18, 0, 6, 12].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</span><span></span></div></div>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}</div>`;
 };
 
-const errorsTable = (report: JobReport, timezone: string): string => `<div class="js-band">Последние ошибки</div>
-  <table class="js-t"><tr class="th"><td>Что писал Veeam</td><td>Машин</td><td>Последний раз</td></tr>${[...report.errors]
+const errorsTable = (report: JobReport, timezone: string): string => `<div class="js-panel"><h3>Последние ошибки</h3><div class="js-sub">Что писал Veeam, новые сверху</div>
+  <div class="js-errs">${[...report.errors]
     // The newest first: on this page it is the latest trouble that matters.
     .sort((a, b) => b.last - a.last)
     .slice(0, ERROR_ROWS)
-    .map((group) => `<tr><td><div class="js-err">${esc(group.text.slice(0, 160))}</div></td><td class="v">${group.machines.length}</td><td class="v">${dayLabel(group.last, timezone)} · ${group.runs} ${runsWord(group.runs)}</td></tr>`)
-    .join('')}</table>`;
+    .map((group) => `<div class="js-er"><div class="js-et">${esc(group.text.slice(0, 170))}</div><div class="js-em"><b>${group.machines.length}</b> ${machinesWord(group.machines.length)} · ${group.runs} ${runsWord(group.runs)} · последний раз ${dayLabel(group.last, timezone)}</div></div>`)
+    .join('')}</div></div>`;
 
 /** The retained runs a day a row, as the Evidence has them; "—" where Veeam did not type a point, or no file names it. */
-const chainTable = (report: JobReport): string => `<div class="js-band">Цепочка на диске</div>
-  <table class="js-t"><tr class="th"><td>День</td><td>Файл</td><td>На диске</td><td>Данных</td></tr>${
+const chainTable = (report: JobReport): string => {
+  const biggest = Math.max(1, ...report.chain.map((day) => day.disk ?? 0));
+  return `<div class="js-panel"><h3>Цепочка на диске</h3><div class="js-sub">Сохранённые запуски по дням, новые сверху: на диске и сколько в них данных</div>
+  <div class="js-chain">${
     report.chain.length
       ? report.chain
           .slice(0, CHAIN_ROWS)
-          .map((day) => `<tr><td class="v">${calendarLabel(day.day)}</td><td class="v">${day.full === undefined ? '—' : day.full ? 'Full' : 'инкремент'}</td><td class="v">${day.disk !== undefined ? sizeOf(day.disk) : '—'}</td><td class="v">${day.data ? sizeOf(day.data) : '—'}</td></tr>`)
+          .map((day) => `<div class="js-ch"><span class="nw">${calendarLabel(day.day)}</span><span class="js-tag${day.full ? ' full' : ''}">${day.full === undefined ? '—' : day.full ? 'Full' : 'инкремент'}</span><span class="js-cb"><i class="${day.full ? 'full' : ''}" style="width:${Math.max(2, (100 * (day.disk ?? 0)) / biggest).toFixed(1)}%"></i></span><span class="r nw"><b>${day.disk !== undefined ? sizeOf(day.disk) : '—'}</b></span><span class="r nw js-dim">${day.data ? sizeOf(day.data) : '—'}</span></div>`)
           .join('')
-      : `<tr><td colspan="4" class="js-dim">${esc(report.pointsUnavailable ?? 'У задания нет ни одной точки восстановления.')}</td></tr>`
-  }</table>`;
+      : `<div class="js-dim">${esc(report.pointsUnavailable ?? 'У задания нет ни одной точки восстановления.')}</div>`
+  }</div></div>`;
+};
 
 /* ------------------------------------------------------------------ *
- * The first page's sheet: Veeam's header, grey bars and ruled tables
+ * The first page's sheet: the dark panel, and cards with a tinted head
  * ------------------------------------------------------------------ */
 
 const STYLE = `
 @page { size: 297mm 210mm; margin: 0; }
 html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { margin: 0; background: #fff; }
-.js { width: 297mm; height: 210mm; padding: 9mm 10mm; display: flex; flex-direction: column; gap: 2.4mm; overflow: hidden; break-after: page; font-family: 'Inter Variable', Tahoma, sans-serif; font-size: 8.5pt; line-height: 1.32; color: #000; }
+.js { width: 297mm; height: 210mm; display: flex; overflow: hidden; break-after: page; font-family: 'Inter Variable', 'Segoe UI', sans-serif; font-size: 8.6pt; line-height: 1.35; color: #232323; font-feature-settings: 'tnum' 1; }
 .js * { box-sizing: border-box; margin: 0; padding: 0; }
-.js table { border-collapse: collapse; width: 100%; }
-.js-hd td { background: var(--band); color: var(--ink, #fff); font-weight: 700; font-size: 13pt; height: 15mm; vertical-align: bottom; padding: 0 3.6mm 3mm; }
-.js-hd .js-s { width: 27%; border-left: 0.25mm solid rgba(255, 255, 255, 0.5); }
-.js-d { font-size: 8pt; margin-top: 0.8mm; }
-.js-t td { border: 0.25mm solid #a7a9ac; padding: 0.6mm 1mm; vertical-align: top; }
-.js-t .k { font-weight: 700; white-space: nowrap; width: 1%; }
-.js-t .v { white-space: nowrap; }
-.js-t .th td { background: #e3e3e3; font-weight: 700; white-space: nowrap; }
-.js-t td.js-verdict { font-weight: 700; font-size: 9.4pt; padding: 1.4mm 1.6mm; }
-.js-partial { color: #9a6700; font-size: 7.2pt; }
-.js-band { background: #f3f4f4; color: #626365; font-size: 11pt; padding: 1.6mm 3.6mm; border: 0.25mm solid #a7a9ac; border-bottom: none; }
-.js-two { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 3mm; }
-.js-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.js-col > .js-band:not(:first-child) { margin-top: 2.4mm; }
-.js-box { border: 0.25mm solid #a7a9ac; padding: 1.6mm 2mm 1.2mm; }
+.js b { font-weight: 650; }
+.js .nw { white-space: nowrap; } .js .r { text-align: right; }
+.js-mk { width: 3.6mm; height: 3.6mm; flex: none; }
+.js-bad { color: #e63946; } .js-dim { color: #8a8f98; }
+
+.js-side { width: 74mm; flex: none; background: #010d35; color: #d6dbe6; padding: 11mm 8mm 8mm; display: flex; flex-direction: column; gap: 6mm; }
+.js-brand { display: flex; align-items: center; gap: 3mm; padding-bottom: 3mm; border-bottom: 0.25mm solid rgba(255, 255, 255, 0.18); font-size: 7.4pt; color: #adb4c6; }
+.js-brand .veeam-logo { height: 8.4mm; width: auto; flex: none; }
+.js-kind, .js-facts dt, .js-sk { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #00d15f; }
+.js-kind { font-size: 7pt; letter-spacing: 0.1em; }
+.js-side h1 { font-size: 17pt; font-weight: 700; letter-spacing: -0.01em; color: #fff; line-height: 1.12; margin-top: 1.4mm; overflow-wrap: anywhere; }
+.js-status { display: flex; align-items: center; gap: 1.6mm; margin-top: 2.4mm; font-size: 10pt; font-weight: 600; color: #fff; }
+.js-status .js-mk { width: 4.4mm; height: 4.4mm; }
+.js-facts > div { display: grid; grid-template-columns: 24mm 1fr; gap: 2mm; align-items: baseline; padding: 1.3mm 0; border-bottom: 0.25mm solid rgba(255, 255, 255, 0.12); }
+.js-facts > div:last-child { border-bottom: none; }
+.js-facts dt { font-size: 6.2pt; } .js-facts dd { font-size: 8.2pt; color: #fff; }
+.js-cards { margin-top: auto; }
+.js-sc { border-top: 0.25mm solid rgba(255, 255, 255, 0.18); padding: 2.4mm 0; }
+.js-sk { font-size: 6.2pt; margin-bottom: 0.8mm; }
+.js-sv { display: flex; align-items: center; gap: 1.6mm; font-size: 10pt; color: #fff; } .js-sv .js-mk { width: 3.8mm; height: 3.8mm; }
+.js-sd { font-size: 7.1pt; color: #adb4c6; line-height: 1.4; } .js-sd b { color: #fff; }
+.js-sbar { height: 1.6mm; background: rgba(255, 255, 255, 0.16); margin: 1mm 0 1.2mm; }
+.js-sbar i { display: block; height: 100%; background: ${COLOUR.success}; } .js-sbar i.warn { background: ${COLOUR.warning}; } .js-sbar i.crit { background: ${COLOUR.failed}; }
+.js-s2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+.js-s2 span { display: block; font-size: 6.6pt; color: #8791aa; } .js-s2 b { display: block; font-size: 11pt; color: #fff; line-height: 1.2; } .js-s2 small { font-size: 6.8pt; color: #adb4c6; }
+.js-stamp { display: flex; justify-content: space-between; gap: 2mm; font-size: 6.8pt; color: #8791aa; padding-top: 2.4mm; border-top: 0.25mm solid rgba(255, 255, 255, 0.18); }
+
+.js-main { flex: 1; min-width: 0; padding: 9mm 10mm 7mm; display: flex; flex-direction: column; gap: 3.2mm; }
+.js-verdict { border-radius: 2.4mm; padding: 3mm 4mm; font-size: 12pt; font-weight: 700; background: #eef4f6; color: #232323; }
+.js-verdict.crit { background: ${COLOUR.failed}; color: #fff; } .js-verdict.ok { background: ${COLOUR.success}; color: #fff; } .js-verdict.warn { background: ${COLOUR.warning}; }
+.js-partial { color: #505861; font-size: 7.2pt; margin-top: -1.4mm; padding-left: 4mm; }
+.js-tiles { display: grid; grid-template-columns: repeat(5, 1fr); border: 0.3mm solid #dcdee2; border-radius: 2.4mm; padding: 2.8mm 0 2.6mm; }
+.js-tile { min-width: 0; padding: 0 3.6mm; border-left: 0.25mm solid #dcdee2; } .js-tile:first-child { border-left: none; }
+.js-tk { font-size: 6.6pt; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #505861; }
+.js-tv { font-size: 17pt; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; white-space: nowrap; } .js-tv small { font-size: 8.6pt; font-weight: 500; color: #505861; letter-spacing: 0; }
+.js-tile.bad .js-tv { color: #e63946; }
+.js-td { font-size: 7pt; color: #505861; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.js-panel { border: 0.3mm solid #dcdee2; border-radius: 2.4mm; overflow: hidden; padding: 0 3.6mm 2.6mm; min-width: 0; min-height: 0; }
+.js-panel h3 { margin: 0 -3.6mm 2mm; padding: 1.9mm 3.6mm; background: #f5f7f8; border-bottom: 0.25mm solid #dcdee2; font-size: 9.4pt; font-weight: 700; }
+.js-ph { display: flex; justify-content: space-between; align-items: center; gap: 4mm; margin: 0 -3.6mm 1.4mm; padding: 1.9mm 3.6mm; background: #f5f7f8; border-bottom: 0.25mm solid #dcdee2; }
+.js-ph h3 { margin: 0; padding: 0; background: none; border: none; white-space: nowrap; }
+.js-sub { font-size: 7.2pt; color: #505861; margin-bottom: 1.4mm; }
+.js-two { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 3.4mm; }
+.js-col { display: flex; flex-direction: column; gap: 3.4mm; min-width: 0; min-height: 0; }
 .js-chart { width: 100%; height: auto; display: block; font-family: 'Inter Variable', sans-serif; }
-.js-chart text { font-size: 16px; fill: #626365; }
-.js-chart .g { stroke: #e3e3e3; stroke-width: 1; }
-.js-chart .a { stroke: #a7a9ac; stroke-width: 1; }
-.js-chart .m { font-size: 18px; font-weight: 700; fill: #000; }
-.js-legend { display: flex; gap: 4mm; flex-wrap: wrap; color: #626365; font-size: 7.6pt; margin-top: 0.6mm; }
-.js-legend i { display: inline-block; width: 3mm; height: 2.2mm; margin-right: 1mm; vertical-align: -0.3mm; }
-.js-legend i.run { background: #fff; box-shadow: inset 0 0 0 0.35mm ${COLOUR.none}; }
-.js-legend b { color: #000; margin-right: 0.8mm; }
-.js-bad { color: #ff0000; font-weight: 700; }
-.js-dim { color: #626365; }
-.js-name { max-width: 44mm; overflow: hidden; text-overflow: ellipsis; }
-.js-hist { display: flex; gap: 0.5mm; } .js-hist i { width: 2.6mm; height: 2.6mm; display: block; flex: none; }
-.js-err { font-size: 7.6pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; word-break: break-word; }
-.js-steps p { color: #626365; font-size: 7.8pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.js-steps tr.crit b { color: #ff0000; }
-.js-steps tr.warn b { color: #9a6700; }
-.js-more { color: #626365; font-size: 7.6pt; padding: 0.8mm 1mm 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.js-nb .js-name { width: 34mm; }
-.js-track { position: relative; width: 100%; } .js-track i { position: absolute; top: 1mm; bottom: 1mm; background: #b8c4d0; } .js-track i.own { background: #5b7fa6; }
-.js-axis { display: flex; justify-content: space-between; color: #626365; font-size: 6.6pt; }
-.js-next { color: #626365; font-size: 7pt; text-align: right; margin-top: auto; }
+.js-chart text { font-size: 13px; fill: #505861; }
+.js-chart .g { stroke: #f0f0f0; stroke-width: 1; } .js-chart .a { stroke: #adacaf; stroke-width: 1; }
+.js-chart .u { stroke: #3700ff; stroke-width: 1; stroke-dasharray: 5 4; opacity: 0.8; }
+.js-chart .m { font-size: 16px; font-weight: 700; fill: #232323; }
+.js-legend { display: flex; flex-wrap: wrap; gap: 0.6mm 3.2mm; justify-content: flex-end; font-size: 6.9pt; color: #505861; }
+.js-legend span { white-space: nowrap; }
+.js-legend i { display: inline-block; width: 2.8mm; height: 2.2mm; margin-right: 1mm; vertical-align: -0.25mm; }
+.js-legend i.run { background: #fff; box-shadow: inset 0 0 0 0.3mm ${COLOUR.none}; }
+.js-legend i.dash { height: 0; width: 4mm; border-top: 0.3mm dashed #3700ff; vertical-align: 0.7mm; }
+.js-legend b { color: #232323; }
+.js-vms { width: 100%; border-collapse: collapse; }
+.js-vms th { text-align: left; font-size: 6.6pt; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: #505861; padding: 0 1.6mm 0.8mm 0; border-bottom: 0.25mm solid #dcdee2; white-space: nowrap; }
+.js-vms th.r { text-align: right; }
+.js-vms td { padding: 1.15mm 1.6mm 1.15mm 0; vertical-align: middle; font-size: 8pt; border-bottom: 0.25mm solid #f0f0f0; }
+.js-vms tr:last-child td { border-bottom: none; }
+.js-vms td:first-child, .js-vms th:first-child { width: 99%; max-width: 0; }
+.js-vms td:last-child, .js-vms th:last-child { padding-right: 0; }
+.js-name { display: flex; align-items: center; gap: 1.6mm; font-weight: 600; line-height: 1.2; }
+.js-name .js-mk { width: 2.8mm; height: 2.8mm; } .js-name > div { flex: 1; min-width: 0; }
+.js-name span, .js-err { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.js-err { font-size: 6.6pt; font-weight: 400; color: #505861; }
+.js-hist { display: flex; gap: 0.45mm; } .js-hist i { width: 1.7mm; height: 3.4mm; border-radius: 0.5mm; display: block; flex: none; }
+.js-more { color: #505861; font-size: 7.2pt; padding-top: 1.2mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.js-step { display: flex; gap: 2.2mm; padding: 1.8mm 0; border-bottom: 0.25mm solid #f0f0f0; }
+.js-step:first-child { padding-top: 0; } .js-step:last-child { border-bottom: none; padding-bottom: 0; }
+.js-step .n { flex: none; width: 4.4mm; height: 4.4mm; border-radius: 1mm; background: ${COLOUR.none}; color: #fff; font-weight: 700; font-size: 7.8pt; display: flex; align-items: center; justify-content: center; }
+.js-step.crit .n { background: ${COLOUR.failed}; } .js-step.warn .n { background: ${COLOUR.warning}; color: #232323; } .js-step.ok .n { background: ${COLOUR.success}; color: #010d35; }
+.js-step b { font-size: 8.6pt; font-weight: 700; }
+.js-step p { font-size: 7.4pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.js-tags { display: flex; flex-wrap: wrap; gap: 1mm; margin-top: 0.8mm; } .js-tags span { background: #eef4f6; border-radius: 1mm; padding: 0.2mm 1.8mm; font-size: 7pt; }
+.js-nb { display: flex; flex-direction: column; gap: 1mm; }
+.js-nr { display: grid; grid-template-columns: 31mm minmax(0, 1fr) 18mm; gap: 2mm; align-items: center; font-size: 7.4pt; }
+.js-nn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .js-nn.own { font-weight: 700; }
+.js-nt { text-align: right; color: #505861; white-space: nowrap; }
+.js-track { position: relative; height: 3.4mm; background: #eef4f6; border-radius: 1mm; overflow: hidden; }
+.js-track i { position: absolute; top: 0; bottom: 0; background: ${COLOUR.none}; } .js-track i.own { background: ${COLOUR.success}; }
+.js-axis { display: flex; justify-content: space-between; color: #adacaf; font-size: 6.4pt; }
+.js-errs { display: flex; flex-direction: column; gap: 1.4mm; }
+.js-er { padding-bottom: 1.4mm; border-bottom: 0.25mm solid #f0f0f0; } .js-er:last-child { border-bottom: none; padding-bottom: 0; }
+.js-et { font-size: 7.6pt; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.js-em { font-size: 7pt; color: #505861; }
+.js-ch { display: grid; grid-template-columns: 11mm 17mm 1fr 15mm 15mm; gap: 2mm; align-items: center; padding: 0.9mm 0; border-bottom: 0.25mm solid #f0f0f0; font-size: 7.6pt; }
+.js-ch:last-child { border-bottom: none; }
+.js-tag { font-size: 6.8pt; border-radius: 1mm; padding: 0 1.4mm; background: #eef4f6; color: #505861; justify-self: start; } .js-tag.full { background: #010d35; color: #fff; font-weight: 650; }
+.js-cb { height: 2.4mm; background: #eef4f6; border-radius: 1mm; overflow: hidden; } .js-cb i { display: block; height: 100%; background: ${COLOUR.success}; } .js-cb i.full { background: #010d35; }
+.js-next { display: flex; justify-content: space-between; color: #adacaf; font-size: 6.9pt; margin-top: auto; }
 `;
