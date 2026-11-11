@@ -99,6 +99,16 @@ With a published image (`MONITOR_IMAGE`), `docker compose pull && docker compose
 
 The container comes back by itself after the server reboots (`restart: unless-stopped`). The bot's log is `logs/backend.log`, with the nine 5 MB files before it beside it (`.1` the newest); Docker's own log is capped at three files of 10 MB.
 
+A bot that is down cannot say so. `deploy/watchdog.sh` says it for it: run by cron on the same server, it writes to the chat itself when `/api/health` stops answering or the bot has not refreshed its topics for 15 minutes, again every three hours while that lasts, and once when the bot is back. Copy it out of the checkout and schedule it:
+
+```bash
+cp deploy/watchdog.sh ~/veeam-monit-watchdog.sh
+~/veeam-monit-watchdog.sh ~/veeam-monit --test   # one test message to the chat
+(crontab -l 2>/dev/null; echo "*/5 * * * * $HOME/veeam-monit-watchdog.sh $HOME/veeam-monit >/dev/null 2>&1") | crontab -
+```
+
+It cannot tell that the server itself is gone; that takes a check from another machine.
+
 > [!WARNING]
 > **Do not delete `data/`.** Without it the bot publishes a second copy of every live topic and alerts again about old failures. To survive a lost disk, copy `data/telegram-state.json` and its `.bak` somewhere else.
 
