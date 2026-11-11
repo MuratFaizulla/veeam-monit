@@ -19,6 +19,20 @@ async function bootstrap(): Promise<void> {
   const docs = config.getOrThrow<boolean>('docs');
   if (docs) mountOpenApi(app);
 
+  // In a container this process is PID 1, and the kernel hands PID 1 no signal
+  // it has not asked for: `docker compose stop` waited its ten seconds and
+  // killed it, every time. Asked for here, a stop closes the modules — the
+  // state file is written, the queue let go — and ends at once, without
+  // waiting out a long poll still open to Telegram.
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      void app
+        .close()
+        .catch(() => undefined)
+        .finally(() => process.exit(0));
+    });
+  }
+
   const port = config.getOrThrow<number>('port');
   await app.listen(port);
 
