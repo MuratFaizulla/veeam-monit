@@ -64,7 +64,7 @@ Every setting is made in `.env`; the full list with comments is in [.env.example
 | `TELEGRAM_TOPIC_*` | see `.env.example` | Names of all the topics, both live and for alerts. |
 | `TELEGRAM_SEND_INTERVAL_MS`, `TELEGRAM_QUEUE_LIMIT` | `1500`, `200` | Pause between messages to one chat, and the size of the queue. |
 | `TELEGRAM_STATE_FILE` | `data/telegram-state.json` | State file. |
-| `LOG_FILE` | `logs/backend.log` | Log. |
+| `LOG_FILE` | `logs/backend.log` | Log. Rotated at 5 MB; the nine files before it are kept as `.1` to `.9`. |
 | `PORT` | `3000` | HTTP port inside the container. |
 | `HOST_BIND`, `HOST_PORT` | `127.0.0.1`, `3000` | Where Compose publishes the port on the host. |
 | `API_DOCS` | `false` | The Swagger page at `/api/docs`; see [http-api.md](http-api.md). |

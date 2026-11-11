@@ -97,7 +97,7 @@ With a published image (`MONITOR_IMAGE`), `docker compose pull && docker compose
 
 **Change a setting:** edit `.env` and run `docker compose up -d --force-recreate`. A plain `restart` does not re-read `.env`.
 
-The container comes back by itself after the server reboots (`restart: unless-stopped`). The bot's log is `logs/backend.log`; Docker's own log is capped at three files of 10 MB.
+The container comes back by itself after the server reboots (`restart: unless-stopped`). The bot's log is `logs/backend.log`, with the nine 5 MB files before it beside it (`.1` the newest); Docker's own log is capped at three files of 10 MB.
 
 > [!WARNING]
 > **Do not delete `data/`.** Without it the bot publishes a second copy of every live topic and alerts again about old failures. To survive a lost disk, copy `data/telegram-state.json` and its `.bak` somewhere else.

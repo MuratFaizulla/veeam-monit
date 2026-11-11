@@ -3,11 +3,31 @@ import { appendFileSync, chmodSync, mkdirSync, existsSync, statSync, renameSync 
 import { dirname } from 'path';
 
 const MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * Full files kept beside the one being written. A minute's cycle over five
+ * servers fills one in about a day, and one kept file was a day and a half of
+ * history: whatever went wrong the night before last was already gone.
+ */
+const KEPT_FILES = 9;
+
+/**
+ * Moves a log that outgrew `maxBytes` aside as `.1`, the one that was `.1` to
+ * `.2` and so on; the file past `kept` is dropped.
+ */
+export const rotate = (filePath: string, maxBytes = MAX_BYTES, kept = KEPT_FILES): void => {
+  if (!existsSync(filePath) || statSync(filePath).size <= maxBytes) return;
+  for (let index = kept; index >= 1; index -= 1) {
+    const from = index === 1 ? filePath : `${filePath}.${index - 1}`;
+    // Onto the next name: the oldest is replaced by the rename itself.
+    if (existsSync(from)) renameSync(from, `${filePath}.${index}`);
+  }
+};
 
 /**
  * Console logger that also appends every line to a file, so latency and error
  * history survives after the terminal scrollback is gone. The file is rotated
- * once (`.log` -> `.log.1`) when it grows past 5 MB.
+ * when it grows past 5 MB, and the nine before it are kept (`.log.1` the
+ * newest, `.log.9` the oldest): 50 MB at most, a week and more of history.
  */
 export class FileLogger extends ConsoleLogger {
   constructor(private readonly filePath: string) {
@@ -43,9 +63,7 @@ export class FileLogger extends ConsoleLogger {
 
   private append(line: string): void {
     try {
-      if (existsSync(this.filePath) && statSync(this.filePath).size > MAX_BYTES) {
-        renameSync(this.filePath, `${this.filePath}.1`);
-      }
+      rotate(this.filePath);
       appendFileSync(this.filePath, line, { encoding: 'utf8', mode: 0o600 });
       chmodSync(this.filePath, 0o600);
     } catch {
