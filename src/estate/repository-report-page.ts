@@ -27,10 +27,11 @@ import {
  * does not fit is split by rows, never by the browser, which would cut a
  * table in half wherever the paper ended.
  *
- * The whole report opens on a cover — what burns, what to do first, where a
- * new job fits — then every repository as a card and which server attaches
- * what; each repository then gets a dashboard page, its jobs on a 24-hour
- * chart and what to do. Asked for one repository, only its own pages.
+ * The whole report opens on a cover — how it all stands in one sentence, the
+ * repositories that most need a look, what to do first, where a new job fits
+ * — then every repository as a card and which server attaches what; each
+ * repository then gets a dashboard page, its jobs on a 24-hour chart and
+ * what to do. Asked for one repository, only its own pages.
  */
 export const reportPage = (report: RepositoryReport, only: ReportRepository[] | undefined, timezone: string): ReportDocument => {
   const stamp = stampOf(report.at, timezone);
@@ -52,7 +53,7 @@ export const reportPage = (report: RepositoryReport, only: ReportRepository[] | 
   const frame = (crumb: string[], number: number, body: string) => `<section class="page">${top(crumb, number, total, view)}${body}</section>`;
   const pages = only
     ? []
-    : [cover(view), frame(['Репозитории', 'Все хранилища'], 2, cards(view, pageOf)), frame(['Репозитории', 'Подключения'], 3, attachments(view))];
+    : [cover(view, pageOf, total), frame(['Репозитории', 'Все хранилища'], 2, cards(view, pageOf)), frame(['Репозитории', 'Подключения'], 3, attachments(view))];
   for (const { repository, pages: own } of sections) {
     own.forEach((body, index) =>
       pages.push(frame(['Репозитории', ...(repository.site ? [repository.site] : []), repository.short], (pageOf.get(repository) as number) + index, body)),
@@ -70,12 +71,26 @@ interface View {
 // --- Words
 /** The stylesheet's name for a status. */
 const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'unk' : status);
-const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}"><i></i>${STATUS_WORD[status]}</span>`;
+/**
+ * A state as Veeam's console marks it — a tick in a circle, an exclamation in
+ * a triangle, a cross in a circle — so that it is told by its shape as well
+ * as its colour, on a screen and on a grey printout alike.
+ */
+const MARK: Record<string, string> = {
+  ok: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#00B336"/><path d="M4.4 8.3l2.4 2.4 4.8-5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  warn: '<svg viewBox="0 0 16 16"><path d="M8 .9a1.2 1.2 0 0 1 1 .6l6.6 11.6a1.2 1.2 0 0 1-1 1.8H1.4a1.2 1.2 0 0 1-1-1.8L7 1.5a1.2 1.2 0 0 1 1-.6z" fill="#F5A800"/><path d="M8 5.4v4.2" stroke="#3a2800" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.1" r="1" fill="#3a2800"/></svg>',
+  crit: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#E0312E"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>',
+  unk: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#8A9891"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="#fff"/></svg>',
+};
+const mark = (status: Status | 'unknown'): string => MARK[tone(status)];
+const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}">${mark(status)}${STATUS_WORD[status]}</span>`;
 const freeTone = (repository: ReportRepository): string => (repository.freePercent < 10 ? 'crit' : repository.freePercent < 20 ? 'warn' : 'ok');
 const slug = (repository: ReportRepository): string => `r-${repository.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 const jobsWord = (count: number) => plural(count, 'задача', 'задачи', 'задач');
 const backupsWord = (count: number) => plural(count, 'бэкап', 'бэкапа', 'бэкапов');
 const storagesWord = (count: number) => plural(count, 'хранилище', 'хранилища', 'хранилищ');
+/** A title as it reads inside a sentence. */
+const lower = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
 const dateOf = (iso: string | undefined): string => (iso ? iso.slice(0, 10).split('-').reverse().join('.') : '—');
 const NOTABLE_BYTES = 0.05 * 1024 ** 4;
 const BOTTLENECK: Record<Stage, string> = {
@@ -118,44 +133,29 @@ const space = (repository: ReportRepository) => {
   return { capacity, free, used, orphan, owned: used - orphan, squeezed: repository.allBytes > 1.1 * used };
 };
 const bar = (repository: ReportRepository): string => {
-  const { capacity, free, orphan, owned } = space(repository);
+  const { capacity, orphan, owned } = space(repository);
   const share = (bytes: number) => (capacity ? ((100 * bytes) / capacity).toFixed(2) : '0');
-  return `<div class="bar"><span class="b-used" style="width:${share(owned)}%"></span>${orphan ? `<span class="b-orph" style="width:${share(orphan)}%"></span>` : ''}<span class="b-free ${freeTone(repository)}" style="width:${share(free)}%"></span></div>`;
+  // What is left of the track is free: the bar says how full, and the number beside it how bad.
+  return `<div class="bar"><span class="b-used" style="width:${share(owned)}%"></span>${orphan ? `<span class="b-orph" style="width:${share(orphan)}%"></span>` : ''}</div>`;
 };
-const donut = (repository: ReportRepository): string => {
-  const { capacity, free, orphan, owned } = space(repository);
-  const radius = 15.9155;
-  let at = 0;
-  const arcs = ([[owned, 'var(--used)'], [orphan, 'var(--orph)'], [free, `var(--${freeTone(repository)})`]] as Array<[number, string]>)
-    .filter(([bytes]) => bytes > 0 && capacity > 0)
-    .map(([bytes, colour]) => {
-      const share = (100 * bytes) / capacity;
-      const arc = `<circle r="${radius}" cx="21" cy="21" fill="none" stroke="${colour}" stroke-width="5.2" stroke-dasharray="${Math.max(0.3, share - 0.7).toFixed(2)} ${(100 - share + 0.7).toFixed(2)}" stroke-dashoffset="${(25 - at).toFixed(2)}"/>`;
-      at += share;
-      return arc;
-    })
-    .join('');
-  return `<svg class="donut" viewBox="0 0 42 42"><circle r="${radius}" cx="21" cy="21" fill="none" stroke="#EEF2F7" stroke-width="5.2"/>${arcs}<text x="21" y="22" text-anchor="middle" class="d-v">${Math.round(repository.freePercent)}%</text><text x="21" y="27.4" text-anchor="middle" class="d-l">свободно</text></svg>`;
-};
-
-// --- Load hour by hour: calm blue, busy amber, overload red
+// --- Load hour by hour: one green, the darker the busier; the busiest hour is ringed
 const HEAT: Array<[string, string]> = [
-  ['#F1F5F9', 'transparent'],
-  ['#E0E7FF', '#3730A3'],
-  ['#C7D2FE', '#312E81'],
-  ['#A5B4FC', '#1E1B4B'],
-  ['#FDE68A', '#78350F'],
-  ['#FCD34D', '#78350F'],
-  ['#FB923C', '#FFFFFF'],
-  ['#FB923C', '#FFFFFF'],
-  ['#F43F5E', '#FFFFFF'],
-  ['#F43F5E', '#FFFFFF'],
-  ['#9F1239', '#FFFFFF'],
+  ['#F5F7F6', 'transparent'],
+  ['#D9F5E2', '#003D2B'],
+  ['#BDEDCB', '#003D2B'],
+  ['#9CE2B2', '#003D2B'],
+  ['#74D494', '#003D2B'],
+  ['#3FC16F', '#003D2B'],
+  ['#00A83A', '#FFFFFF'],
+  ['#008A3A', '#FFFFFF'],
+  ['#006B36', '#FFFFFF'],
+  ['#005A30', '#FFFFFF'],
+  ['#003D2B', '#FFFFFF'],
 ];
 const heatOf = (count: number): [string, string] => HEAT[Math.min(HEAT.length - 1, count)];
 const inWindow = (hour: number) => hour >= 18 || hour < 7;
 const heatScale = () =>
-  `<div class="scale"><span>спокойно</span>${[1, 2, 3, 4, 5, 6, 8, 10].map((count) => `<i style="background:${heatOf(count)[0]}"></i>`).join('')}<span>перегруз</span></div>`;
+  `<div class="scale"><span>1 задача</span>${[1, 2, 4, 6, 8, 10].map((count) => `<i style="background:${heatOf(count)[0]}"></i>`).join('')}<span>10 и больше</span></div>`;
 const heatmap = (repository: ReportRepository): string =>
   `<div class="heat"><div></div>${Array.from({ length: 24 }, (_, hour) => `<div class="hh${inWindow(hour) ? ' win' : ''}">${String(hour).padStart(2, '0')}</div>`).join('')}${repository.heat
     .map(
@@ -242,17 +242,17 @@ const overviewPage = (repository: ReportRepository, view: View): string => {
     </div>
     ${pill(repository.status, true)}
   </div>
-  <div class="verdict ${tone(repository.status)}">${icon(repository.status === 'ok' ? 'check' : repository.status === 'unknown' ? 'question' : 'alert', tone(repository.status))}<div>${esc(repository.verdict)}</div></div>
+  <div class="verdict ${tone(repository.status)}">${mark(repository.status)}<div>${esc(repository.verdict)}</div></div>
   <div class="rowA">
     <div class="panel cap">
-      ${donut(repository)}
-      <div class="lg">
-        <div><i style="background:var(--used)"></i><span>${repository.unknown ? 'Занято' : 'Бэкапы задач'}</span><b>${tb(owned)} ТБ</b></div>
-        ${orphan > NOTABLE_BYTES ? `<div><i style="background:var(--orph)"></i><span>Без задачи<small>можно освободить</small></span><b>≈ ${tb(orphan)} ТБ</b></div>` : ''}
-        <div><i style="background:var(--${freeTone(repository)})"></i><span>Свободно</span><b>${tbOfGB(repository.freeGB)} ТБ</b></div>
-        <div class="lg-tot"><span>Всего</span><b>${tbOfGB(repository.capacityGB)} ТБ</b></div>
-        ${squeezed ? `<p>Файлов ${tb(repository.allBytes)} ТБ лежит на ${tb(used)} ТБ диска — массив сжимает. «Без задачи» пересчитано в место на диске.</p>` : ''}
+      <div class="cap-h"><h3>Место</h3><span>всего ${tbOfGB(repository.capacityGB)} ТБ</span></div>
+      ${bar(repository)}
+      <div class="cap-l">
+        <div><span><i class="key used"></i>${repository.unknown ? 'Занято' : 'Бэкапы задач'}</span><b>${tb(owned)}<small>ТБ</small></b></div>
+        ${orphan > NOTABLE_BYTES ? `<div><span><i class="key orph"></i>Без задачи — можно освободить</span><b>≈ ${tb(orphan)}<small>ТБ</small></b></div>` : ''}
+        <div><span><i class="key free"></i>Свободно</span><b class="${freeTone(repository)}">${tbOfGB(repository.freeGB)}<small>ТБ · ${Math.round(repository.freePercent)}%</small></b></div>
       </div>
+      ${squeezed ? `<p>Файлов ${tb(repository.allBytes)} ТБ лежит на ${tb(used)} ТБ диска — массив сжимает. «Без задачи» пересчитано в место на диске.</p>` : ''}
     </div>
     <div class="rcol">
       <div class="kpis">${tiles}</div>
@@ -264,7 +264,7 @@ const overviewPage = (repository: ReportRepository, view: View): string => {
     repository.unknown
       ? `${section('Что сделать', '')}${actionCards(repository)}`
       : `<div class="panel heatp grow">
-    <div class="ph"><div><h3>Нагрузка по часам</h3><div class="sub">Сколько задач пишут одновременно — максимум за ${view.report.days} дней. Фиолетовые часы — окно бэкапов 18:00–07:00.</div></div>${heatScale()}</div>
+    <div class="ph"><div><h3>Нагрузка по часам</h3><div class="sub">Сколько задач пишут одновременно — максимум за ${view.report.days} дней. Подчёркнутые часы — окно бэкапов 18:00–07:00; обведён самый загруженный час.</div></div>${heatScale()}</div>
     ${heatmap(repository)}
   </div>`
   }`;
@@ -339,7 +339,7 @@ const movesPanel = (repository: ReportRepository): string => {
     <div class="mv-x"><s>${move.from}</s> ${glyph('arrow')} <b>${move.to}</b></div>
     <div class="mv-e">${chip('ok', `пик ${move.before} → ${move.after}`)}</div>
   </div>`;
-  return `<div class="panel"><h3>${glyph('clock')} Перенести старт</h3><div class="sub">Серым — сейчас, фиолетовым — куда перенести. Весь прогон остаётся в окне 18:00–07:00. Пик по расписанию: ${repository.plannedBefore} → ${repository.plannedAfter}.</div><div class="mvs">${repository.moves.map(row).join('')}</div></div>`;
+  return `<div class="panel"><h3>${glyph('clock')} Перенести старт</h3><div class="sub">Серым — сейчас, зелёным — куда перенести. Весь прогон остаётся в окне 18:00–07:00. Пик по расписанию: ${repository.plannedBefore} → ${repository.plannedAfter}.</div><div class="mvs">${repository.moves.map(row).join('')}</div></div>`;
 };
 
 const SHOWN_ORPHANS = 10;
@@ -373,7 +373,12 @@ const actionPages = (repository: ReportRepository): string[] => {
 };
 
 // --- The cover
-const cover = (view: View): string => {
+/** Repositories the cover has room to list; the rest are on the page of cards. */
+const COVER_ROWS = 6;
+/** Things to do first the cover has room for, in two columns. */
+const COVER_FIRST = 6;
+
+const cover = (view: View, pageOf: Map<ReportRepository, number>, total: number): string => {
   const { report } = view;
   const all = report.repositories;
   const capacity = all.reduce((sum, repository) => sum + repository.capacityGB, 0);
@@ -383,8 +388,32 @@ const cover = (view: View): string => {
   const silent = report.servers.filter((server) => !server.answered).map((server) => esc(server.name));
   const percent = (part: number, whole: number) => (whole ? Math.round((100 * part) / whole) : 0);
   const bySite = (each: (site: (typeof report.sites)[number]) => string) => (named.length ? report.sites.map(each).join(' · ') : '');
-  const statuses = (['crit', 'warn', 'ok', 'unknown'] as const).map((status) => [status, all.filter((repository) => repository.status === status).length] as const).filter(([, count]) => count);
-  const hot = all.filter((repository) => repository.status === 'crit' || repository.status === 'unknown').sort((a, b) => b.score - a.score);
+  const count = (status: Status) => all.filter((repository) => repository.status === status).length;
+  const worst = [...all].sort((a, b) => b.score - a.score);
+
+  // How it all stands, in one sentence: the worst state there is, and how many are in it.
+  const of = `из ${all.length} хранилищ`;
+  const [state, headline]: [Status, string] = count('crit')
+    ? ['crit', `${count('crit')} ${of} ${plural(count('crit'), 'требует', 'требуют', 'требуют')} действий сегодня`]
+    : count('unknown')
+      ? ['unknown', `${count('unknown')} ${of} не видно: сервер Veeam не ответил`]
+      : count('warn')
+        ? ['warn', `Срочного нет; ${count('warn')} ${of} под наблюдением`]
+        : ['ok', all.length ? `Все ${storagesWord(all.length)} в порядке: ${all.length}` : 'Хранилищ не найдено'];
+  const rest = [
+    count('crit') && count('warn') ? `под наблюдением ещё ${count('warn')}` : '',
+    state !== 'ok' && count('ok') ? `в порядке ${count('ok')}` : '',
+  ].filter(Boolean);
+  const reasons = worst
+    .filter((repository) => repository.status === state && repository.problems.length)
+    .slice(0, 2)
+    .map((repository) => `${esc(repository.short)} — ${esc(lower(repository.problems[0].title))}`);
+  const detail = [...reasons, ...rest].join('; ');
+
+  const shown = worst.slice(0, COVER_ROWS);
+  const row = (repository: ReportRepository) =>
+    `<tr class="${tone(repository.status)}"><td class="gr-n"><b>${esc(repository.short)}</b><small>${[repository.site, repository.name.split(' · ')[0]].filter(Boolean).map(esc).join(' · ')}</small></td><td>${pill(repository.status)}</td><td>${bar(repository)}</td><td class="r gr-f"><b>${Math.round(repository.freePercent)}%</b><small>${tbOfGB(repository.freeGB)} из ${tbOfGB(repository.capacityGB)} ТБ</small></td><td class="r gr-v">${repository.unknown ? '?' : repository.active.length}</td><td class="r gr-v">${repository.unknown ? '?' : repository.peak}</td><td class="r gr-p"><a href="#${slug(repository)}">стр. ${pageOf.get(repository)}</a></td></tr>`;
+
   const recommendations = report.sites.map((site) => {
     const label = `<div class="rec-s">${glyph('pin')} ${esc(site.name || 'Все хранилища')}</div>`;
     const fits = site.repositories.filter((repository) => repository.fit !== undefined).sort((a, b) => (b.fit as number) - (a.fit as number));
@@ -399,53 +428,48 @@ const cover = (view: View): string => {
     return `<div class="rec">${label}<div class="rec-n">${esc(best.short)}</div><div class="rec-w">${why.map((reason) => `<span>${reason}</span>`).join('')}</div>${next ? `<div class="rec-2">Запасной: ${esc(next.short)}</div>` : ''}</div>`;
   });
   return `<section class="page cover">
-    <div class="hero">
-      <div class="eyebrow"><span><span class="logo"></span>VEEAM · РЕПОЗИТОРИИ</span><span>${view.stamp}</span></div>
+    <aside class="side">
+      <div class="brand"><span class="logo"></span>VEEAM<span>Backup &amp; Replication</span></div>
       <h1>Состояние репозиториев</h1>
       <p class="lead">За ${report.days} дней: ${report.servers.length} ${plural(report.servers.length, 'сервер', 'сервера', 'серверов')} Veeam, ${all.length} ${storagesWord(all.length)}${named.length > 1 ? ` на ${named.length} площадках` : ''}.${silent.length ? ` Не ${silent.length === 1 ? 'ответил' : 'ответили'}: ${silent.join(', ')}.` : ''}</p>
-      <div class="hk-row">
-        <div class="hk"><div class="hk-l">Хранилищ</div><div class="hk-v">${all.length}</div><div class="hk-h">${bySite((site) => `${esc(site.name)} ${site.repositories.length}`)}</div></div>
-        <div class="hk"><div class="hk-l">Ёмкость</div><div class="hk-v">${Math.round(capacity / 1024)}<small>ТБ</small></div><div class="hk-h">${bySite((site) => `${esc(site.name)} ${Math.round(site.repositories.reduce((sum, repository) => sum + repository.capacityGB, 0) / 1024)}`)}</div></div>
-        <div class="hk"><div class="hk-l">Свободно</div><div class="hk-v">${Math.round(free / 1024)}<small>ТБ · ${percent(free, capacity)}%</small></div><div class="hk-h">${bySite((site) => `${esc(site.name)} ${percent(site.repositories.reduce((sum, repository) => sum + repository.freeGB, 0), site.repositories.reduce((sum, repository) => sum + repository.capacityGB, 0))}%`)}</div></div>
-        <div class="hk"><div class="hk-l">Без задачи</div><div class="hk-v">${Math.round(orphaned / 1024 ** 4)}<small>ТБ</small></div><div class="hk-h">размер файлов · можно освободить после проверки</div></div>
+      <div class="when">${view.stamp}</div>
+      <div class="sum">
+        <div><small>Хранилищ</small><b>${all.length}</b><p>${bySite((site) => `${esc(site.name)} ${site.repositories.length}`)}</p></div>
+        <div><small>Ёмкость</small><b>${Math.round(capacity / 1024)}<span>ТБ</span></b><p>${bySite((site) => `${esc(site.name)} ${Math.round(site.repositories.reduce((sum, repository) => sum + repository.capacityGB, 0) / 1024)}`)}</p></div>
+        <div><small>Свободно</small><b>${Math.round(free / 1024)}<span>ТБ</span></b><p>${percent(free, capacity)}% всего${named.length ? ' · ' : ''}${bySite((site) => `${esc(site.name)} ${percent(site.repositories.reduce((sum, repository) => sum + repository.freeGB, 0), site.repositories.reduce((sum, repository) => sum + repository.capacityGB, 0))}%`)}</p></div>
+        <div><small>Без задачи</small><b>${Math.round(orphaned / 1024 ** 4)}<span>ТБ</span></b><p>размер файлов · можно освободить после проверки</p></div>
       </div>
-    </div>
-    <div class="strip">${statuses.map(([status, count]) => `<div class="seg ${tone(status)}" style="flex:${count}"><b>${count}</b> ${STATUS_WORD[status].toLowerCase()}</div>`).join('')}</div>
-    <div class="cols3">
-      <div class="panel"><h3>${glyph('alert')} Горит</h3><div class="sub">Хранилища, где нужны действия сейчас</div>
-        <div class="hot">${
-          hot.length
-            ? hot
-                .map(
-                  (repository) =>
-                    `<a class="hot-r" href="#${slug(repository)}"><div class="hr-n">${esc(repository.short)}</div><div class="hr-d">${repository.problems
-                      .filter((problem) => problem.severity !== 'warn')
-                      .map((problem) => esc(problem.title))
-                      .join(' · ')}</div>${pill(repository.status)}</a>`,
-                )
-                .join('')
-            : '<div class="empty">Критичных нет.</div>'
-        }</div>
-        <div class="fill"><div class="fill-h">Свободно по хранилищам</div>${[...all]
-          .sort((a, b) => a.freePercent - b.freePercent)
-          .map((repository) => `<div class="fl"><span>${esc(repository.short)}</span><div class="fl-b"><i class="${freeTone(repository)}" style="width:${repository.freePercent.toFixed(1)}%"></i></div><b class="${freeTone(repository)}">${Math.round(repository.freePercent)}%</b></div>`)
-          .join('')}</div>
+    </aside>
+    <div class="main">
+      <div class="headline">${mark(state)}<div><h2>${headline}</h2>${detail ? `<p>${detail}.</p>` : ''}</div></div>
+      <div>
+        <h3>Хранилища <small>${all.length > shown.length ? `${shown.length} из ${all.length}, худшие сверху — остальные на стр. 2` : 'худшие сверху'}</small></h3>
+        <table class="grid"><tr><th>Хранилище</th><th>Состояние</th><th style="width:44mm">Заполнение</th><th class="r">Свободно</th><th class="r">Задач</th><th class="r">Пик</th><th class="r"></th></tr>${shown.map(row).join('')}</table>
+        <div class="legend-k"><span><i class="key used"></i>бэкапы задач</span><span><i class="key orph"></i>бэкапы без задачи</span><span><i class="key free"></i>свободно</span><span>Пик — сколько задач пишут одновременно</span></div>
       </div>
-      <div class="panel"><h3>${glyph('check')} Сделать в первую очередь</h3><div class="sub">По всем хранилищам сразу</div>
-        <div class="first">${report.first
-          .map((thing, index) => `<div class="fi ${thing.severity}"><div class="a-n">${index + 1}</div><div><div class="fi-t">${esc(thing.title)}</div><div class="fi-d">${esc(thing.detail)}</div></div></div>`)
-          .join('')}</div>
+      <div class="lower">
+        <div><h3>Сделать в первую очередь <small>по всем хранилищам сразу</small></h3>
+          <div class="first">${
+            report.first.length
+              ? report.first
+                  .slice(0, COVER_FIRST)
+                  .map((thing, index) => `<div class="fi ${thing.severity}"><div class="a-n">${index + 1}</div><div><div class="fi-t">${esc(thing.title)}</div><div class="fi-d">${esc(thing.detail)}</div></div></div>`)
+                  .join('')
+              : '<div class="empty">Срочных дел нет.</div>'
+          }</div>
+        </div>
+        <div><h3>Куда ставить новую задачу</h3>
+          <div class="recs">${recommendations.join('')}</div>
+        </div>
       </div>
-      <div class="panel accent"><h3>${glyph('arrow')} Куда ставить новую задачу</h3><div class="sub">Место, тихие часы и запись не узкое место.${named.length > 1 ? ' Хранилище — на той же площадке, что и машины.' : ''}</div>
-        <div class="recs">${recommendations.join('')}</div>
-      </div>
+      <div class="foot"><span>Место, тихие часы и запись не узкое место — так выбрано, куда ставить задачу.${named.length > 1 ? ' Хранилище — на той же площадке, что и машины.' : ''}</span><span><b>1</b> / ${total}</span></div>
     </div>
   </section>`;
 };
 
 // --- Every repository as a card
 const cards = (view: View, pageOf: Map<ReportRepository, number>): string => `
-  ${section('Все хранилища', 'Полоса — заполнение: тёмное — бэкапы задач, сиреневое — без задачи, цветное — свободно. Нажмите карточку — откроется хранилище.')}
+  ${section('Все хранилища', 'Полоса — заполнение: тёмное — бэкапы задач, штриховка — без задачи, светлое — свободно. Нажмите карточку — откроется хранилище.')}
   ${view.report.sites
     .map((site) => {
       const capacity = site.repositories.reduce((sum, repository) => sum + repository.capacityGB, 0);
