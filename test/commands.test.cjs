@@ -556,7 +556,7 @@ test('/points with a name says at once that the PDF is coming, then sends it wit
   // What 🛡 says of the job, its newest point and how far back it goes — the point a failed run left is none — and when it was read.
   const lines = sent.caption.split('\n');
   assert.equal(lines[0], '🗂 <b>OPS_Exchange</b> · точки восстановления');
-  assert.match(lines[1], /^🔴 <b>Нет бэкапа \d+ дн(?:я|ей)<\/b>$/u);
+  assert.match(lines[1], /^🔴 <b>Нет бэкапа \d+ (?:день|дня|дней)<\/b>$/u);
   assert.match(lines[2], /^<i>последний \d\d\.\d\d в \d\d:\d\d<\/i>$/u);
   assert.match(lines[3], /^Последняя точка \d\d\.\d\d \d\d:\d\d · откат на 1 точку, до \d\d\.\d\d \d\d:\d\d$/u);
   assert.match(sent.caption, /\n\n<i>localhost · за 35 дней, на \d\d\.\d\d\.\d{4} \d\d:\d\d\.<\/i>$/u);

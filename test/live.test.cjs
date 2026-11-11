@@ -1153,7 +1153,7 @@ test('a point left behind by a failed run is not counted as a backup', async () 
   assert.ok(topic, 'the topic was published');
   // The run of 14 September errored out: its point is not the newest backup.
   assert.ok(!/14\.09/u.test(topic.text), topic.text);
-  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ дн/u);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ д(?:ень|н)/u);
 });
 
 test('a point finished by a successful retry counts, whatever id it carries', async () => {
@@ -1165,7 +1165,7 @@ test('a point finished by a successful retry counts, whatever id it carries', as
   const topic = w.api.sent().find((m) => /требу(?:ет|ют) внимания/.test(m.text));
   // Written nine minutes into the retry that succeeded, so it is a backup —
   // even though the session id on it belongs to the attempt that failed.
-  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ дн\S+\n<i>последний 23\.08 в 01:31/u);
+  assert.match(topic.text, /<b>OPS_Exchange<\/b> — нет бэкапа \d+ д\S+\n<i>последний 23\.08 в 01:31/u);
 });
 
 
