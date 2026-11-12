@@ -1,6 +1,6 @@
 import { escapeHtml, truncate } from '../telegram/format';
 import { bar, fitted, footerOf, plural, Clock } from './format';
-import { RepositoryCapacity } from '../estate/repository-capacity';
+import { folderOf, RepositoryCapacity } from '../estate/repository-capacity';
 
 /**
  * The 💾 slot: where is space running out?
@@ -50,6 +50,7 @@ export const renderRepositories = (
   if (!repositories) return ['⚠️ <b>Данные репозиториев временно недоступны</b>', '', footer].join('\n');
   if (!repositories.length) return ['⚪ <b>Репозитории не найдены</b>', '', footer].join('\n');
 
+  const twins = twinsOf(repositories);
   const listed = repositories.map((repository) => ({ repository, fill: fillOf(repository) }));
   const headline = headlineOf(listed.map(({ fill }) => fill));
   // When they do not all fit, the ones left out are the ones that are fine.
@@ -61,7 +62,9 @@ export const renderRepositories = (
       const kept = new Set(byNeed.slice(0, shown));
       const left = byNeed.slice(shown);
       const lines = [headline, ''];
-      for (const entry of listed) if (kept.has(entry)) lines.push(lineOf(entry.repository, entry.fill));
+      for (const entry of listed) {
+        if (kept.has(entry)) lines.push(lineOf(entry.repository, entry.fill) + twinOf(twins.get(entry.repository)));
+      }
       if (left.length) {
         lines.push(`…и ещё ${left.length}${left.every(({ fill }) => fill === 'fine') ? ' в порядке' : ''}`);
       }
@@ -70,6 +73,34 @@ export const renderRepositories = (
     }),
   );
 };
+
+/**
+ * The repositories of one server that point at a folder another of them
+ * points at, each with the one it repeats.
+ *
+ * A repository named BKP06 was attached to the share of BKP05: it showed
+ * BKP05's free space as its own, to the gigabyte, and what was written to
+ * "BKP06" filled BKP05. Nothing in the two lines said so. The one named as
+ * its folder is taken for the rightful one, else the first by name; the
+ * others say whose folder they are in.
+ */
+export const twinsOf = (repositories: RepositoryCapacity[]): Map<RepositoryCapacity, RepositoryCapacity> => {
+  const groups = new Map<string, RepositoryCapacity[]>();
+  for (const repository of repositories) {
+    if (!repository.folder) continue;
+    groups.set(repository.folder, [...(groups.get(repository.folder) ?? []), repository]);
+  }
+  const twins = new Map<RepositoryCapacity, RepositoryCapacity>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const owner = group.find(({ name, path }) => name.toLowerCase() === folderOf(path)) ?? group[0];
+    for (const repository of group) if (repository !== owner) twins.set(repository, owner);
+  }
+  return twins;
+};
+
+const twinOf = (owner: RepositoryCapacity | undefined): string =>
+  owner ? `\n      ⚠️ <i>та же папка, что у ${escapeHtml(owner.name)}</i>` : '';
 
 /** "Репозитории: 1 почти заполнен, 1 заполняется", or that all of them are fine. */
 const headlineOf = (fills: Fill[]): string => {

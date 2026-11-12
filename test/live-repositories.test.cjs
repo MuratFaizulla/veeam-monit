@@ -137,3 +137,19 @@ test('repositories go by name, BKP2 before BKP10 however full each is, and Defau
   assert.ok(at.every((position) => position > 0), text);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
 });
+
+test('a repository attached to the folder of another says whose folder it is in', () => {
+  // BKP06 on one server was attached to the share of BKP05, and showed
+  // BKP05's free space as its own.
+  const share = (name, folder) => ({
+    id: name, name, type: 'SmbShare', path: `\\\\10.10.27.13\\${folder}`, capacityGB: 102400, freeGB: 46660, isOnline: true,
+  });
+  const text = render(
+    [share('AST01_BKP05', 'AST01_BKP05'), share('AST01_BKP06', 'AST01_BKP05'), share('AST01_BKP07', 'AST01_BKP07')],
+    { now: new Date('2026-11-12T05:00:00Z'), timezone: 'Asia/Almaty' },
+  );
+  const lines = text.split('\n');
+  const at = lines.findIndex((line) => line.includes('<b>AST01_BKP06</b>'));
+  assert.match(lines[at + 1], /⚠️ <i>та же папка, что у AST01_BKP05<\/i>/);
+  assert.equal(text.match(/та же папка/g).length, 1, 'only the one that is not named as the folder');
+});
