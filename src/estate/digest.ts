@@ -1,5 +1,6 @@
 import { NotificationEvent } from '../telegram/types';
 import { Job } from '../veeam/estate';
+import { Clock, dateOf } from '../telegram/time';
 import { isDisabled, isRunningNow, WorkingJobs } from './job-state';
 
 /**
@@ -22,6 +23,14 @@ export interface FailingJob {
   name: string;
   /** Lower-cased Veeam result: `failed` or `warning`. */
   result: string;
+  /** When it last ran, as Veeam writes it; absent for one that never has. */
+  lastRun?: string;
+  /**
+   * Whether Veeam has a next run for it. One without is not going to mend
+   * itself tonight: its failure is listed apart, so the runs that failed
+   * yesterday are not read past among ones from two months ago.
+   */
+  planned: boolean;
 }
 
 export interface DigestSummary {
@@ -37,7 +46,7 @@ export interface DigestSummary {
    */
   disabled: number;
   /**
-   * Jobs Veeam has no result for: made and never run. Counted so that the
+   * Jobs Veeam has no result for and is not running: made and never run. Counted so that the
    * figures add up to the total — on a server of replicas half the jobs were
    * in no line at all, and the summary read as if it had lost them.
    */
@@ -100,10 +109,17 @@ export const summarise = (
     if (result === 'success') summary.success += 1;
     else if (result === 'warning') summary.warning += 1;
     else if (result === 'failed') summary.failed += 1;
-    else summary.unrun += 1;
+    // One on its first run has no result either, and is among the running.
+    else if (!isRunningNow(job, working)) summary.unrun += 1;
 
     if (result === 'failed' || result === 'warning') {
-      summary.failing.push({ id: job.id, name: job.name, result });
+      summary.failing.push({
+        id: job.id,
+        name: job.name,
+        result,
+        lastRun: job.lastRun ?? undefined,
+        planned: Boolean(job.nextRun),
+      });
     }
   }
 
@@ -122,10 +138,24 @@ export const summarise = (
  */
 const BODY_LIMIT = 3400;
 
-const bodyOf = (summary: DigestSummary): string | undefined => {
+/** Said above the jobs with no next run, which are listed after the ones that have one. */
+export const UNPLANNED = 'Следующего запуска нет:';
+
+const bodyOf = (summary: DigestSummary, clock?: Clock): string | undefined => {
   // The icons every other message uses for the same two results, where Veeam's
-  // own FAILED and WARNING used to stand.
-  const lines = summary.failing.map((job) => `${job.result === 'failed' ? '🔴' : '🟡'} ${job.name}`);
+  // own FAILED and WARNING used to stand. The day of the run beside each: a
+  // failure of last night and one of two months ago are not the same news.
+  const lineOf = (job: FailingJob): string => {
+    const at = job.lastRun ? Date.parse(job.lastRun) : NaN;
+    const when = !clock ? '' : Number.isNaN(at) ? ' · не запускалось' : ` · ${dateOf(at, clock)}`;
+    return `${job.result === 'failed' ? '🔴' : '🟡'} ${job.name}${when}`;
+  };
+  const planned = summary.failing.filter((job) => job.planned);
+  const unplanned = summary.failing.filter((job) => !job.planned);
+  const lines = [
+    ...planned.map(lineOf),
+    ...(unplanned.length ? [...(planned.length ? [''] : []), UNPLANNED, ...unplanned.map(lineOf)] : []),
+  ];
   if (lines.length === 0) return undefined;
 
   const whole = lines.join('\n');
@@ -137,7 +167,8 @@ const bodyOf = (summary: DigestSummary): string | undefined => {
     size += lines[kept].length + 1;
     kept += 1;
   }
-  return [...lines.slice(0, kept), `…и ещё ${lines.length - kept}`].join('\n');
+  const left = lines.slice(kept).filter((line) => line && line !== UNPLANNED).length;
+  return [...lines.slice(0, kept), `…и ещё ${left}`].join('\n');
 };
 
 /**
@@ -147,7 +178,7 @@ const bodyOf = (summary: DigestSummary): string | undefined => {
  * is a different claim from what happened in the last day and was the wrong one
  * on any morning a job had not run since Friday.
  */
-export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
+export const digestEvent = (summary: DigestSummary, clock?: Clock): NotificationEvent => ({
   kind: 'digest',
   severity: summary.failed ? 'critical' : summary.warning ? 'warning' : 'success',
   title: 'Veeam: сводка по заданиям',
@@ -166,7 +197,7 @@ export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
         : `${summary.running} (только по статусу заданий: сессии Veeam не прочитаны)`,
     ],
   ],
-  body: bodyOf(summary),
+  body: bodyOf(summary, clock),
 });
 
 /**

@@ -378,7 +378,8 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     // Under a cooldown of its own, kept like any alert's, so it is armed only
     // once the Summary was delivered: arming before the fetch, as this used
     // to, lost the whole digest for 23 hours whenever that request threw.
-    await watch.sending.send({ ...digestEvent(summary), dedupeKey: DIGEST, cooldownMs: 23 * HOUR });
+    const clock = { now: new Date(this.now()), timezone: this.config.timezone };
+    await watch.sending.send({ ...digestEvent(summary, clock), dedupeKey: DIGEST, cooldownMs: 23 * HOUR });
   }
 
   private async emit(event: NotificationEvent, cooldowns: EventCooldowns): Promise<DeliveryReport> {

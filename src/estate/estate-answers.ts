@@ -80,7 +80,7 @@ export class EstateAnswers {
     if (!read.ok) return about(estate, { text: read.message }, this.named);
     const working = await workingOn(estate);
     const summary = summarise(read.jobs, working.byJob, working.unavailable);
-    const event = digestEvent(summary);
+    const event = digestEvent(summary, { now: new Date(), timezone: this.estates.timezone ?? '' });
     return {
       // The very same event the daily message sends, rendered instead of
       // routed, and titled as the daily one is. Two renderings of one set of

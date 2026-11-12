@@ -26,9 +26,12 @@ export interface ServerEstate extends VeeamServer {
 @Injectable()
 export class ServerEstates {
   readonly all: readonly ServerEstate[];
+  /** The zone the operator reads times in. */
+  readonly timezone: string;
 
   constructor(config: ConfigService, servers: VeeamServers) {
     this.all = servers.all.map((server) => estateOf(config, server));
+    this.timezone = config.getOrThrow<AppConfig['telegram']>('telegram').timezone;
   }
 
   /**

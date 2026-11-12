@@ -581,6 +581,33 @@ test('a job that has never run is counted, so the summary adds up to its total',
   assert.deepEqual(summary.failing, []);
 });
 
+test('the summary says when each failing job last ran, and lists apart the ones with no next run', () => {
+  // Three of five «С ошибкой» had failed two months ago and had no schedule:
+  // the two that failed last night stood among them, alike.
+  const { summarise, digestEvent, UNPLANNED } = require('../dist/estate/digest');
+  const { jobOf } = require('../dist/veeam/estate');
+  const jobs = [
+    { id: '1', name: 'Old', status: 'Stopped', lastResult: 'Failed', lastRun: '2026-09-16T10:03:45+05:00' },
+    { id: '2', name: 'Nightly', status: 'Stopped', lastResult: 'Failed', lastRun: '2026-11-11T23:49:35+05:00', nextRun: '2026-11-12T21:00:00+05:00' },
+    { id: '3', name: 'Never', status: 'Stopped', lastResult: 'Failed' },
+    { id: '4', name: 'Warned', status: 'Stopped', lastResult: 'Warning', lastRun: '2026-11-10T19:00:23+05:00', nextRun: '2026-11-13T19:00:00+05:00' },
+    { id: '5', name: 'First run', status: 'Running', lastResult: 'None' },
+  ].map(jobOf);
+  const clock = { now: new Date('2026-11-12T05:00:00Z'), timezone: 'Asia/Almaty' };
+  const summary = summarise(jobs, new Set());
+  assert.equal(summary.unrun, 0, 'the one on its first run is running, not unrun');
+  assert.deepEqual(digestEvent(summary, clock).body.split('\n'), [
+    '🔴 Nightly · 11.11',
+    '🟡 Warned · 10.11',
+    '',
+    UNPLANNED,
+    '🔴 Never · не запускалось',
+    '🔴 Old · 16.09',
+  ]);
+  // Without a clock, the names alone, as before.
+  assert.match(digestEvent(summary).body, /^🔴 Nightly\n🟡 Warned\n/);
+});
+
 test('a running job Veeam still calls disabled is counted as running', async () => {
   const { summarise } = require('../dist/estate/digest');
   const { jobOf } = require('../dist/veeam/estate');
