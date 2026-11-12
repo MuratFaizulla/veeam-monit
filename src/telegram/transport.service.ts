@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
+import { rememberingLookup } from './remembered-lookup';
 import { AppConfig } from '../config/configuration';
 import { TelegramDestination, TelegramMarkup } from './types';
 
@@ -130,6 +131,8 @@ export class TelegramTransportService implements OnModuleDestroy {
             // Bot API failures carry their reason in the body, so the status is
             // inspected by hand instead of being thrown away by axios.
             validateStatus: () => true,
+            // A resolver that stops answering does not take Telegram with it.
+            lookup: rememberingLookup() as never,
           })
         : null;
     this.transport = transport ?? null;

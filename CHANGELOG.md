@@ -27,6 +27,8 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Changed
 
+- The Summary says the day each failing job last ran, and lists under «Следующего запуска нет» the ones Veeam has no next run for: a failure of last night no longer stands unmarked among ones from two months ago.
+- 💾 marks a repository attached to the folder of another one — «та же папка, что у …»: it shows the other's free space as its own, and what is written to it fills the other.
 - The Job report comes in about ten seconds instead of twenty to thirty, and in a few when one was asked of the same server in the last half hour. Which jobs write to which repository — every job's settings, six to eight seconds on a server of a hundred jobs — is read beside the job's month, not after it, kept for half an hour for each server, and begun when the job's card is opened.
 - The Job report is drawn in veeam.com's colours under Veeam's logo: a dark panel with the job, its settings, its last run, its repository and its Fulls; the verdict as a coloured band; the runs, the machines, what to do and the chain as cards; and a session a card whose head is filled by how it ended.
 - A repository attached to several servers raises one low-space alert, not one per server: the first server on the list that reads it speaks for it, and the alert says «Also attached to» with the others. Which attachments are one repository is decided as in `/repos`, by the folder they point at. A local disk is its server's own, as before.
@@ -45,6 +47,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Fixed
 
+- While the host's DNS does not answer, the bot reaches Telegram at the address it last resolved. Every send and every button used to fail with `EAI_AGAIN api.telegram.org` for as long as the resolvers were silent, with Telegram itself where it had been.
 - The Summary counts the jobs that have never run, as «Ещё не запускались», so its lines add up to «Всего заданий». On a server of replicas it said 41 jobs and accounted for 21.
 - A bot started while Telegram could not be reached — the host's DNS down for the minute of a deploy — tries to begin listening again every 15 seconds. It used to give up at once, and then heard no command and no button until it was restarted, long after Telegram was back.
 - `docker compose stop` and `restart` end the bot at once. It ignored the stop signal, so Docker waited ten seconds and killed it.
