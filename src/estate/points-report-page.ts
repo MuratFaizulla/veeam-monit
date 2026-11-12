@@ -4,14 +4,18 @@ import { shortName } from './job-report-page';
 import { CALENDAR_DAYS, Cell, MachineDays } from './points-calendar';
 import { daysWords, momentLabel, namesWords, PointsReport, Tile } from './points-report';
 import { envelope, ReportDocument, stampOf } from './report-envelope';
+import { VEEAM_LOGO } from './veeam-logo';
 
 /**
  * The Points report as one HTML document for the browser to print, in the
- * look the user drew for it: a light page of white cards — the job and how it
- * stands, five numbers, the five weeks a machine to a row, and under them the
- * machines' errors, what to do and the chains on disk. A job of more machines
- * than the first page holds goes on over further pages, the days' header
- * repeated on each.
+ * look of the Job report and the Repository report: veeam.com's dark navy
+ * panel under Veeam's logo — the job, how it stands and what it is set to do
+ * — and beside it white cards on a pale page: what is wrong in one band,
+ * five numbers, the five weeks a machine to a row, and under them the
+ * machines' errors, what to do and the chains on disk. A Full is navy and an
+ * increment Veeam's green; coral says a run that failed and nothing else. A
+ * job of more machines than the first page holds goes on over further pages,
+ * the days' header repeated on each.
  *
  * Everything is laid out to fit, whatever the job says: a name, a number or a
  * line that would wrap is made smaller or cut short, the cards under the grid
@@ -38,7 +42,7 @@ export const pointsReportPage = (report: PointsReport, timezone: string): Report
 };
 
 /** Machines the first page holds under its head and numbers, with the cards under them. */
-export const FIRST_ROWS = 8;
+export const FIRST_ROWS = 13;
 /** Machines a page after it holds. */
 export const NEXT_ROWS = 26;
 
@@ -48,11 +52,10 @@ const chunks = <T>(items: T[], size: number): T[][] =>
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 
 /** The page's colours, as drawn. */
-const DOT = { crit: '#E5484D', warn: '#E0A100', ok: '#1F9D55', unknown: '#A7AEB9' } as const;
-const WORD = { crit: '#D13438', warn: '#8A5A00', ok: '#1B7F45', unknown: '#5E6878' } as const;
+const DOT = { crit: '#FF5A5F', warn: '#FFB224', ok: '#00D15F', unknown: '#ADACAF' } as const;
 
 /** A name drawn smaller the longer it is, so that it stays on its line. */
-const nameSize = (name: string): string => (name.length <= 24 ? '' : name.length <= 32 ? ' style="font-size:26px"' : name.length <= 44 ? ' style="font-size:21px"' : ' style="font-size:18px"');
+const nameSize = (name: string): string => (name.length <= 24 ? '' : name.length <= 32 ? ' style="font-size:20px"' : name.length <= 44 ? ' style="font-size:17px"' : ' style="font-size:15px"');
 /** A number drawn smaller the longer it is: «сб 24.10, 22:00» wrapped at the size of «2,4 ТБ». */
 const valueSize = (value: string): string => (value.length <= 11 ? '' : value.length <= 15 ? ' m' : ' s');
 /**
@@ -72,36 +75,39 @@ const firstPage = (report: PointsReport, shown: MachineDays[], stamp: string, ti
   const { status, verdict } = report;
   const said = `${verdict.problem.charAt(0).toUpperCase()}${verdict.problem.slice(1)}${verdict.facts.length ? ` — ${verdict.facts.join(' · ')}` : ''}.`;
   return `<section class="page">
-  <div class="top">
-    <div class="card head">
-      <div class="eyebrow">Точки восстановления · Veeam B&amp;R</div>
-      <h1 class="job"${nameSize(report.name)}>${esc(report.name)}</h1>
-      <div class="meta one">${report.facts.map(esc).join(' · ')}</div>
+  <aside class="side">
+    <div class="brand">${VEEAM_LOGO}<span>Backup &amp; Replication</span></div>
+    <div>
+      <div class="eyebrow">Точки восстановления</div>
+      <h1 class="job"${nameSize(report.name)}>${esc(report.name).replace(/_/g, '_<wbr>')}</h1>
+      <div class="st"><span class="dot" style="background:${DOT[status]}"></span><span>${esc(report.word)}</span></div>
     </div>
-    <div class="card status">
-      <div class="st"><span class="dot" style="background:${DOT[status]}"></span><span style="color:${WORD[status]}">${esc(report.word)}</span></div>
-      <div class="verdict">${esc(said)}</div>
-      <div class="meta one">Сервер ${esc(report.server)} · ${stamp} · за ${CALENDAR_DAYS} дней</div>
+    <ul class="facts">${report.facts.map((fact) => `<li>${esc(fact)}</li>`).join('')}</ul>
+    <div class="stamp"><span>${esc(report.server)} · за ${CALENDAR_DAYS} дней</span><span>${stamp}</span></div>
+  </aside>
+  <div class="main">
+    <div class="band ${status}"><div class="verdict">${esc(said)}</div></div>
+    <div class="tiles">${report.tiles.map(tile).join('')}</div>
+    ${grid(report, shown, 0, false)}
+    <div class="bottom">
+      <div class="card bcard">${errors(report)}</div>
+      <div class="card bcard">${steps(report)}</div>
+      <div class="card bcard">${chains(report, timezone)}</div>
     </div>
+    ${foot(report, 1, pages)}
   </div>
-  <div class="tiles">${report.tiles.map(tile).join('')}</div>
-  ${grid(report, shown, 0, false)}
-  <div class="bottom">
-    <div class="card bcard">${errors(report)}</div>
-    <div class="card bcard">${steps(report)}</div>
-    <div class="card bcard">${chains(report, timezone)}</div>
-  </div>
-  ${foot(report, 1, pages)}
 </section>`;
 };
 
 const nextPage = (report: PointsReport, shown: MachineDays[], from: number, page: number, pages: number): string => `<section class="page">
-  <div class="card chead">
-    <div class="ch-l"><span class="eyebrow">Точки восстановления · Veeam B&amp;R</span><b>${esc(report.name)}</b></div>
-    <div class="meta">Машины ${from + 1}–${from + shown.length} из ${report.calendar.rows.length}</div>
+  <div class="main">
+    <div class="chead">
+      <div class="ch-l">${VEEAM_LOGO}<span class="eyebrow">Точки восстановления</span><b>${esc(report.name)}</b></div>
+      <div class="meta">Машины ${from + 1}–${from + shown.length} из ${report.calendar.rows.length}</div>
+    </div>
+    ${grid(report, shown, from, true)}
+    ${foot(report, page, pages)}
   </div>
-  ${grid(report, shown, from, true)}
-  ${foot(report, page, pages)}
 </section>`;
 
 const tile = ({ label, value, note, alarm }: Tile): string =>
@@ -210,8 +216,8 @@ const chains = (report: PointsReport, timezone: string): string => {
   const current = found.spans[found.spans.length - 1];
   const oldest = found.spans.length > 1 ? found.spans[0] : undefined;
   const legend = [
-    ...(oldest ? [`<span class="lg"><span class="sw" style="background:#8FAEEB"></span>${label(oldest)}${oldest.leaves !== undefined ? `, уйдёт ~${calendarLabel(oldest.leaves)}` : ', самая старая'}</span>`] : []),
-    `<span class="lg"><span class="sw" style="background:#2453C7"></span>${label(current)}, текущая</span>`,
+    ...(oldest ? [`<span class="lg"><span class="sw" style="background:#6B7697"></span>${label(oldest)}${oldest.leaves !== undefined ? `, уйдёт ~${calendarLabel(oldest.leaves)}` : ', самая старая'}</span>`] : []),
+    `<span class="lg"><span class="sw" style="background:#010D35"></span>${label(current)}, текущая</span>`,
   ].join('');
   const newest = [...found.spans].reverse();
   const shown = newest.slice(0, CHAIN_ROWS);
@@ -241,85 +247,99 @@ const foot = (report: PointsReport, page: number, pages: number): string =>
 const STYLE = `
 @page { size: 297mm 210mm; margin: 0; }
 html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { margin: 0; background: #F5F7FA; }
-.page { width: 297mm; height: 210mm; box-sizing: border-box; padding: 20px 28px 18px; background: #F5F7FA; color: #15191F; font-family: 'Inter Variable', system-ui, sans-serif; display: flex; flex-direction: column; gap: 8px; overflow: hidden; font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; break-after: page; }
+body { margin: 0; background: #EEF4F6; }
+.page { width: 297mm; height: 210mm; box-sizing: border-box; background: #EEF4F6; color: #232323; font-family: 'Inter Variable', system-ui, sans-serif; display: flex; overflow: hidden; font-size: 12.5px; line-height: 1.45; font-variant-numeric: tabular-nums; break-after: page; }
 .page:last-child { break-after: auto; }
 .page * { box-sizing: border-box; }
-.card { background: #fff; border: 1px solid #E3E8EF; border-radius: 14px; }
-.top { display: flex; justify-content: space-between; align-items: stretch; gap: 16px; flex: none; }
-.head { padding: 12px 20px; flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
-.eyebrow { font-size: 12px; font-weight: 600; color: #5E6878; }
-.job { margin: 0; font-size: 32px; line-height: 1.05; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.meta { color: #5E6878; font-size: 13px; }
-.meta.one { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.meta.small { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status { width: 360px; flex: none; padding: 12px 18px; display: flex; flex-direction: column; gap: 5px; }
-.st { display: flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 700; }
-.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
-.verdict { font-size: 12.5px; line-height: 1.4; color: #2A303B; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; flex: none; }
-.tile { padding: 10px 15px; min-width: 0; }
-.tl-k { font-size: 12px; font-weight: 600; color: #5E6878; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-v { font-size: 23px; font-weight: 700; margin-top: 4px; line-height: 1.15; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-v.m { font-size: 20px; line-height: 26px; }
-.tl-v.s { font-size: 17px; line-height: 26px; }
-.tl-s { font-size: 12px; color: #5E6878; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bad { color: #D13438; }
 h1, h2, h3 { margin: 0; }
-h2 { font-size: 14px; font-weight: 700; white-space: nowrap; }
-.gcard { padding: 12px 16px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
-.sec-h { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.legend { display: flex; gap: 14px; font-size: 12px; color: #3E4654; flex-wrap: wrap; }
+
+/* The navy panel the report opens on */
+.side { width: 272px; flex: none; background: #010D35; color: #D6DBE6; padding: 40px 28px 28px; display: flex; flex-direction: column; gap: 24px; }
+.brand { display: flex; align-items: center; gap: 11px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.18); font-size: 10px; color: #ADB4C6; white-space: nowrap; }
+.veeam-logo { height: 32px; width: auto; flex: none; }
+.eyebrow { font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #00D15F; }
+.job { margin-top: 6px; font-size: 23px; line-height: 1.12; font-weight: 700; letter-spacing: -0.01em; color: #fff; overflow-wrap: anywhere; }
+.st { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: 600; color: #fff; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
+.facts { list-style: none; margin: 0; padding: 0; font-size: 11.5px; line-height: 1.4; color: #fff; }
+.facts li { padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); overflow-wrap: anywhere; }
+.facts li:last-child { border-bottom: none; }
+.stamp { margin-top: auto; display: flex; justify-content: space-between; gap: 8px; font-size: 9.5px; color: #8791AA; padding-top: 9px; border-top: 1px solid rgba(255, 255, 255, 0.18); white-space: nowrap; }
+
+/* The page beside it */
+.main { flex: 1; min-width: 0; padding: 22px 24px 16px; display: flex; flex-direction: column; gap: 9px; }
+.card { background: #fff; border: 1px solid #DFE6EA; border-radius: 9px; }
+.band { flex: none; border-radius: 9px; padding: 10px 16px; background: #fff; color: #232323; }
+.band.crit { background: #FF5A5F; color: #fff; } .band.warn { background: #FFB224; } .band.ok { background: #00D15F; color: #fff; }
+.verdict { font-size: 15px; line-height: 1.3; font-weight: 700; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.meta { color: #505861; font-size: 12px; }
+.meta.small { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; flex: none; }
+.tile { padding: 9px 12px; min-width: 0; }
+.tl-k { font-size: 9.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #505861; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-v { font-size: 19px; font-weight: 700; margin-top: 3px; line-height: 24px; letter-spacing: -0.01em; color: #010D35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-v.m { font-size: 16px; }
+.tl-v.s { font-size: 14px; }
+.tl-s { font-size: 11px; color: #505861; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bad { color: #E63946; }
+h2 { font-size: 13.5px; font-weight: 700; color: #010D35; white-space: nowrap; }
+.gcard { padding: 11px 14px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
+.sec-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.legend { display: flex; gap: 11px; font-size: 11px; color: #505861; flex-wrap: wrap; }
 .sec-h .legend { flex-wrap: nowrap; white-space: nowrap; }
-.lg { display: inline-flex; align-items: center; gap: 6px; }
-.sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; flex: none; }
+.lg { display: inline-flex; align-items: center; gap: 5px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
 .grid { display: flex; flex-direction: column; gap: 3px; }
-.row { display: grid; grid-template-columns: 150px repeat(${CALENDAR_DAYS}, minmax(0, 1fr)) 52px; gap: 3px; align-items: center; }
-.mon { font-size: 12px; font-weight: 600; color: #5E6878; border-bottom: 1px solid #E3E8EF; padding-bottom: 3px; white-space: nowrap; overflow: hidden; }
-.hd { font-size: 11px; color: #5E6878; text-align: center; line-height: 1.3; }
-.hd.we { color: #8A94A3; }
-.hd.fd { color: #2453C7; font-weight: 700; }
-.hd.miss { color: #D13438; }
-.nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
-.cnt { font-size: 13px; font-weight: 700; text-align: right; }
-.none { color: #5E6878; font-size: 13px; padding: 4px 0; }
-.c { display: block; height: 14px; border-radius: 4px; }
-.sw.c { display: inline-block; height: 11px; border-radius: 3px; }
-.f { background: #2453C7; }
-.i { background: #B5CBF5; }
-.x { background: #E5484D; }
-.r { background: #E6EAF0; }
-.e { background: #fff; border: 1px dashed #C9D0DB; }
-.mf { outline: 2px solid #E5484D; outline-offset: -2px; }
-.bottom { flex: 1; min-height: 0; display: grid; grid-template-columns: 0.95fr 1.1fr 1.05fr; gap: 12px; }
-.bcard { padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; overflow: hidden; font-size: 12.5px; line-height: 1.38; }
-.bcard h3 { font-size: 14px; font-weight: 700; flex: none; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; white-space: nowrap; }
+.row { display: grid; grid-template-columns: 132px repeat(${CALENDAR_DAYS}, minmax(0, 1fr)) 40px; gap: 2px; align-items: center; }
+.mon { font-size: 11px; font-weight: 600; color: #505861; border-bottom: 1px solid #DFE6EA; padding-bottom: 3px; white-space: nowrap; overflow: hidden; }
+.hd { font-size: 10px; color: #505861; text-align: center; line-height: 1.3; }
+.hd.we { color: #ADACAF; }
+.hd.fd { color: #010D35; font-weight: 800; }
+.hd.miss { color: #E63946; }
+.nm { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
+.cnt { font-size: 12px; font-weight: 700; text-align: right; }
+.none { color: #505861; font-size: 12.5px; padding: 4px 0; }
+.c { display: block; height: 14px; border-radius: 3px; }
+.sw.c { display: inline-block; height: 10px; border-radius: 3px; }
+.f { background: #010D35; }
+.i { background: #00D15F; }
+.x { background: #FF5A5F; }
+.r { background: #E3E9ED; }
+.e { background: #fff; border: 1px dashed #C7D0D6; }
+.mf { outline: 2px solid #FF5A5F; outline-offset: -2px; }
+.bottom { flex: 1; min-height: 0; display: grid; grid-template-columns: 0.85fr 1fr 1.2fr; gap: 9px; }
+.bcard { padding: 11px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; overflow: hidden; font-size: 12px; line-height: 1.38; }
+.bcard h3 { font-size: 13.5px; font-weight: 700; color: #010D35; flex: none; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; white-space: nowrap; padding-bottom: 6px; border-bottom: 1px solid #EEF4F6; }
 .err { margin: 0; flex: none; }
 .who { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .err b { font-weight: 700; }
-.errt { color: #D13438; display: -webkit-box; margin-top: 2px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.more { font-size: 12px; font-weight: 400; color: #5E6878; }
+.errt { color: #E63946; display: -webkit-box; margin-top: 2px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.more { font-size: 11px; font-weight: 400; color: #505861; }
 .act { margin: 0; flex: none; }
 .act b { display: block; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .act .ad { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.act.calm { color: #3E4654; }
-.imp { display: inline-block; margin-left: 4px; font-weight: 700; color: #D13438; }
-.note { display: inline-block; margin-left: 4px; color: #5E6878; font-weight: 700; }
-.track { position: relative; height: 12px; border-radius: 6px; background: #EEF1F6; overflow: hidden; margin-top: 4px; flex: none; }
-.track .rm { position: absolute; left: 0; top: 0; bottom: 0; background: #D9DEE7; }
-.track .ca { position: absolute; top: 0; bottom: 0; background: #8FAEEB; box-shadow: inset 1px 0 0 #fff; }
-.track .cc { position: absolute; top: 0; bottom: 0; background: #B5CBF5; box-shadow: inset 1px 0 0 #fff; }
-.track .cb { position: absolute; top: 0; bottom: 0; background: #2453C7; box-shadow: inset 1px 0 0 #fff; }
-.track .tk { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #E5484D; }
-.axis { display: flex; justify-content: space-between; font-size: 11px; color: #5E6878; flex: none; }
+.act.calm { color: #505861; }
+.imp { display: inline-block; margin-left: 4px; font-weight: 700; color: #E63946; }
+.note { display: inline-block; margin-left: 4px; color: #505861; font-weight: 700; }
+.track { position: relative; height: 12px; border-radius: 6px; background: #EEF4F6; overflow: hidden; margin-top: 2px; flex: none; }
+.track .rm { position: absolute; left: 0; top: 0; bottom: 0; background: #DCE3E8; }
+.track .ca { position: absolute; top: 0; bottom: 0; background: #6B7697; box-shadow: inset 1px 0 0 #fff; }
+.track .cc { position: absolute; top: 0; bottom: 0; background: #C9CFDD; box-shadow: inset 1px 0 0 #fff; }
+.track .cb { position: absolute; top: 0; bottom: 0; background: #010D35; box-shadow: inset 1px 0 0 #fff; }
+.track .tk { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #FF5A5F; }
+.axis { display: flex; justify-content: space-between; font-size: 10.5px; color: #505861; flex: none; }
 .bcard .legend { flex: none; }
-.ct { width: 100%; border-collapse: collapse; font-size: 12px; flex: none; }
-.ct th, .ct td { text-align: left; padding: 2px 2px; border-bottom: 1px solid #EEF1F6; font-weight: 400; white-space: nowrap; }
-.ct th { color: #5E6878; font-weight: 600; }
+.ct { width: 100%; border-collapse: collapse; font-size: 11px; flex: none; }
+.ct th, .ct td { text-align: left; padding: 2px 2px; border-bottom: 1px solid #EEF4F6; font-weight: 400; white-space: nowrap; }
+.ct th { color: #505861; font-weight: 600; }
 .ct .n { text-align: right; }
-.ct .dim { color: #5E6878; }
-.chead { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 22px; }
-.ch-l { display: flex; align-items: baseline; gap: 14px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.ch-l b { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; }
-.foot { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; color: #5E6878; padding: 0 4px; flex: none; margin-top: auto; white-space: nowrap; }
+.ct .dim { color: #505861; }
+
+/* The pages after the first open on a navy bar */
+.chead { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 18px; border-radius: 9px; background: #010D35; color: #fff; }
+.chead .meta { color: #ADB4C6; }
+.chead .veeam-logo { height: 22px; }
+.ch-l { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.ch-l b { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; }
+.foot { display: flex; justify-content: space-between; gap: 16px; font-size: 10.5px; color: #505861; padding: 0 2px; flex: none; margin-top: auto; white-space: nowrap; }
 `;

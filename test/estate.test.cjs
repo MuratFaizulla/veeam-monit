@@ -870,7 +870,7 @@ test('the page is the one drawn: the head, the five numbers, the days a machine 
   assert.match(html, /content="default-src 'none';/);
   assert.match(html, /font-family: 'Inter Variable'/);
   assert.doesNotMatch(html, /\p{Extended_Pictographic}/u, 'the server\'s browser may have no font for emoji');
-  assert.match(html, /<h1 class="job">OPS_&lt;b&gt;Exchange&lt;\/b&gt;<\/h1>/);
+  assert.match(html, /<h1 class="job">OPS_<wbr>&lt;b&gt;Exchange&lt;\/b&gt;<\/h1>/);
   assert.doesNotMatch(html, /OPS_<b>Exchange/);
   assert.match(html, />Внимание<\/span>/);
   assert.match(html, /<div class="verdict">Пропущен Full 17\.10 — бэкапы идут · последний Full 10\.10\.<\/div>/);
@@ -905,13 +905,13 @@ test('a job of many machines goes on over further pages, the days\' header on ea
 
   const pages = html.split('<section class="page">').slice(1);
   assert.equal(pages.length, 3);
-  assert.deepEqual(pages.map((page) => (page.match(/<span class="nm">/g) ?? []).length), [8, 26, 26]);
+  assert.deepEqual(pages.map((page) => (page.match(/<span class="nm">/g) ?? []).length), [13, 26, 21]);
   for (const [at, page] of pages.entries()) {
     assert.match(page, /<span class="hd" style="text-align:left">Машина<\/span>/, `page ${at + 1} has the days' header`);
     assert.match(page, new RegExp(`стр\\. ${at + 1} из 3`));
   }
   assert.match(pages[1], /Точки по дням, 18\.09–22\.10 · продолжение/);
-  assert.match(pages[1], /Машины 9–34 из 60/);
+  assert.match(pages[1], /Машины 14–39 из 60/);
   assert.match(pages[2], /<span class="nm">farm-app-60<\/span>/);
   // Three groups of errors, two of them shown; three steps.
   assert.equal(report.errors.length, 3);
@@ -1007,7 +1007,7 @@ test('a job\'s points are read when asked: its backup files once, the machines o
   assert.match(page, /<div class="tl-v">554 ГБ<\/div><div class="tl-s">данных 1,0 ТБ<\/div>/);
   // The job names a machine no point holds: it has a row, red where its attempt said it failed, and what Veeam said —
   // without the service account Veeam wrote after it.
-  assert.match(page, /Репозиторий ARCHIVE · 2 машины/);
+  assert.match(page, /<li>Репозиторий ARCHIVE<\/li><li>2 машины<\/li>/);
   assert.match(page, /<span class="nm">vcd4<\/span>(?:<i class="c r"><\/i>){32}(?:<i class="c [ex]"><\/i>){3}<span class="cnt bad">0<\/span>/);
   assert.match(page, /<span class="who"><b>vcd4<\/b> · \d\d\.\d\d<\/span><span class="errt">Failed to create VM snapshot\.<\/span>/);
   assert.doesNotMatch(page, /svc@example\.com|Logon attempt/);

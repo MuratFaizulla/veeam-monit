@@ -27,6 +27,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Changed
 
+- The Points report is drawn in the look of the Job report and the Repository report: the dark navy panel under Veeam's logo with the job, how it stands and what it is set to do; what is wrong in one band; a Full navy and an increment Veeam's green on the calendar. Its first page holds 13 machines where it held 8.
 - The Repository report's «Кто пишет и когда» tells a job's increment from its Full: «Инкр.» and «Full» stand where «Обычно» stood, each the usual length of such a run, beside «Макс». A run is a Full where most of the restore points it left are full ones; on a Veeam that does not say, where it began on a day the job takes its Full on. A job with neither shows the usual length of any run, dimmed.
 - The Repository report is drawn in the colours of the Job report: the dark navy panel under Veeam's logo on the cover, navy for what is stored, and the same green, amber and coral for the states.
 - The Summary says the day each failing job last ran, and lists under «Следующего запуска нет» the ones Veeam has no next run for: a failure of last night no longer stands unmarked among ones from two months ago.

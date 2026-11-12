@@ -564,7 +564,7 @@ test('/points with a name says at once that the PDF is coming, then sends it wit
   assert.doesNotMatch(sent.caption, /<(?!\/?(?:b|i|pre|code|a)[ >])/u, 'every < opens a tag Telegram knows');
   assert.deepEqual(pressedBy(sent), [`a:pts:${SERVER}:1`, `a:job:${SERVER}:1`, 'a:sum']);
   assert.equal(w.printer.pages.length, 1);
-  assert.match(w.printer.pages[0], /<h1 class="job">OPS_Exchange<\/h1>/);
+  assert.match(w.printer.pages[0], /<h1 class="job">OPS_<wbr>Exchange<\/h1>/);
 });
 
 test('/points before the points are read says why at once, and draws nothing', async () => {
