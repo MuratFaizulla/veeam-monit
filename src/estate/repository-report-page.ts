@@ -271,6 +271,16 @@ const overviewPage = (repository: ReportRepository, view: View): string => {
   }`;
 };
 
+/**
+ * How long its increment usually takes, and its Full. Where neither kind was
+ * told — it left no point that is still kept — the usual length of any run
+ * stands across both, dimmed: a figure with no kind is better than none.
+ */
+const lengthCells = (writer: Writer): string =>
+  writer.incrementHours === undefined && writer.fullHours === undefined
+    ? `<div class="g-num g-any dim">${writer.usualHours === undefined ? '—' : `≈ ${hours(writer.usualHours)}`}</div>`
+    : `<div class="g-num">${hours(writer.incrementHours)}</div><div class="g-num">${hours(writer.fullHours)}</div>`;
+
 // --- Its jobs on 24 hours
 const FIRST_ROWS = 20;
 const MORE_ROWS = 23;
@@ -293,13 +303,13 @@ const chartPages = (repository: ReportRepository, view: View): string[] => {
     <div class="g-start">${writer.plan.time ?? (writer.startMinute !== undefined ? hhmm(writer.startMinute) : '—')}</div>
     <div class="g-name"><div class="g-n">${esc(writer.name)}</div><div class="g-s">${esc(writer.server)} · ${esc(writer.plan.label)}${writer.role === 'metadata' ? ' · метаданные реплик' : ''}</div></div>
     ${track(writer, view.nowMinute)}
-    <div class="g-num">${hours(writer.usualHours)}</div>
+    ${lengthCells(writer)}
     <div class="g-num${(writer.longestHours ?? 0) > 6 ? ' hot' : ''}">${hours(writer.longestHours)}</div>
     <div class="g-c">${errors(writer)}</div>
     <div class="g-c">${bottleneck(writer)}</div>
     <div class="g-c">${writer.running ? chip(writer.hanging ? 'crit' : 'run', `идёт ${hours(writer.running.hours)}`) : ''}</div>
   </div>`;
-  const head = `<div class="g-row g-head"><div>Старт</div><div>Задача</div>${axis(view.nowMinute)}<div class="r">Обычно</div><div class="r">Макс</div><div>Ошибки</div><div>Узкое место</div><div>Сейчас</div></div>`;
+  const head = `<div class="g-row g-head"><div>Старт</div><div>Задача</div>${axis(view.nowMinute)}<div class="r">Инкр.</div><div class="r">Full</div><div class="r">Макс</div><div>Ошибки</div><div>Узкое место</div><div>Сейчас</div></div>`;
   const legend = `<div class="legend"><span><i class="lg-run"></i>обычный прогон</span><span><i class="lg-max"></i>самый долгий за ${view.report.days} дней</span><span><i class="lg-meh"></i>бывают ошибки</span><span><i class="lg-bad"></i>падает или висит</span><span><i class="lg-live"></i>идёт сейчас</span><span><i class="lg-win"></i>окно бэкапов</span><span><i class="lg-now"></i>сейчас, ${hhmm(view.nowMinute)}</span></div>`;
   const notes = [
     idle.length ? `<div><b>Без запусков за ${view.report.days} дней:</b> ${idle.map((writer) => esc(writer.name)).join(', ')}</div>` : '',

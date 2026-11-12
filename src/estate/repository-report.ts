@@ -6,7 +6,8 @@ import { folderKeyOf, folderOf } from './repository-capacity';
 import { ReportJob, writesTo } from './repository-writers';
 import { Load, Stage } from './run-speed';
 import { retryWindowOf, runsOf } from './runs';
-import { timetableOf } from './schedule-planner';
+import { isFullDay } from './full-schedule';
+import { dayIn, timetableOf } from './schedule-planner';
 
 /**
  * The Repository report: every repository of every server, what writes to it
@@ -29,6 +30,12 @@ export interface ReportAttempt {
   startedAt: string;
   endedAt?: string;
   result: string;
+  /**
+   * Whether it wrote a Full: most of the restore points it left are full
+   * ones, the rule the Evidence tells a Full run by. Absent where it left no
+   * point that is still kept, or Veeam did not say which points are full.
+   */
+  full?: boolean;
 }
 
 /** One backup chain on a repository, and what its files take up. */
@@ -116,6 +123,14 @@ export interface Writer {
   /** Hours a finished Run usually takes, and the longest. */
   usualHours?: number;
   longestHours?: number;
+  /**
+   * Hours a finished increment usually takes, and a finished Full. Told
+   * apart because they are not the same job to plan around: the usual run of
+   * a nightly job is its increment, and the Full of the week is the one that
+   * runs into the morning. Each absent when no such Run was told in the period.
+   */
+  incrementHours?: number;
+  fullHours?: number;
   failed: number;
   /** The stage that held it back most, on average over its newest attempts. */
   bottleneck?: { stage: Stage; percent: number };
@@ -379,7 +394,7 @@ export const reportOf = (reading: RepositoryReading, sites: readonly ReportSite[
       for (const job of server.jobs) {
         const role = writesTo(job, repository.id);
         if (!role) continue;
-        writers.push(writerOf(job, role, server.server, attemptsOf.get(job.id) ?? [], loadsOf.get(job.id) ?? [], working.get(job.id), now, local));
+        writers.push(writerOf(job, role, server.server, attemptsOf.get(job.id) ?? [], loadsOf.get(job.id) ?? [], working.get(job.id), now, local, (at) => dayIn(at, timezone)));
       }
     }
 
@@ -497,16 +512,27 @@ const writerOf = (
   live: ServerReading['working'][number] | undefined,
   now: number,
   local: (at: number) => { day: number; minute: number },
+  dayOf: (at: number) => number,
 ): Writer => {
   const newestFirst = [...attempts]
     .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
-    .map((attempt) => ({ startedAt: attempt.startedAt, endedAt: attempt.endedAt, result: attempt.result }));
-  const runs = runsOf(newestFirst, retryWindowOf(job.schedule)).map((run) => {
+    .map((attempt) => ({ startedAt: attempt.startedAt, endedAt: attempt.endedAt, result: attempt.result, full: attempt.full }));
+  const told = runsOf(newestFirst, retryWindowOf(job.schedule)).map((run) => {
     const oldest = run.attempts[run.attempts.length - 1];
     const end = run.attempts[0].endedAt ? Date.parse(run.attempts[0].endedAt) : undefined;
-    return { start: Date.parse(oldest.startedAt ?? ''), end, failed: run.result === 'failed' };
+    // A Run is a Full when any attempt of it wrote one, an increment when
+    // the ones that said anything wrote increments.
+    // Where Veeam did not say — an older server names neither a point's
+    // session nor its type — the day says: a Run begun on a day the job is
+    // set to take a Full on is taken for one.
+    const kinds = run.attempts.map((attempt) => attempt.full).filter((full) => full !== undefined);
+    const start = Date.parse(oldest.startedAt ?? '');
+    const full = kinds.length ? kinds.some(Boolean) : job.fulls && !Number.isNaN(start) ? isFullDay(job.fulls, dayOf(start)) : undefined;
+    return { start, end, failed: run.result === 'failed', full };
   });
-  const finished = runs.filter((run) => run.end !== undefined).map((run) => ((run.end as number) - run.start) / 3_600_000);
+  const runs = told.map(({ start, end, failed }) => ({ start, end, failed }));
+  const lengths = (those: typeof told) => those.filter((run) => run.end !== undefined).map((run) => ((run.end as number) - run.start) / 3_600_000);
+  const finished = lengths(told);
   const plan = planOf(job.schedule);
   let bottleneck: Writer['bottleneck'];
   if (loads.length) {
@@ -529,6 +555,8 @@ const writerOf = (
     runs,
     usualHours: usual,
     longestHours: finished.length ? Math.max(...finished) : undefined,
+    incrementHours: median(lengths(told.filter((run) => run.full === false && !run.failed))),
+    fullHours: median(lengths(told.filter((run) => run.full === true && !run.failed))),
     failed: runs.filter((run) => run.failed).length,
     bottleneck,
     running: since !== undefined && runningHours !== undefined ? { hours: runningHours, percent: live?.percent, sinceMinute: local(since).minute } : undefined,

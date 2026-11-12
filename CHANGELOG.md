@@ -27,6 +27,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Changed
 
+- The Repository report's «Кто пишет и когда» tells a job's increment from its Full: «Инкр.» and «Full» stand where «Обычно» stood, each the usual length of such a run, beside «Макс». A run is a Full where most of the restore points it left are full ones; on a Veeam that does not say, where it began on a day the job takes its Full on. A job with neither shows the usual length of any run, dimmed.
 - The Repository report is drawn in the colours of the Job report: the dark navy panel under Veeam's logo on the cover, navy for what is stored, and the same green, amber and coral for the states.
 - The Summary says the day each failing job last ran, and lists under «Следующего запуска нет» the ones Veeam has no next run for: a failure of last night no longer stands unmarked among ones from two months ago.
 - 💾 marks a repository attached to the folder of another one — «та же папка, что у …»: it shows the other's free space as its own, and what is written to it fills the other.

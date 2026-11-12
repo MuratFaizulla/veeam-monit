@@ -305,6 +305,59 @@ test('a server is read for its repositories, the jobs that write there and the c
   assert.ok(asked.some((params) => params?.createdAfterFilter), 'сессии — только за период');
 });
 
+test('a session is a Full where most of the points it left are full ones; one that left none says nothing', async () => {
+  const { veeam } = veeamServer(Date.now(), {
+    '/api/v1/restorePoints': { data: [
+      { id: 'p1', sessionId: 's2', type: 'Full' },
+      { id: 'p2', sessionId: 's2', type: 'Full' },
+      // A machine added to the job writes its first, full, point on an incremental night.
+      { id: 'p3', sessionId: 's2', type: 'Increment' },
+      { id: 'p4', sessionId: 's3', type: 'Increment' },
+    ] },
+  });
+  const reading = await readServer('veeam01-backup-a', new VeeamEstateReader(veeam, auth), new Date(Date.now() - 14 * 24 * HOUR));
+  assert.deepEqual(reading.attempts.map((attempt) => attempt.full), [true, undefined]);
+});
+
+test('a job says how long its increment usually takes and how long its Full', () => {
+  // «Обычно» of a nightly job was its increment, and its weekly Full — the
+  // one that runs into the morning — was to be guessed from «Макс».
+  const run = (daysAgo, hours, over = {}) => ({
+    jobId: 'j1', startedAt: iso(AT - daysAgo * 24 * HOUR), endedAt: iso(AT - daysAgo * 24 * HOUR + hours * HOUR), result: 'success', ...over,
+  });
+  const reading = (job, attempts) => ({
+    at: AT, days: 14,
+    servers: [serverReading('veeam01-backup-a', {
+      repositories: [repository('r1', 'NAS01_BKP01', '\\\\192.0.2.10\\NAS01_BKP01')],
+      jobs: [{ id: 'j1', name: 'OPS_Exchange', disabled: false, schedule: nightly(), backupRepositoryId: 'r1', ...job }],
+      attempts,
+    })],
+  });
+  const writerOf = (job, attempts) => reportOf(reading(job, attempts), SITES, 'UTC').repositories[0].writers[0];
+
+  // Told by Veeam: the points each session left.
+  const told = writerOf({}, [
+    run(1, 0.5, { full: false }), run(2, 0.5, { full: false }), run(3, 6, { full: true }), run(4, 0.5, { full: false }),
+    // A Full that failed is no measure of a Full.
+    run(5, 0.1, { full: true, result: 'failed' }),
+  ]);
+  assert.deepEqual([told.incrementHours, told.fullHours, told.longestHours], [0.5, 6, 6]);
+
+  // Not told, as on an older Veeam: a run begun on a day the job takes its Full on. AT is a Monday.
+  const sundays = [{ kind: 'active', weekdays: [0] }];
+  const byDay = writerOf({ fulls: sundays }, [run(1, 5), run(2, 0.5), run(3, 0.5)]);
+  assert.deepEqual([byDay.incrementHours, byDay.fullHours], [0.5, 5]);
+
+  // Neither: no kind is made up.
+  const unknown = writerOf({}, [run(1, 5), run(2, 0.5)]);
+  assert.deepEqual([unknown.incrementHours, unknown.fullHours], [undefined, undefined]);
+  assert.ok(unknown.usualHours !== undefined);
+
+  const page = (job, attempts) => reportPage(reportOf(reading(job, attempts), SITES, 'UTC'), undefined, 'UTC');
+  assert.match(page({}, [run(1, 0.5, { full: false }), run(3, 6, { full: true })]), /<div class="g-num">30 мин<\/div><div class="g-num">6,0 ч<\/div>/);
+  assert.match(page({}, [run(1, 5)]), /<div class="g-num g-any dim">≈ 5,0 ч<\/div>/);
+});
+
 test('a server that stops answering keeps what it said before', async () => {
   const { veeam } = veeamServer(Date.now(), { '/api/v1/jobs': () => { throw new Error('The Veeam server did not respond within 30000 ms'); } });
   const reading = await readServer('veeam01-backup-a', new VeeamEstateReader(veeam, auth), new Date(0));

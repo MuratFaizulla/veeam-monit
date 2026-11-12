@@ -1,3 +1,4 @@
+import { FullSchedule, fullSchedulesOf } from './full-schedule';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
 import { VeeamJob, VeeamSchedule } from '../veeam/types';
 import { settled, valueOf } from './settled';
@@ -25,6 +26,8 @@ export interface ReportJob {
   backupRepositoryId?: string;
   /** Where a replica job keeps its metadata — the only repository it names. */
   metadataRepositoryId?: string;
+  /** The periodic Fulls it is set to take; absent when its configuration did not say. */
+  fulls?: FullSchedule[];
 }
 
 /**
@@ -47,6 +50,7 @@ export const jobsWriting = async (reader: Pick<VeeamEstateReader, 'jobConfigurat
       schedule: job.schedule,
       backupRepositoryId: known.storage?.backupRepositoryId,
       metadataRepositoryId: known.jobSettings?.metadataRepositoryId,
+      fulls: fullSchedulesOf(known.storage),
     };
   });
 };

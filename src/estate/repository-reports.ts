@@ -201,6 +201,29 @@ export class RepositoryReports {
 }
 
 /**
+ * Which sessions wrote a Full, of the ones that left a restore point still
+ * kept: a Full where most of its points are full ones, since a machine added
+ * to a job writes its first, full, point on an incremental night. Empty when
+ * the points cannot be read or none says its session and its type, as on an
+ * older Veeam: the report then goes by the days each job takes its Full on.
+ */
+const fullSessions = async (reader: VeeamEstateReader): Promise<Map<string, boolean>> => {
+  const tally = new Map<string, { points: number; fulls: number }>();
+  try {
+    for (const point of await reader.restorePoints()) {
+      if (!point.sessionId || !point.type) continue;
+      const run = tally.get(point.sessionId) ?? { points: 0, fulls: 0 };
+      run.points += 1;
+      if (point.type.toLowerCase() === 'full') run.fulls += 1;
+      tally.set(point.sessionId, run);
+    }
+  } catch {
+    return new Map();
+  }
+  return new Map([...tally].map(([session, run]) => [session, run.fulls * 2 > run.points]));
+};
+
+/**
  * Everything the report needs from one server. A request that fails stops
  * the reading of that server, and what was read before it is kept: a server
  * that answered its repositories and then timed out on its jobs is still
@@ -215,15 +238,20 @@ export const readServer = async (server: string, reader: VeeamEstateReader, sinc
       reading.jobs.filter((job) => reading.repositories.some((repository) => writesTo(job, repository.id))).map((job) => job.id),
     );
 
+    // Asked beside the sessions, and the report is not held up for it: a
+    // server that does not answer it has runs of no known kind.
+    const kinds = fullSessions(reader);
     const sessions = (await reader.sessionsCreatedAfter(since)).filter(
       (session): session is VeeamSession & { id: string; jobId: string; creationTime: string } =>
         Boolean(session.id && session.jobId && session.creationTime && writing.has(session.jobId)),
     );
+    const full = await kinds;
     reading.attempts = sessions.map((session) => ({
       jobId: session.jobId,
       startedAt: session.creationTime,
       endedAt: session.endTime,
       result: session.result?.result ?? '',
+      ...(full.has(session.id) ? { full: full.get(session.id) } : {}),
     }));
 
     // Newest first, as read: the first finished ones of each job.
