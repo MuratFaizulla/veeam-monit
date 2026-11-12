@@ -557,6 +557,30 @@ test('a job switched off in Veeam is counted apart, never as a failure', () => {
   assert.doesNotMatch(event.body, /OPS_MGMT_VEEAM_OLD|Old warning/);
 });
 
+test('a job that has never run is counted, so the summary adds up to its total', () => {
+  // On a server of replicas the summary said 41 jobs and accounted for 21:
+  // twenty had never run, had no result, and were in no line at all.
+  const { summarise, digestEvent } = require('../dist/estate/digest');
+  const { jobOf } = require('../dist/veeam/estate');
+  const jobs = [
+    { id: '1', name: 'Replica A', status: 'Stopped', lastResult: 'None' },
+    { id: '2', name: 'Replica B', status: 'Stopped', lastResult: 'None' },
+    { id: '3', name: 'Files', status: 'Stopped', lastResult: 'Success' },
+    { id: '4', name: 'Off', status: 'Disabled', lastResult: 'None' },
+  ].map(jobOf);
+
+  const summary = summarise(jobs, new Set());
+  assert.equal(summary.unrun, 2);
+  assert.equal(
+    summary.success + summary.warning + summary.failed + summary.unrun + summary.disabled,
+    summary.total,
+  );
+  const field = (event, label) => event.fields.find(([name]) => name === label)?.[1];
+  assert.equal(field(digestEvent(summary), 'Ещё не запускались'), 2);
+  assert.equal(field(digestEvent(summarise(jobs.slice(2), new Set())), 'Ещё не запускались'), undefined);
+  assert.deepEqual(summary.failing, []);
+});
+
 test('a running job Veeam still calls disabled is counted as running', async () => {
   const { summarise } = require('../dist/estate/digest');
   const { jobOf } = require('../dist/veeam/estate');

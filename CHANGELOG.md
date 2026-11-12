@@ -45,6 +45,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Fixed
 
+- The Summary counts the jobs that have never run, as «Ещё не запускались», so its lines add up to «Всего заданий». On a server of replicas it said 41 jobs and accounted for 21.
 - A bot started while Telegram could not be reached — the host's DNS down for the minute of a deploy — tries to begin listening again every 15 seconds. It used to give up at once, and then heard no command and no button until it was restarted, long after Telegram was back.
 - `docker compose stop` and `restart` end the bot at once. It ignored the stop signal, so Docker waited ten seconds and killed it.
 - A live topic switched off by its setting kept its last message: 🧹 with `TELEGRAM_LIVE_ORPHANS=false`, or every topic with `TELEGRAM_LIVE=false`. Nothing wrote to it and nothing deleted it, and two days later the bot could no longer delete it at all. Now a topic the bot does not publish has its messages deleted, once.

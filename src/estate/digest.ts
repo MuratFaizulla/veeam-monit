@@ -36,6 +36,12 @@ export interface DigestSummary {
    * switched it off, and nobody was expecting it to run again.
    */
   disabled: number;
+  /**
+   * Jobs Veeam has no result for: made and never run. Counted so that the
+   * figures add up to the total — on a server of replicas half the jobs were
+   * in no line at all, and the summary read as if it had lost them.
+   */
+  unrun: number;
   running: number;
   /**
    * Why the Working sessions could not be read, when they could not. The
@@ -73,6 +79,7 @@ export const summarise = (
     warning: 0,
     failed: 0,
     disabled: 0,
+    unrun: 0,
     running: 0,
     runningUnread: workingUnread,
     failing: [],
@@ -93,6 +100,7 @@ export const summarise = (
     if (result === 'success') summary.success += 1;
     else if (result === 'warning') summary.warning += 1;
     else if (result === 'failed') summary.failed += 1;
+    else summary.unrun += 1;
 
     if (result === 'failed' || result === 'warning') {
       summary.failing.push({ id: job.id, name: job.name, result });
@@ -149,6 +157,7 @@ export const digestEvent = (summary: DigestSummary): NotificationEvent => ({
     ['С предупреждением', summary.warning],
     ['С ошибкой', summary.failed],
     // Only when there are some: a line saying "0" on every morning is noise.
+    ...(summary.unrun ? [['Ещё не запускались', summary.unrun] as [string, number]] : []),
     ...(summary.disabled ? [['Выключены в Veeam', summary.disabled] as [string, number]] : []),
     [
       'Выполняются',
