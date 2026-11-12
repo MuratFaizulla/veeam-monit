@@ -1,20 +1,22 @@
 /**
- * How the Repository report looks: A4 landscape pages, Inter, and Veeam's
- * green. Green is what the report is drawn in — what is stored, how busy an
- * hour is, a run that went well — and red and amber say a state and nothing
- * else, each beside its mark and its word. The colours are the variables at
- * the top; the rest of the sheet only names them.
+ * How the Repository report looks: A4 landscape pages, Inter, and the colours
+ * of veeam.com, the ones the Job report is drawn in — its green, its dark
+ * navy, and an amber and a coral of the same family. Green is what is going
+ * well and what is busy; navy is what is stored and the panel the report
+ * opens on; coral and amber say a state and nothing else, each beside its
+ * mark and its word. The colours are the variables at the top; the rest of
+ * the sheet only names them.
  */
 export const STYLE = `
 :root {
   --ink: #0e1a15; --text: #2b3a33; --muted: #5f6f68; --faint: #8a9891; --line: #dce3df; --hair: #edf1ee;
   --panel: #f5f7f6; --panel2: #edf1ee;
-  --brand: #00b336; --brand2: #00d15f; --deep: #003d2b; --deeper: #002a1e; --brand-soft: #e9f9ee; --brand-line: #bfeacb; --win: #eef8f1;
-  --crit: #e0312e; --crit-bg: #fdeeed; --crit-ink: #a31f1c; --crit-line: #f4b9b7;
-  --warn: #f5a800; --warn-bg: #fff6dc; --warn-ink: #7a5200; --warn-line: #f3d98a;
-  --ok: #00b336; --ok-bg: #e9f9ee; --ok-ink: #006b2b; --ok-line: #bfeacb;
+  --brand: #00d15f; --brand2: #00d15f; --deep: #010d35; --deeper: #010d35; --brand-soft: #e9f9ee; --brand-line: #bfeacb; --win: #eef8f1;
+  --crit: #ff5a5f; --crit-bg: #fff0f0; --crit-ink: #c9303a; --crit-line: #ffc4c6;
+  --warn: #ffb224; --warn-bg: #fff6e0; --warn-ink: #7a5200; --warn-line: #ffdc94;
+  --ok: #00d15f; --ok-bg: #e9f9ee; --ok-ink: #006b2b; --ok-line: #bfeacb;
   --unk: #8a9891; --unk-bg: #f5f7f6; --unk-ink: #46544d; --unk-line: #dce3df;
-  --used: #003d2b; --orph: repeating-linear-gradient(135deg, #5f8f7c 0 0.7mm, #bfd6cc 0.7mm 1.4mm);
+  --used: #010d35; --orph: repeating-linear-gradient(135deg, #6b7697 0 0.7mm, #c9cfdd 0.7mm 1.4mm);
 }
 @page { size: 297mm 210mm; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,7 +29,7 @@ b { font-weight: 650; }
 .page { width: 297mm; height: 210mm; padding: 8mm 12mm 8mm; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 3.2mm; break-after: page; }
 .page:last-child { break-after: auto; }
 /* The green rule every page but the cover opens with */
-.page::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2mm; background: linear-gradient(90deg, var(--brand), var(--brand2)); }
+.page::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2mm; background: var(--brand); }
 .grow { flex: 1; min-height: 0; }
 
 /* Top bar */
@@ -79,21 +81,17 @@ b.crit { color: var(--crit); } b.warn { color: var(--warn-ink); } b.ok { color: 
 .cover { padding: 0; flex-direction: row; gap: 0; }
 .cover::before { content: none; }
 .side { width: 82mm; flex: none; padding: 11mm 9mm 10mm 10mm; color: #fff; position: relative; overflow: hidden; display: flex; flex-direction: column;
-  background: linear-gradient(165deg, #005b3c 0%, var(--deep) 45%, var(--deeper) 100%); }
-.side::before { content: ''; position: absolute; width: 120mm; height: 120mm; border-radius: 50%; border: 14mm solid rgba(0, 209, 95, 0.16); right: -76mm; bottom: -54mm; }
-.side::after { content: ''; position: absolute; width: 46mm; height: 46mm; border-radius: 50%; background: rgba(0, 209, 95, 0.13); right: -14mm; top: -16mm; }
-.side > * { position: relative; z-index: 1; }
-.brand { display: flex; align-items: center; font-size: 8.6pt; font-weight: 700; letter-spacing: 0.14em; }
-.brand .logo { width: 3.2mm; height: 3.2mm; background: var(--brand2); margin-right: 2.4mm; }
-.brand span:last-child { font-weight: 500; letter-spacing: 0.02em; color: #a9d8bf; margin-left: 2.4mm; }
-.side h1 { font-size: 23pt; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; margin-top: 15mm; }
-.side .lead { font-size: 9pt; color: #c9e6d6; margin-top: 3mm; }
-.side .when { font-size: 8.4pt; color: #a9d8bf; margin-top: 2mm; }
+  background: var(--deep); }
+.brand { display: flex; align-items: center; gap: 3mm; padding-bottom: 3mm; border-bottom: 0.25mm solid rgba(255, 255, 255, 0.18); font-size: 7.4pt; color: #adb4c6; }
+.brand .veeam-logo { height: 8.4mm; width: auto; flex: none; }
+.side h1 { font-size: 23pt; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; margin-top: 12mm; }
+.side .lead { font-size: 9pt; color: #d6dbe6; margin-top: 3mm; }
+.side .when { font-size: 8.4pt; color: #adb4c6; margin-top: 2mm; }
 .sum { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6mm 5mm; }
-.sum small { display: block; font-size: 7.2pt; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9d8bf; }
+.sum small { display: block; font-size: 7.2pt; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand); }
 .sum b { display: block; font-size: 22pt; font-weight: 750; letter-spacing: -0.02em; line-height: 1.15; color: #fff; }
 .sum b span { font-size: 10pt; font-weight: 600; color: var(--brand2); margin-left: 1mm; letter-spacing: 0; }
-.sum p { font-size: 7.4pt; color: #a9d8bf; line-height: 1.3; }
+.sum p { font-size: 7.4pt; color: #adb4c6; line-height: 1.3; }
 .main { flex: 1; min-width: 0; padding: 10mm 12mm 8mm 11mm; display: flex; flex-direction: column; gap: 4.4mm; }
 .main h3::before { content: ''; width: 1.1mm; height: 4.2mm; border-radius: 1mm; background: var(--brand); }
 .main h3 { margin-bottom: 2mm; }
@@ -223,7 +221,7 @@ b.crit { color: var(--crit); } b.warn { color: var(--warn-ink); } b.ok { color: 
 .sp-h b { color: var(--ink); }
 .sp-bar { display: flex; gap: 0.6mm; height: 5mm; margin-top: 1.6mm; border-radius: 1.4mm; overflow: hidden; }
 .sp-bar span { display: flex; align-items: center; padding: 0 2mm; font-size: 7pt; font-weight: 650; color: #fff; white-space: nowrap; overflow: hidden; }
-.sp-Source { background: #0b6b4a; } .sp-Proxy { background: #2f8f83; } .sp-Network { background: #4f7f96; } .sp-Target { background: var(--crit); }
+.sp-Source { background: #010d35; } .sp-Proxy { background: #3d4a78; } .sp-Network { background: #7c88ad; } .sp-Target { background: var(--crit); }
 .sp-n { font-size: 6.8pt; color: var(--muted); margin-top: 1.4mm; line-height: 1.3; }
 .probs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2mm; }
 .prob { display: flex; gap: 2.4mm; align-items: flex-start; border-radius: 2.5mm; padding: 2.2mm 3mm; border: 0.3mm solid var(--line); background: #fff; }

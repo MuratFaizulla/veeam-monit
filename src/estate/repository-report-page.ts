@@ -2,6 +2,7 @@ import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { envelope, ReportDocument, stampOf, Status, STATUS_WORD } from './report-envelope';
 import { STYLE } from './repository-report-style';
+import { VEEAM_LOGO } from './veeam-logo';
 import { Stage } from './run-speed';
 import {
   Attachment,
@@ -77,9 +78,9 @@ const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'un
  * as its colour, on a screen and on a grey printout alike.
  */
 const MARK: Record<string, string> = {
-  ok: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#00B336"/><path d="M4.4 8.3l2.4 2.4 4.8-5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  warn: '<svg viewBox="0 0 16 16"><path d="M8 .9a1.2 1.2 0 0 1 1 .6l6.6 11.6a1.2 1.2 0 0 1-1 1.8H1.4a1.2 1.2 0 0 1-1-1.8L7 1.5a1.2 1.2 0 0 1 1-.6z" fill="#F5A800"/><path d="M8 5.4v4.2" stroke="#3a2800" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.1" r="1" fill="#3a2800"/></svg>',
-  crit: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#E0312E"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>',
+  ok: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#00D15F"/><path d="M4.4 8.3l2.4 2.4 4.8-5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  warn: '<svg viewBox="0 0 16 16"><path d="M8 .9a1.2 1.2 0 0 1 1 .6l6.6 11.6a1.2 1.2 0 0 1-1 1.8H1.4a1.2 1.2 0 0 1-1-1.8L7 1.5a1.2 1.2 0 0 1 1-.6z" fill="#FFB224"/><path d="M8 5.4v4.2" stroke="#3a2800" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.1" r="1" fill="#3a2800"/></svg>',
+  crit: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#FF5A5F"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>',
   unk: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#8A9891"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="#fff"/></svg>',
 };
 const mark = (status: Status | 'unknown'): string => MARK[tone(status)];
@@ -429,7 +430,7 @@ const cover = (view: View, pageOf: Map<ReportRepository, number>, total: number)
   });
   return `<section class="page cover">
     <aside class="side">
-      <div class="brand"><span class="logo"></span>VEEAM<span>Backup &amp; Replication</span></div>
+      <div class="brand">${VEEAM_LOGO}<span>Backup &amp; Replication</span></div>
       <h1>Состояние репозиториев</h1>
       <p class="lead">За ${report.days} дней: ${report.servers.length} ${plural(report.servers.length, 'сервер', 'сервера', 'серверов')} Veeam, ${all.length} ${storagesWord(all.length)}${named.length > 1 ? ` на ${named.length} площадках` : ''}.${silent.length ? ` Не ${silent.length === 1 ? 'ответил' : 'ответили'}: ${silent.join(', ')}.` : ''}</p>
       <div class="when">${view.stamp}</div>
