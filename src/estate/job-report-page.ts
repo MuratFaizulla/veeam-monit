@@ -310,9 +310,9 @@ body { margin: 0; background: #fff; }
 .js-main { flex: 1; min-width: 0; padding: 9mm 10mm 7mm; display: flex; flex-direction: column; gap: 3.2mm; }
 .js-verdict { display: flex; align-items: center; gap: 3mm; border-radius: 2.4mm; padding: 3.2mm 4mm; font-size: 12.5pt; font-weight: 650; line-height: 1.25; letter-spacing: -0.005em; background: #f5f7f8; color: #14171c; border: 0.3mm solid #dcdee2; }
 .js-verdict .js-mk { width: 6mm; height: 6mm; }
-.js-verdict.crit { background: #ff5a5f; border-color: #ff5a5f; color: #fff; } .js-verdict.ok { background: #00d15f; border-color: #00d15f; color: #fff; } .js-verdict.warn { background: #ffb224; border-color: #ffb224; color: #3d2a00; }
+.js-verdict.crit { background: #ff5a5f; border-color: #ff5a5f; color: #fff; } .js-verdict.ok { background: #00d15f; border-color: #00d15f; color: #fff; } .js-verdict.warn { background: #ffb224; border-color: #ffb224; color: #fff; }
 .js-verdict.crit .js-mk circle, .js-verdict.ok .js-mk circle { fill: #fff; } .js-verdict.crit .js-mk path { stroke: #ff5a5f; } .js-verdict.ok .js-mk path { stroke: #00d15f; }
-.js-verdict.warn .js-mk path:first-child { fill: #3d2a00; } .js-verdict.warn .js-mk path + path { stroke: #ffb224; } .js-verdict.warn .js-mk circle { fill: #ffb224; }
+.js-verdict.warn .js-mk path:first-child { fill: #fff; } .js-verdict.warn .js-mk path + path { stroke: #ffb224; } .js-verdict.warn .js-mk circle { fill: #ffb224; }
 .js-partial { color: #505861; font-size: 7.5pt; margin-top: -1.4mm; padding-left: 4mm; }
 .js-tiles { display: grid; grid-template-columns: repeat(5, 1fr); border: 0.3mm solid #dcdee2; border-radius: 2.4mm; padding: 2.8mm 0 2.6mm; }
 .js-tile { min-width: 0; padding: 0 3.6mm; border-left: 0.25mm solid #dcdee2; } .js-tile:first-child { border-left: none; }

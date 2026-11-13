@@ -144,7 +144,7 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .vh-d { font-size: 7.5pt; font-weight: 400; margin-top: 0.4mm; color: #505861; }
 .vr .vh.ok td { background: #00d15f; border-bottom-color: #00d15f; color: #fff; }
 .vr .vh.bad td { background: #ff5a5f; border-bottom-color: #ff5a5f; color: #fff; }
-.vr .vh.warn td { background: #ffb224; border-bottom-color: #ffb224; color: #3d2a00; }
+.vr .vh.warn td { background: #ffb224; border-bottom-color: #ffb224; color: #fff; }
 .vr .vh.run td { background: #eef3ff; } .vr .vh.run .vh-s { color: #3700ff; }
 .vr .vh.ok .vh-d, .vr .vh.bad .vh-d, .vr .vh.warn .vh-d { color: inherit; opacity: 0.92; }
 .vr .vi { table-layout: auto; }
