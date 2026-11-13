@@ -271,8 +271,8 @@ h1, h2, h3 { margin: 0; }
 .card { background: #fff; border: 1px solid #DFE6EA; border-radius: 9px; }
 .band { flex: none; display: flex; align-items: center; gap: 11px; border-radius: 9px; padding: 11px 16px; background: #fff; color: #14171C; border: 1px solid #DFE6EA; }
 .band .dot { width: 14px; height: 14px; }
-.band.crit { background: #ff5a5f; border-color: #ff5a5f; color: #fff; } .band.warn { background: #FFF7E3; border-color: #FFE0A3; } .band.ok { background: #00d15f; border-color: #00d15f; color: #fff; }
-.band.crit .dot, .band.ok .dot { background: #fff !important; }
+.band.crit { background: #FFF1F1; border-color: #FFC9CB; } .band.warn { background: #FFF7E3; border-color: #FFE0A3; } .band.ok { background: #00d15f; border-color: #00d15f; color: #fff; }
+.band.ok .dot { background: #fff !important; }
 .verdict { font-size: 16px; line-height: 1.3; font-weight: 650; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .meta { color: #505861; font-size: 12px; }
 .meta.small { font-size: 11px; }
