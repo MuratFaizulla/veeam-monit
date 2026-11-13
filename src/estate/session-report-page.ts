@@ -142,11 +142,11 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .vh-t { width: 80%; }
 .vr .vh-s { text-align: right; white-space: nowrap; }
 .vr .vh-d { font-size: 7.5pt; font-weight: 400; margin-top: 0.4mm; color: #505861; }
-.vr .vh.ok td { background: #eafaf1; } .vr .vh.ok .vh-s { color: #00893e; }
-.vr .vh.bad td { background: #fff1f1; } .vr .vh.bad .vh-s { color: #d92d3a; }
-.vr .vh.warn td { background: #fff7e3; } .vr .vh.warn .vh-s { color: #a66800; }
+.vr .vh.ok td { background: #00994a; border-bottom-color: #00994a; color: #fff; }
+.vr .vh.bad td { background: #e5484d; border-bottom-color: #e5484d; color: #fff; }
+.vr .vh.warn td { background: #ffb224; border-bottom-color: #ffb224; color: #3d2a00; }
 .vr .vh.run td { background: #eef3ff; } .vr .vh.run .vh-s { color: #3700ff; }
-.vr .vh .vh-s .vh-d { color: #505861; }
+.vr .vh.ok .vh-d, .vr .vh.bad .vh-d, .vr .vh.warn .vh-d { color: inherit; opacity: 0.92; }
 .vr .vi { table-layout: auto; }
 .vr .vi col.c1 { width: 46mm; }
 .vr .vi col.cv { width: 21mm; }
