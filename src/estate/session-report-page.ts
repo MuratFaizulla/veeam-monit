@@ -161,7 +161,7 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .vi .th td { background: #f5f7f8; }
 .vr .nw { white-space: nowrap; }
 .vr .vm { word-break: break-word; font-weight: 600; }
-.vr .note { font-size: 7.5pt; word-break: break-word; color: #505861; }
+.vr .note { font-size: 6.8pt; word-break: break-word; color: #505861; }
 .vr .dim { color: #6b727c; }
 .vr .st { font-weight: 650; }
 .vr .st.ok { color: #00893e; }

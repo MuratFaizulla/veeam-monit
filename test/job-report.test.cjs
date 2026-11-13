@@ -572,7 +572,7 @@ test('machines Veeam would not give are not called never saved, nor gone from vC
     error: `машины 2 сессий из 6: ${NOT_READ}`,
   });
   const newest = page(newestReading);
-  assert.match(machinesOf(newest), /app-01<\/span><\/div><\/div><\/td><td><div class="js-hist">(<i [^>]+><\/i>)+<\/div><\/td><td class="r nw"><span class="js-dim">—<\/span><\/td><td class="r nw"><span class="js-dim">нет сведений<\/span>/);
+  assert.match(machinesOf(newest), /app-<wbr>01<\/span><\/div><\/div><\/td><td><div class="js-hist">(<i [^>]+><\/i>)+<\/div><\/td><td class="r nw"><span class="js-dim">—<\/span><\/td><td class="r nw"><span class="js-dim">нет сведений<\/span>/);
   // Last: a machine never saved is the one to look at first.
   assert.deepEqual(jobReportOf(newestReading, TZ).machines.map((machine) => machine.name), ['edge-01', 'db-01', 'web-01', 'app-01']);
   assert.doesNotMatch(newest, /ни один запуск не обработал|Найти в vCenter/);
@@ -584,6 +584,39 @@ test('machines Veeam would not give are not called never saved, nor gone from vC
   }));
   assert.match(replica, /Машины реплицированы<\/div><div class="js-tv">—</);
   assert.doesNotMatch(replica, /без удачной/);
+});
+
+test('a machine\'s name is printed whole, free to break after its separators, and what Veeam said of it on a row of its own beneath', () => {
+  const reading = edgeReading();
+  const report = jobReportOf(reading, TZ);
+  const machine = { ...report.machines[0], name: 'REMS-DACS01_restored151223-NdST', error: 'Cannot get service content.', errorTone: 'healed' };
+  const html = jobReportPage({ ...report, machines: [machine] }, sessionReportOf(reading, TZ), TZ);
+
+  assert.match(html, /<span>REMS-<wbr>DACS01_<wbr>restored151223-<wbr>NdST<\/span>/);
+  assert.match(html, /<\/tr><tr class="js-x"><td colspan="4"><div class="js-err">Cannot get service content\. · повтор помог<\/div><\/td><\/tr>/);
+});
+
+test('the first page lists as many machines as their rows fit, eight at most, and says how many more the sessions have', () => {
+  const reading = edgeReading();
+  const report = jobReportOf(reading, TZ);
+  const listed = (machines) => {
+    const html = jobReportPage({ ...report, machines }, sessionReportOf(reading, TZ), TZ);
+    const table = html.slice(html.indexOf('<table class="js-vms"'));
+    const more = /и ещё (\d+) — в сессиях на следующих страницах/.exec(table);
+    return { rows: table.slice(0, table.indexOf('</table>')).match(/<tr(?: class="js-hasx")?><td>/g).length, more: more ? Number(more[1]) : 0 };
+  };
+  const plain = Array.from({ length: 12 }, (_, index) => ({ ...report.machines[0], name: `vm-${index}`, error: undefined }));
+  assert.deepEqual(listed(plain), { rows: 8, more: 4 });
+
+  // A long name on two lines and two lines of what Veeam said: fewer of them fit, and the rest are counted, not cut off.
+  const troubled = plain.map((machine, index) => ({
+    ...machine,
+    name: `datamarketplace-node-${index}.example.kz`,
+    error: 'Failed to process the following VMs: datamarketplace-node.example.kz, the proxy did not answer',
+  }));
+  const { rows, more } = listed(troubled);
+  assert.ok(rows >= 1 && rows < 8, `${rows} rows`);
+  assert.equal(more, 12 - rows);
 });
 
 test('sizes and durations are written as Veeam writes them', () => {

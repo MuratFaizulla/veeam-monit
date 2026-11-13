@@ -31,6 +31,7 @@ export const jobReportPage = (report: JobReport, sessions: SessionReport, timezo
 /** What fits the first page by construction: the browser grows a row to its content when it prints. */
 const MACHINE_ROWS = 8;
 const STEP_ROWS = 2;
+/** At most; the card shows as many of them as the steps above leave room for, and says how many wrote under its head. */
 const NEIGHBOUR_ROWS = 4;
 const ERROR_ROWS = 3;
 const CHAIN_ROWS = 6;
@@ -211,17 +212,54 @@ const UNREAD = '<td class="r nw"><span class="js-dim">—</span></td><td class="
 const machineMark = (machine: ReportMachine): string =>
   machine.unread ? MARK.unknown : machine.failing ? MARK.crit : machine.succeeded < machine.tookPart || !machine.tookPart ? MARK.warn : MARK.ok;
 
+/**
+ * A machine's name, free to break after its separators: a name runs to thirty
+ * letters and more, and two lines of it say which machine it is where one cut
+ * short does not — «REMS-DACS01_r…» was two machines.
+ */
+const breakable = (name: string): string => esc(name).replace(/([_.\-])/g, '$1<wbr>');
+/** More runs than this, and the bars of a machine's history stand closer, to keep the column its name needs. */
+const DENSE_RUNS = 20;
+
+/**
+ * The height the machines' rows have on the first page, under the card's head
+ * and its «и ещё», at the most the verdict and the tiles above leave them, and
+ * what one machine's rows take of it — a name long enough to need its second
+ * line, and what Veeam said under it at one line or two. Each guessed long:
+ * a machine left to the sessions' pages is said there, one cut off is not.
+ */
+const MACHINE_ROOM_MM = 74;
+const machineHeight = (machine: ReportMachine): number => {
+  const error = machine.error ? machine.error.length + (machine.errorTone === 'healed' ? 15 : 0) : 0;
+  return 7.2 + (shortName(machine.name).length > 18 ? 3.3 : 0) + (error ? 4 + (error > 64 ? 3.3 : 0) : 0);
+};
+
+/** The machines the first page holds: the first ones, as many as their rows fit, and never fewer than one. */
+const machinesShown = (machines: readonly ReportMachine[]): ReportMachine[] => {
+  let room = MACHINE_ROOM_MM;
+  const shown: ReportMachine[] = [];
+  for (const machine of machines.slice(0, MACHINE_ROWS)) {
+    room -= machineHeight(machine);
+    if (room < 0 && shown.length) break;
+    shown.push(machine);
+  }
+  return shown;
+};
+
 const machinesTable = (report: JobReport, timezone: string): string => {
-  const shown: ReportMachine[] = report.machines.slice(0, MACHINE_ROWS);
+  const shown = machinesShown(report.machines);
   if (!shown.length) return '<div class="js-dim">Сведений по машинам нет: запусков не было, или Veeam их не отдал.</div>';
   const rows = shown
     .map(
       (machine) =>
-        `<tr><td><div class="js-name">${machineMark(machine)}<div><span>${esc(shortName(machine.name))}</span>${machine.error ? `<div class="js-err">${esc(machine.error)}${machine.errorTone === 'healed' ? ' · повтор помог' : ''}</div>` : ''}</div></div></td><td><div class="js-hist">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}</tr>`,
+        `<tr${machine.error ? ' class="js-hasx"' : ''}><td><div class="js-name">${machineMark(machine)}<div><span>${breakable(shortName(machine.name))}</span></div></div></td><td><div class="js-hist${machine.history.length > DENSE_RUNS ? ' dense' : ''}">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}</tr>${
+          // Under the machine, across the row: the name's column is too narrow to hold what Veeam said.
+          machine.error ? `<tr class="js-x"><td colspan="4"><div class="js-err">${esc(machine.error)}${machine.errorTone === 'healed' ? ' · повтор помог' : ''}</div></td></tr>` : ''
+        }`,
     )
     .join('');
   const more = report.machines.length - shown.length;
-  return `<table class="js-vms"><thead><tr><th>Машина</th><th>По ${report.history.byDay ? 'дням' : 'запускам'}</th><th class="r">Успешно</th><th class="r">Сохранена</th></tr></thead><tbody>${rows}</tbody></table>${more > 0 ? `<div class="js-more">и ещё ${more} — в сессиях на следующих страницах</div>` : ''}`;
+  return `<table class="js-vms"><colgroup><col class="c-n"><col><col class="c-s"><col class="c-d"></colgroup><thead><tr><th>Машина</th><th>По ${report.history.byDay ? 'дням' : 'запускам'}</th><th class="r">Успешно</th><th class="r">Сохранена</th></tr></thead><tbody>${rows}</tbody></table>${more > 0 ? `<div class="js-more">и ещё ${more} — в сессиях на следующих страницах</div>` : ''}`;
 };
 
 const stepsTable = (report: JobReport): string => {
@@ -238,14 +276,14 @@ const neighboursTable = (report: JobReport, timezone: string): string => {
   const window = neighbours.window as { start: number; end: number };
   const position = (at: number) => Math.max(0, Math.min(100, (100 * (at - neighbours.origin)) / 86_400_000));
   const rows = neighbours.rows.slice(0, NEIGHBOUR_ROWS + 1);
-  const more = neighbours.jobs - (rows.length - 1);
   return `<div class="js-panel"><h3>Кто ещё писал в ${esc(repository?.short ?? 'репозиторий')} ${dayLabel(window.start, timezone)}</h3><div class="js-sub">${neighbours.jobs} из ${neighbours.of} заданий${report.bottleneck ? ` · узкое место ${STAGE_NAMES[report.bottleneck]}` : ''}</div>
+  <div class="js-nr js-ax"><span></span><span class="js-axis">${[12, 18, 0, 6, 12].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</span><span></span></div>
   <div class="js-nb">${rows
     .map(
       (row) =>
         `<div class="js-nr"><span class="js-nn${row.own ? ' own' : ''}">${esc(row.name)}</span><span class="js-track">${row.spans.map(({ start, end }) => `<i class="${row.own ? 'own' : ''}" style="left:${position(start).toFixed(1)}%;width:${Math.max(0.8, position(end) - position(start)).toFixed(1)}%"></i>`).join('')}</span><span class="js-nt">${timeOf(row.spans[0].start, timezone)}–${timeOf(row.spans[0].end, timezone)}${row.spans.length > 1 ? ` +${row.spans.length - 1}` : ''}</span></div>`,
     )
-    .join('')}<div class="js-nr"><span></span><span class="js-axis">${[12, 18, 0, 6, 12].map((hour) => `<span>${String(hour).padStart(2, '0')}</span>`).join('')}</span><span></span></div></div>${more > 0 ? `<div class="js-more">и ещё ${more}</div>` : ''}</div>`;
+    .join('')}</div></div>`;
 };
 
 const errorsTable = (report: JobReport, timezone: string): string => `<div class="js-panel"><h3>Последние ошибки</h3><div class="js-sub">Что писал Veeam, новые сверху</div>
@@ -326,7 +364,11 @@ body { margin: 0; background: #fff; }
 .js-ph h3 { margin: 0; padding: 0; background: none; border: none; white-space: nowrap; }
 .js-sub { font-size: 7.5pt; color: #505861; margin-bottom: 1.4mm; }
 .js-two { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr); gap: 3.4mm; }
-.js-col { display: flex; flex-direction: column; gap: 3.4mm; min-width: 0; min-height: 0; } .js-col > .js-panel:first-child { flex: none; } .js-col > .js-panel + .js-panel { flex: 1; }
+.js-col { display: flex; flex-direction: column; gap: 3.4mm; min-width: 0; min-height: 0; } .js-col > .js-panel:first-child { flex: none; } .js-col > .js-panel + .js-panel { flex: 1; display: flex; flex-direction: column; }
+/* The card under the steps has what room they leave: a row that does not fit wraps into a column out of sight, whole, where it would be cut in half. Contained, so the browser does not shrink the page to print what is out of sight. */
+.js-col > .js-panel + .js-panel > .js-nb, .js-col > .js-panel + .js-panel > .js-errs, .js-col > .js-panel + .js-panel > .js-chain { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; flex-wrap: wrap; align-content: flex-start; overflow: hidden; column-gap: 100mm; contain: strict; }
+.js-nb > *, .js-errs > *, .js-chain > * { width: 100%; flex: none; }
+.js-ax { margin-bottom: 0.6mm; }
 .js-chart { width: 100%; height: auto; display: block; font-family: 'Inter Variable', sans-serif; }
 .js-chart text { font-size: 13px; fill: #505861; }
 .js-chart .g { stroke: #f0f0f0; stroke-width: 1; } .js-chart .a { stroke: #adacaf; stroke-width: 1; }
@@ -338,18 +380,19 @@ body { margin: 0; background: #fff; }
 .js-legend i.run { background: #fff; box-shadow: inset 0 0 0 0.3mm ${COLOUR.none}; }
 .js-legend i.dash { height: 0; width: 4mm; border-top: 0.3mm dashed #3700ff; vertical-align: 0.7mm; }
 .js-legend b { color: #232323; }
-.js-vms { width: 100%; border-collapse: collapse; }
+.js-vms { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.js-vms col.c-n { width: 42%; } .js-vms col.c-s { width: 17mm; } .js-vms col.c-d { width: 15mm; }
 .js-vms th { text-align: left; font-size: 6.8pt; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #505861; padding: 0 1.6mm 0.8mm 0; border-bottom: 0.25mm solid #dcdee2; white-space: nowrap; }
 .js-vms th.r { text-align: right; }
 .js-vms td { padding: 1.4mm 1.6mm 1.4mm 0; vertical-align: middle; font-size: 8.6pt; border-bottom: 0.25mm solid #f0f0f0; }
 .js-vms tr:last-child td { border-bottom: none; }
-.js-vms td:first-child, .js-vms th:first-child { width: 99%; max-width: 0; }
+.js-vms tr.js-hasx td { border-bottom: none; padding-bottom: 0.3mm; } .js-vms tr.js-x td { padding: 0 0 1.4mm 4.6mm; }
 .js-vms td:last-child, .js-vms th:last-child { padding-right: 0; }
 .js-name { display: flex; align-items: flex-start; gap: 1.6mm; font-weight: 600; line-height: 1.2; }
 .js-name .js-mk { width: 3mm; height: 3mm; margin-top: 0.3mm; } .js-name > div { flex: 1; min-width: 0; }
-.js-name span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.js-name span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .js-err { font-size: 7.5pt; font-weight: 400; color: #505861; line-height: 1.3; margin-top: 0.3mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-.js-hist { display: flex; gap: 0.45mm; } .js-hist i { width: 1.7mm; height: 3.4mm; border-radius: 0.5mm; display: block; flex: none; }
+.js-hist { display: flex; gap: 0.45mm; } .js-hist.dense { gap: 0.25mm; } .js-hist i { flex: 0 1 1.7mm; min-width: 0; height: 3.4mm; border-radius: 0.5mm; display: block; }
 .js-more { color: #505861; font-size: 7.5pt; padding-top: 1.2mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .js-step { display: flex; gap: 2.2mm; padding: 1.8mm 0; border-bottom: 0.25mm solid #f0f0f0; }
 .js-step:first-child { padding-top: 0; } .js-step:last-child { border-bottom: none; padding-bottom: 0; }
