@@ -882,7 +882,7 @@ test('the page is the one drawn: the head, the five numbers, the days a machine 
   assert.match(html, /<span class="nm">ex-mbx-03<\/span>(?:<i class="c [^"]+"><\/i>){35}<span class="cnt bad">17<\/span>/);
   assert.match(html, /<i class="c x"><\/i><i class="c x"><\/i><i class="c i"><\/i><i class="c e"><\/i><span class="cnt bad">17/);
   assert.match(html, /<h3>Ошибки машин<\/h3><p class="err"><span class="who"><b>ex-mbx-03<\/b> · 19\.10, 20\.10<\/span><span class="errt">Failed to create VM snapshot\./);
-  assert.match(html, /<b>1\. Запустить Active Full вручную<\/b><span class="ad">Full 17\.10 не было: восстановление последней точки читает 12 файлов\.<span class="imp">Важно<\/span>/);
+  assert.match(html, /<b>1\. Запустить Active Full вручную<\/b><span class="ad">Full 17\.10 не было: восстановление последней точки читает 12 файлов\. По расписанию следующий — сб 24\.10, 22:00\.<span class="imp">Важно<\/span>/);
   assert.match(html, /<b>2\. Посмотреть ex-mbx-03<\/b><span class="ad">[^<]+<span class="note">К сведению<\/span>/);
   assert.match(html, /Full 03\.10, уйдёт ~23\.10/);
   assert.match(html, /<tr><td>Full 10\.10 \(текущая\)<\/td><td class="n">11<\/td><td class="n">520 ГБ<\/td><td class="n">188 ГБ<\/td><\/tr>/);
