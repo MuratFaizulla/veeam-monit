@@ -143,10 +143,10 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .vh-s { text-align: right; white-space: nowrap; }
 .vr .vh-d { font-size: 7.5pt; font-weight: 400; margin-top: 0.4mm; color: #505861; }
 .vr .vh.ok td { background: #00d15f; border-bottom-color: #00d15f; color: #fff; }
-.vr .vh.bad td { background: #fff1f1; border-bottom-color: #ffc9cb; } .vr .vh.bad .vh-s { color: #d92d3a; }
+.vr .vh.bad td { background: #c4373d; border-bottom-color: #c4373d; color: #fff; }
 .vr .vh.warn td { background: #fff7e3; border-bottom-color: #ffe0a3; } .vr .vh.warn .vh-s { color: #a66800; }
 .vr .vh.run td { background: #eef3ff; } .vr .vh.run .vh-s { color: #3700ff; }
-.vr .vh.ok .vh-d { color: inherit; opacity: 0.92; }
+.vr .vh.ok .vh-d, .vr .vh.bad .vh-d { color: inherit; opacity: 0.92; }
 .vr .vi { table-layout: auto; }
 .vr .vi col.c1 { width: 46mm; }
 .vr .vi col.cv { width: 21mm; }

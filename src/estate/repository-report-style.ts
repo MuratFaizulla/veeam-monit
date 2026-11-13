@@ -193,8 +193,8 @@ b.crit { color: var(--crit); } b.warn { color: var(--warn-ink); } b.ok { color: 
 .srv span.off { background: var(--crit-bg); color: var(--crit-ink); }
 .verdict { display: flex; align-items: center; gap: 3mm; border-radius: 2.5mm; padding: 2.4mm 4mm; font-size: 10pt; font-weight: 650; color: var(--ink); }
 .verdict > svg { width: 5mm; height: 5mm; flex: none; }
-.verdict.crit { background: var(--crit-bg); box-shadow: inset 0 0 0 0.3mm var(--crit-line); } .verdict.ok { background: #00d15f; color: #fff; } .verdict.warn { background: var(--warn-bg); box-shadow: inset 0 0 0 0.3mm var(--warn-line); }
-.verdict.ok > svg circle { fill: #fff; } .verdict.ok > svg path { stroke: #00d15f; }
+.verdict.crit { background: #c4373d; color: #fff; } .verdict.ok { background: #00d15f; color: #fff; } .verdict.warn { background: var(--warn-bg); box-shadow: inset 0 0 0 0.3mm var(--warn-line); }
+.verdict.crit > svg circle, .verdict.ok > svg circle { fill: #fff; } .verdict.crit > svg path { stroke: #c4373d; } .verdict.ok > svg path { stroke: #00d15f; }
 .verdict.unk { background: var(--panel2); box-shadow: inset 0 0 0 0.3mm var(--unk-line); }
 .rowA { display: grid; grid-template-columns: 110mm 1fr; gap: 3.2mm; }
 .cap { display: flex; flex-direction: column; gap: 2.2mm; }
