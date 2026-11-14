@@ -59,8 +59,8 @@ Veeam can already email a report per job session, and its console shows every se
 - 📌 **Seven live topics**: monitor health, running jobs, upcoming runs, speed, repositories, protection, and backups left behind by deleted jobs.
 - 🛡 **Protection is judged by restore points, per machine**, against each job's own rhythm and its Full schedule, not by a bare "Success".
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
-- 📅 **A job's last weeks at a glance**: a calendar of Fulls and increments, the size of a Full and of a typical increment, and what the job takes up on disk.
-- ⌨️ **Commands and a menu** under the input field: digest, a job's card, its restore points, an on-demand check.
+- 📄 **Three PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; and every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits.
+- ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, an on-demand check.
 - 🖥 **Several Veeam servers in one bot**. A server outside the domain can sign in with an account of its own.
 - 🔒 **Safe by default**: pinned Veeam certificates, a read-only account, an unprivileged container, and a bot that answers only its own groups.
 
@@ -71,14 +71,15 @@ flowchart LR
     V["Veeam Backup & Replication<br/>REST API :9419"] -- "HTTPS, read only<br/>every minute" --> B["Veeam Telegram Monitor<br/>one Docker container"]
     B -- "alerts" --> A["🚨 Alerts · 🟢 Recovered"]
     B -- "edited in place" --> L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡"]
-    G["General<br/>menu and commands"] -- "/job · /points · /digest" --> B
+    G["General<br/>menu and commands"] -- "/job · /points · /repos · /digest" --> B
+    B -- "PDF reports" --> G
 ```
 
 Every minute the bot asks each Veeam server for its jobs and repositories, and the selected server for the sessions in progress; once an hour it scans every restore point of the selected server. Alerts go to their topic once per run; the live topics are rewritten in place. What the bot must remember across restarts (last results, runs Veeam is still retrying, the IDs of its messages) is kept in one JSON file. More in [docs/architecture.md](docs/architecture.md).
 
 ## Screenshots
 
-<sub>Rendered by the bot's own code from an invented estate: every job, machine and server name is made up.</sub>
+<sub>Rendered by the bot's own code from an invented estate: every job, machine and server name is made up. <code>npm run screenshots</code> draws them again.</sub>
 
 <p align="center">
   <strong>Live topics: running now, protection, repositories</strong><br />
@@ -91,32 +92,37 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
 <table>
   <tr>
     <th>⚡ <code>/job</code>: a job's card and what held its last run back</th>
-    <th>🗂 <code>/points</code>: the last weeks of a job (now sent as a PDF)</th>
+    <th>⌨️ The menu under the input field</th>
   </tr>
   <tr>
     <td valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/job-dark.png" />
-        <img src="docs/assets/screenshots/job-light.png" width="420" alt="The card of one job: last result, the speed of the last run with its bottleneck, settings, machines, restore points and recent runs" />
+        <img src="docs/assets/screenshots/job-light.png" width="420" alt="The card of one job: last result, the speed of the last run with its bottleneck, settings, machines, restore points and recent runs, with the buttons for its points and its PDF report" />
       </picture>
     </td>
     <td valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/points-dark.png" />
-        <img src="docs/assets/screenshots/points-light.png" width="420" alt="The restore points of one job: a calendar of Fulls and increments, a missed Active Full, the chain, retention and sizes" />
-      </picture>
-    </td>
-  </tr>
-  <tr>
-    <th colspan="2">⌨️ The menu under the input field</th>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/menu-dark.png" />
         <img src="docs/assets/screenshots/menu-light.png" width="420" alt="The bot's menu message in General and the keyboard of commands under the input field" />
       </picture>
     </td>
+  </tr>
+</table>
+
+<p align="center">
+  <strong>📄 A job's report: «Отчёт PDF» under its card</strong><br />
+  <img src="docs/assets/screenshots/report-job.png" width="820" alt="The first page of a job's PDF report: the verdict, five numbers, a month of runs as bars, the machines with what went wrong, what to do, and who else wrote to the repository that night" />
+</p>
+
+<table>
+  <tr>
+    <th>🗂 <code>/points</code>: a job's restore points</th>
+    <th>💾 <code>/repos</code>: every repository</th>
+  </tr>
+  <tr>
+    <td valign="top"><img src="docs/assets/screenshots/report-points.png" width="420" alt="The first page of a job's points report: a missed Full, five numbers, five weeks of points a machine to a row, what to do and the chains on disk" /></td>
+    <td valign="top"><img src="docs/assets/screenshots/report-repositories.png" width="420" alt="The cover of the repository report: which repository needs action today, every repository with its free space, what to do first and where a new job fits on each site" /></td>
   </tr>
 </table>
 
@@ -164,8 +170,9 @@ Rather not build? Every release is published as an image, `ghcr.io/muratfaizulla
 | `/status` | Whether Veeam answers and the monitor account signs in |
 | `/servers` | The Veeam servers and their state; choose the one the live topics show |
 | `/digest` | Every job of the selected server, and which ones are not fine |
-| `/job <name>` | One job's card: last result and reason, runs, schedule, settings, what held the last run back |
+| `/job <name>` | One job's card: last result and reason, runs, schedule, settings, what held the last run back. «📄 Отчёт PDF» under it sends the job's last 30 days as a PDF |
 | `/points <name>` | One job's restore points as a PDF: 🛡's verdict, five weeks a machine to a row, errors, what to do, chains and sizes |
+| `/repos [name]` | Every repository of every server as a PDF, or one: free space, backups no job owns, load hour by hour, what to do and where a new job fits |
 | `/check` | Poll Veeam now |
 | `/topics` | The forum topics the bot knows |
 | `/clear` | Empty General of the last two days, then put the menu back |
@@ -190,6 +197,7 @@ A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam
 npm ci
 npm test            # builds the service and runs the tests against the compiled code
 npm run start:dev
+npm run screenshots # draws this README's pictures again, with Chrome or Chromium
 ```
 
 CI runs the tests and starts the Docker image on every push and pull request; a tag `vX.Y.Z` publishes the image and a GitHub release. How to cut one is in [docs/architecture.md](docs/architecture.md#development). What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
