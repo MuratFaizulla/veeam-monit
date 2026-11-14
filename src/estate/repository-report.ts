@@ -765,7 +765,8 @@ const firstThings = (repositories: ReportRepository[]): FirstThing[] => {
   }
   const orphaned = repositories.reduce((sum, repository) => sum + repository.orphanBytes, 0);
   if (orphaned > TB) {
-    const biggest = [...known].sort((a, b) => b.orphanBytes - a.orphanBytes).slice(0, 3);
+    // Only where there are some: a repository with none is not «больше всего» of anything.
+    const biggest = known.filter((repository) => repository.orphanBytes > NOTABLE_BYTES).sort((a, b) => b.orphanBytes - a.orphanBytes).slice(0, 3);
     things.push({ severity: 'warn', icon: 'box', title: `Разобрать ${tb(orphaned)} ТБ бэкапов без задачи`, detail: `Больше всего: ${biggest.map((repository) => `${repository.short} ${tb(repository.orphanBytes)} ТБ`).join(' · ')}` });
   }
   const settings = repositories.flatMap((repository) => repository.settings);

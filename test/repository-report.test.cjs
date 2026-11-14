@@ -109,6 +109,14 @@ test('a chain no job on any server owns is an orphan; one whose job is on anothe
   assert.equal(shared.orphanBytes, 30 * TB_BYTES);
 });
 
+test('the jobless backups to sort out name the repositories that hold some, and no other', () => {
+  const report = reportOf(sharedReading(), SITES, 'UTC');
+  const step = report.first.find((thing) => /^Разобрать \d/.test(thing.title));
+
+  assert.equal(step.title, 'Разобрать 30,0 ТБ бэкапов без задачи');
+  assert.equal(step.detail, 'Больше всего: BKP01 30,0 ТБ');
+});
+
 test('a job running ten times longer than it takes hangs, and a day of it is critical', () => {
   const shared = reportOf(sharedReading(), SITES, 'UTC').repositories[0];
 
