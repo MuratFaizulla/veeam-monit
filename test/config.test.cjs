@@ -327,6 +327,7 @@ test('with nothing set, every setting has the default it has always had', () => 
       authAlertCooldownMs: 60 * 60_000,
       repositoryAlertCooldownMs: 720 * 60_000,
       repositoryFreePercent: 10,
+      configBackupDays: 2,
       digestHour: -1,
       live: true,
       liveOrphans: false,

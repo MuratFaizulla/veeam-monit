@@ -1,3 +1,4 @@
+import { ConfigBackup } from '../estate/config-backup';
 import { DeliveryOutcome } from '../telegram/telegram.service';
 
 /** The Selected server's side of the monitor, with what it delivered overall. */
@@ -28,6 +29,8 @@ export interface ServerStatus {
   address?: string;
   /** From the last cycle that read its job list; absent until one has. */
   jobs?: { total: number; failed: number; warning: number };
+  /** Its configuration backup, once read; absent while it is not checked. */
+  configBackup?: ConfigBackup;
   lastError: string | null;
 }
 

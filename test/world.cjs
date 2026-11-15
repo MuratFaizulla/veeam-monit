@@ -112,6 +112,9 @@ function world(env = {}, handlers = {}, stateFile) {
     TELEGRAM_STATE_FILE: file,
     TELEGRAM_SEND_INTERVAL_MS: '0',
     TELEGRAM_REPOSITORY_FREE_PERCENT: '0',
+    // Read by its own tests; elsewhere it would be one more Veeam path every
+    // fake had to answer.
+    TELEGRAM_CONFIG_BACKUP_DAYS: '0',
     TELEGRAM_ROUTES_FILE: undefined,
     // Most tests below exercise per-job topics, so they ask for that mode; the
     // shipped default is 'single' and has its own test.

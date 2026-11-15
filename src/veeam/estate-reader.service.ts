@@ -31,6 +31,9 @@ const PROXIES = '/api/v1/backupInfrastructure/proxies';
 
 const NEWEST_FIRST = { orderColumn: 'CreationTime', orderAsc: false };
 
+/** Veeam's session type for a run of its configuration backup. */
+export const CONFIG_BACKUP_SESSION = 'ConfigurationBackup';
+
 /**
  * The Evidence's collections are read this many rows a page. The default of
  * 100 would turn a nine-thousand-point estate into ninety requests.
@@ -103,6 +106,23 @@ export class VeeamEstateReader {
       limit: count,
       ...NEWEST_FIRST,
       jobIdFilter: jobId,
+    });
+    return (response.data ?? []).map(sessionOf);
+  }
+
+  /**
+   * The `count` newest runs of Veeam's own configuration backup, newest first.
+   *
+   * From the sessions, which the Backup Viewer role may read: the backup's
+   * settings, `/configBackup`, are the Backup Administrator's alone, and the
+   * monitor's account is not one.
+   */
+  async configBackupSessions(count: number): Promise<VeeamSession[]> {
+    const response = await this.get<VeeamCollection<VeeamSession>>(SESSIONS, {
+      skip: 0,
+      limit: count,
+      ...NEWEST_FIRST,
+      typeFilter: CONFIG_BACKUP_SESSION,
     });
     return (response.data ?? []).map(sessionOf);
   }

@@ -79,6 +79,11 @@ export interface AppConfig {
     repositoryAlertCooldownMs: number;
     /** Free-space percentage below which a repository is reported. 0 disables. */
     repositoryFreePercent: number;
+    /**
+     * Days without a good configuration backup after which it is reported, and
+     * a failed one is reported at once. 0 neither reads nor reports it.
+     */
+    configBackupDays: number;
     /** Local hour for the daily digest, or -1 to disable it. */
     digestHour: number;
     /** Whether the always-current status messages are maintained at all. */
@@ -465,6 +470,7 @@ export const readConfig = (env: Environment): AppConfig =>
         authAlertCooldownMs: read.integer('TELEGRAM_AUTH_COOLDOWN_MIN', 60, { min: 0 }) * MINUTE,
         repositoryAlertCooldownMs: read.integer('TELEGRAM_REPOSITORY_COOLDOWN_MIN', 720, { min: 0 }) * MINUTE,
         repositoryFreePercent: read.integer('TELEGRAM_REPOSITORY_FREE_PERCENT', 10, { min: 0, max: 100 }),
+        configBackupDays: read.integer('TELEGRAM_CONFIG_BACKUP_DAYS', 2, { min: 0 }),
         digestHour: read.integer('TELEGRAM_DIGEST_HOUR', -1, { min: -1, max: 23 }),
         live: read.flag('TELEGRAM_LIVE', true),
         liveOrphans: read.flag('TELEGRAM_LIVE_ORPHANS', false),

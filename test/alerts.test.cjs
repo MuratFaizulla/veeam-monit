@@ -424,3 +424,171 @@ test('the health says what went wrong in this pass, and a clean pass clears it',
   await w.watch.observe();
   assert.equal(w.watch.health.error, null);
 });
+
+/* ------------------------------------------------------------------ *
+ * Configuration backup: what a lost backup server is rebuilt from
+ *
+ * Read from Veeam's sessions, because its settings (/configBackup) are the
+ * Backup Administrator's alone and the monitor's account is a viewer.
+ * ------------------------------------------------------------------ */
+
+const DAY = 24 * HOUR;
+const MINUTE = 60_000;
+const ZONE = 'Asia/Qyzylorda';
+const NOW = Date.parse('2026-11-15T12:00:00+05:00');
+
+/** A run of the configuration backup that ended `daysAgo` days before `now`. */
+const configRun = (id, daysAgo, result, message, now = NOW) => ({
+  id, name: 'Backup Configuration Job', sessionType: 'ConfigurationBackup', state: 'Stopped',
+  creationTime: new Date(now - daysAgo * DAY - 3 * MINUTE).toISOString(),
+  endTime: new Date(now - daysAgo * DAY).toISOString(),
+  result: { result, ...(message ? { message } : {}) },
+});
+
+/** The configuration backup those runs make, as the reader hands them over. */
+const backupOf = (sessions, staleDays = 2, now = NOW) => {
+  const { configBackupOf } = require('../dist/estate/config-backup');
+  const { sessionOf } = require('../dist/veeam/estate');
+  return configBackupOf(sessions.map(sessionOf), now, { staleDays, timezone: ZONE });
+};
+
+test('the configuration backup is fine while its latest run made one within the days allowed, a warning too', () => {
+  // Veeam ends the run with a warning when the backup is not encrypted: a
+  // setting, said in the console every day, and not a failure.
+  const backup = backupOf([configRun('c2', 0.9, 'Warning', 'Encryption is disabled'), configRun('c1', 1.9, 'Success')]);
+  assert.equal(backup.problem, undefined);
+  assert.equal(backup.good.result, 'warning');
+  assert.equal(backup.good.at, NOW - 0.9 * DAY);
+});
+
+test('a failed run of the configuration backup is a problem at once, and the good one behind the failures is found', () => {
+  const backup = backupOf([
+    configRun('c3', 0.1, 'Failed', 'Repository BKP01 is unavailable'),
+    configRun('c2', 1.1, 'Failed'),
+    configRun('c1', 2.1, 'Success'),
+  ]);
+  assert.equal(backup.problem, 'failed');
+  assert.equal(backup.last.message, 'Repository BKP01 is unavailable');
+  assert.equal(backup.good.at, NOW - 2.1 * DAY);
+});
+
+test('a configuration backup older than the days allowed is out of date, and a run still going does not count', () => {
+  const going = {
+    id: 'c4', sessionType: 'ConfigurationBackup', state: 'Working',
+    creationTime: new Date(NOW - MINUTE).toISOString(), endTime: '0001-01-01T00:00:00', result: { result: 'None' },
+  };
+  assert.equal(backupOf([going, configRun('c3', 2.5, 'Success')]).problem, 'stale');
+  assert.equal(backupOf([going, configRun('c3', 2.5, 'Success')], 3).problem, undefined, 'its own number of days');
+});
+
+test('a server that keeps no configuration backup is said to; one that did not filter the sessions says nothing', () => {
+  assert.equal(backupOf([]).problem, 'never');
+  // Job runs and not one configuration backup: the type filter was not
+  // honoured, and whether it is made at all is not known from these.
+  assert.equal(backupOf([{ id: 'j1', jobId: '1', sessionType: 'BackupJob', state: 'Stopped', result: { result: 'Success' } }]), undefined);
+});
+
+test('a configuration backup in trouble is said once a day, and at once again after it was fine', async () => {
+  const { sendConfigBackupAlarm } = require('../dist/monitor/config-backup-alarm');
+  const w = world();
+  const clock = clockAt('2026-11-15T12:00:00+05:00');
+  const sending = sendingOf(w, BAAS, { several: true, clock });
+  const send = (backup) => sendConfigBackupAlarm(backup, { now: new Date(clock.now()), timezone: ZONE }, sending);
+  const failed = backupOf([configRun('c2', 0.1, 'Failed', 'Repository BKP01 is unavailable'), configRun('c1', 1.1, 'Success')]);
+  const said = () => w.api.sent().filter((m) => /BAAS · Configuration backup failed/.test(m.text));
+
+  await send(failed);
+  await send(failed);
+  assert.equal(said().length, 1, 'once a day');
+  assert.match(said()[0].text, /<b>Run:<\/b> today at 09:36/);
+  assert.match(said()[0].text, /<b>Last good backup:<\/b> yesterday at 09:36 \(1 d 2 h ago\)/);
+  assert.match(said()[0].text, /Repository BKP01 is unavailable/);
+
+  clock.pass(DAY);
+  await send(failed);
+  assert.equal(said().length, 2, 'and again the next day');
+
+  await send(undefined);
+  await send(backupOf([configRun('c3', 0, 'Success')]));
+  await send(failed);
+  assert.equal(said().length, 3, 'fine in between, the next failure is news at once');
+
+  // One alarm a day whatever is wrong: a backup that failed and then went
+  // out of date is still the one condition, no fresh configuration backup.
+  w.api.reset();
+  await send(backupOf([configRun('c3', 0, 'Success')]));
+  await send(backupOf([]));
+  await send(backupOf([configRun('c1', 3, 'Success')], 2, clock.now()));
+  assert.deepEqual(w.api.sent().map((m) => m.text.split('\n')[0]), ['🟡 <b>BAAS · Veeam makes no configuration backup</b>']);
+});
+
+test('each server\'s configuration backup is read half-hourly by the cycle, and a failed run is said by the cycle that read it', async () => {
+  const { watching, serverOf, veeamFake } = require('./world.cjs');
+  const w = world({ TELEGRAM_CONFIG_BACKUP_DAYS: '2', TELEGRAM_TIMEZONE: ZONE });
+  const clock = clockAt(new Date().toISOString());
+  const asked = [];
+  let runs = [configRun('c2', 0.1, 'Failed', 'Repository BKP01 is unavailable', clock.now()), configRun('c1', 1.1, 'Success', undefined, clock.now())];
+  const veeam = veeamFake({
+    '/api/v1/serverTime': { serverTime: 'now' },
+    '/api/v1/jobs/states': { data: [] },
+    '/api/v1/backupInfrastructure/repositories/states': { data: [] },
+    // The cycle reads what is running now from here as well.
+    '/api/v1/sessions': (req) => {
+      if (req.params.typeFilter === undefined) return { data: [] };
+      asked.push(req.params.typeFilter);
+      return { data: runs };
+    },
+  });
+  const { monitor } = watching(w, [serverOf(w, veeam)], undefined, clock.now);
+
+  await monitor.check();
+  assert.deepEqual(asked, ['ConfigurationBackup']);
+  assert.equal(w.api.sent().filter((m) => /Configuration backup failed/.test(m.text)).length, 1);
+  assert.equal(monitor.servers()[0].configBackup.problem, 'failed');
+
+  clock.pass(10 * MINUTE);
+  await monitor.check();
+  assert.equal(asked.length, 1, 'not every minute');
+
+  runs = [configRun('c3', 0, 'Success', undefined, clock.now()), ...runs];
+  clock.pass(20 * MINUTE);
+  await monitor.check();
+  assert.equal(asked.length, 2, 'half an hour on');
+  assert.equal(monitor.servers()[0].configBackup.problem, undefined);
+});
+
+test('🩺 says when the last configuration backup was made, and under a server of several only what is wrong with it', () => {
+  const { renderHealth } = require('../dist/live/format');
+  const clock = { now: new Date(NOW), timezone: ZONE };
+  const single = (configBackup) => renderHealth({
+    reachable: true, authenticated: true, serverUrl: 'https://veeam01.example.com:9419', trackedJobs: 12, intervalMs: 60_000, configBackup,
+  }, clock);
+  const lineOf = (text) => text.split('\n').find((line) => line.startsWith('<b>Копия конфигурации:</b>'));
+
+  assert.equal(lineOf(single(backupOf([configRun('c1', 0.1, 'Success')]))), '<b>Копия конфигурации:</b> сегодня в 09:36');
+  assert.equal(
+    lineOf(single(backupOf([configRun('c1', 1.1, 'Warning')]))),
+    '<b>Копия конфигурации:</b> вчера в 09:36, с предупреждением',
+  );
+  assert.equal(
+    lineOf(single(backupOf([configRun('c2', 0.1, 'Failed'), configRun('c1', 1.1, 'Success')]))),
+    '<b>Копия конфигурации:</b> ⚠️ ошибка сегодня в 09:36, удачная — вчера в 09:36',
+  );
+  assert.equal(
+    lineOf(single(backupOf([configRun('c1', 5, 'Success')]))),
+    '<b>Копия конфигурации:</b> ⚠️ 10.11 в 12:00, новой нет больше 2 дней',
+  );
+  assert.equal(lineOf(single(backupOf([]))), '<b>Копия конфигурации:</b> ⚠️ Veeam её не делает');
+  assert.equal(lineOf(single(undefined)), undefined, 'not read yet');
+
+  const server = (name, configBackup) => ({ name, selected: false, reachable: true, authenticated: true, jobs: 10, configBackup });
+  const several = renderHealth({
+    reachable: true, authenticated: true, serverUrl: 'https://veeam01.example.com:9419', trackedJobs: 12, intervalMs: 60_000,
+    servers: [server('veeam01', backupOf([configRun('c1', 0.1, 'Success')])), server('veeam02', backupOf([]))],
+  }, clock);
+  assert.deepEqual(several.split('\n\n')[1].split('\n'), [
+    '🟢 <b>veeam01</b> · 10 заданий',
+    '🟢 <b>veeam02</b> · 10 заданий',
+    '⚠️ <i>копия конфигурации: Veeam её не делает</i>',
+  ]);
+});

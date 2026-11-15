@@ -17,11 +17,20 @@ import { ServerWatch } from './server-watch';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
+import { ConfigBackup, configBackupOf, CONFIG_BACKUP_RUNS } from '../estate/config-backup';
+import { sendConfigBackupAlarm } from './config-backup-alarm';
 
 const HOUR = 3_600_000;
 
 /** The cooldown each server's daily Summary is kept under, once it was delivered. */
 const DIGEST = 'digest';
+
+/**
+ * How often each server's configuration backup is read. It is counted in days,
+ * and the minute of every cycle would ask Veeam the same thing sixty times an
+ * hour.
+ */
+const CONFIG_BACKUP_EVERY = 30 * 60_000;
 
 export type { MonitorHealth } from './monitor';
 
@@ -36,6 +45,10 @@ interface Watch {
   jobs?: ServerStatus['jobs'];
   /** What the bot says about this server's jobs. */
   alerts: JobAlerts;
+  /** When its configuration backup was last asked about, epoch ms. */
+  configBackupAskedAt?: number;
+  /** Its configuration backup as last read; absent until read, or while the reading cannot be trusted. */
+  configBackup?: ConfigBackup;
 }
 
 /** What one server's pass found, for the live slots when it is the one shown. */
@@ -157,6 +170,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         authenticated,
         address: watch.estate.http.address,
         jobs: watch.jobs,
+        configBackup: watch.configBackup,
         lastError: error,
       };
     });
@@ -270,6 +284,9 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     if (authenticated) {
       if (jobs) await this.step(watch, 'alerts', () => watch.alerts.check(jobs, evidence));
       repositories = await this.step(watch, 'repositories', () => this.checkRepositories(watch));
+      if (this.configBackupDue(watch)) {
+        await this.step(watch, 'configuration backup', () => this.checkConfigBackup(watch));
+      }
       if (jobs && working && digest) {
         await this.step(watch, 'digest', () => this.sendDigest(watch, jobs, working));
       }
@@ -316,13 +333,15 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         error: health.error,
         trackedJobs: this.store.jobMemoryOf(estate.key).count(),
         intervalMs: this.config.monitorIntervalMs,
-        servers: this.servers().map(({ name, selected, reachable, authenticated, address, jobs, lastError }) => ({
+        configBackup: watch.configBackup,
+        servers: this.servers().map(({ name, selected, reachable, authenticated, address, jobs, configBackup, lastError }) => ({
           name,
           selected,
           reachable,
           authenticated,
           address,
           jobs: jobs?.total,
+          configBackup,
           error: lastError,
         })),
       },
@@ -342,6 +361,28 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       );
       throw error;
     }
+  }
+
+  /** Whether this server's configuration backup is to be read this pass: when it is checked at all, half-hourly. */
+  private configBackupDue(watch: Watch): boolean {
+    if (this.config.configBackupDays <= 0) return false;
+    const asked = watch.configBackupAskedAt;
+    return asked === undefined || this.now() - asked >= CONFIG_BACKUP_EVERY;
+  }
+
+  /**
+   * Reads one server's configuration backup and says what is wrong with it.
+   * Asked about before the read, so a server that refuses the read is asked
+   * again in half an hour rather than every minute; what was last read stays
+   * meanwhile.
+   */
+  private async checkConfigBackup(watch: Watch): Promise<void> {
+    watch.configBackupAskedAt = this.now();
+    const sessions = await watch.estate.reader.configBackupSessions(CONFIG_BACKUP_RUNS);
+    const { configBackupDays: staleDays, timezone } = this.config;
+    watch.configBackup = configBackupOf(sessions, this.now(), { staleDays, timezone });
+    const clock = { now: new Date(this.now()), timezone };
+    await sendConfigBackupAlarm(watch.configBackup, clock, watch.sending);
   }
 
   /** One alarm a repository short of space, whichever servers attach it. */

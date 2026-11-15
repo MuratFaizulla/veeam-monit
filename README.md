@@ -58,6 +58,7 @@ Veeam can already email a report per job session, and its console shows every se
 - 🔁 **Veeam's retries count as one run.** An alert says whether Veeam will try again and when, and the run is followed to its end in one more message rather than one per attempt.
 - 📌 **Seven live topics**: monitor health, running jobs, upcoming runs, speed, repositories, protection, and backups left behind by deleted jobs.
 - 🛡 **Protection is judged by restore points, per machine**, against each job's own rhythm and its Full schedule, not by a bare "Success".
+- 🗄 **Veeam's own configuration backup**, what a lost backup server is rebuilt from: a warning when it failed, went out of date or is not made at all.
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
 - 📄 **Three PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; and every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits.
 - ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, an on-demand check.

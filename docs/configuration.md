@@ -41,6 +41,7 @@ Every setting is made in `.env`; the full list with comments is in [.env.example
 | `TELEGRAM_PROTECTION_OVERDUE_FACTOR` | `2.5` | …and older than this many of its usual intervals. That keeps a weekly job from counting as overdue after three days. |
 | `TELEGRAM_PROTECTION_FAILURE_STREAK` | `3` | This many failed runs in a row put a job in 🛡 even when it has a fresh point. |
 | `TELEGRAM_REPOSITORY_FREE_PERCENT` | `10` | Free space threshold: below it is a warning, below half of it is critical, `0` turns the check off. |
+| `TELEGRAM_CONFIG_BACKUP_DAYS` | `2` | Veeam's configuration backup is out of date, and a warning, when the last good one is older than this many days; a failed run is a warning at once. Read every half hour on every server. `0` turns the check off. |
 | `TELEGRAM_JOB_COOLDOWN_MIN` | `15` | Do not repeat the same alert about a job more often than this. |
 | `TELEGRAM_AUTH_COOLDOWN_MIN` | `60` | The same for problems with the account. |
 | `TELEGRAM_REPOSITORY_COOLDOWN_MIN` | `720` | The same for repositories. |

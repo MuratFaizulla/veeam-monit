@@ -45,6 +45,18 @@ Veeam retries only the runs it started itself, so for jobs that are started by h
 - The run being followed is kept in `data/telegram-state.json`, so restarting the bot between attempts does not lose the last message.
 - The list of machines under an alert comes from the session's tasks (REST API 1.2) or from its log (1.1). Up to five machines of each kind are shown, the rest are counted. Veeam's internal lines (connection parameters with the user name, agent traces) are cut out.
 
+## The configuration backup
+
+Veeam's configuration backup is what a lost backup server is rebuilt from: its jobs, repositories and passwords. Every half hour the bot reads the last ten runs of it on every server and warns when:
+
+- its latest run failed: at once, with Veeam's words and when the last good one was made;
+- the last good one is older than `TELEGRAM_CONFIG_BACKUP_DAYS` days, 2 by default: its schedule was turned off, say;
+- Veeam keeps no run of it at all.
+
+The warning comes once a day while it lasts. Once the backup is fine again, the next problem is said at once. A run that ended with a warning counts as made: Veeam ends it so when the backup is not encrypted, and then it holds no passwords. 🩺 says when the last good one was made («Копия конфигурации: сегодня в 10:00», configuration backup: today at 10:00); with several servers, only under a server whose backup is in trouble.
+
+The runs are read from the sessions, which the Backup Viewer role may read. The backup's settings, `/configBackup`, and the licence, `/license`, are open to the Backup Administrator role only, so the bot does not read them. `TELEGRAM_CONFIG_BACKUP_DAYS=0` turns the check off.
+
 ## Live messages
 
 Telegram lets a bot edit and delete its message for about two days **from when it was sent**, however many times it was edited since. So a live message is replaced with a new one after 36 hours, while the old one can still be deleted. If a topic already has frozen messages older than two days, delete them by hand: the bot cannot.
@@ -63,5 +75,5 @@ Servers are listed in `VEEAM_SERVERS`, comma-separated, and share one account. A
 - **Alerts** come from every server into the same topics. With more than one server, the title starts with the server's name: `BAAS · Files — failed`. The daily digest comes for each server.
 - **The live topics, `/digest` and `/job`** show the selected server: the first in the list until somebody picks another with «🖥 Серверы» or `/servers`. The choice is shared by the whole group and survives a restart.
 - 🩺 is about every server: its first line counts the ones that are fine («🟡 4 из 5 серверов в порядке»), a server in trouble comes first with the reason in Veeam's or the network's words, the selected one is 🔵 and leads the servers that are fine (in trouble it stays 🔴: trouble matters more), and the IP addresses of all of them are listed together under the list. The last line says when the message was written and how often the servers are checked.
-- **Load.** Every cycle asks each server for its availability, job states and repositories. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
+- **Load.** Every cycle asks each server for its availability, job states and repositories, and every half hour for its configuration backup. The restore point scan and the sessions in progress are read from the selected server only; after a switch the first refresh can take up to a minute.
 - **A new server** is only remembered on its first cycle: jobs that had already failed on it do not come as alerts. The same goes for a renamed server.

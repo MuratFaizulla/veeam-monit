@@ -2,6 +2,7 @@ import { escapeHtml, MAX_LENGTH, truncate } from '../telegram/format';
 import { dayKey, dayOf, duration, Clock, moment, plural, stampOf, timeOnly } from '../telegram/time';
 import { jobTypeWord } from '../telegram/words';
 import { RunWrites } from '../estate/full-schedule';
+import { ConfigBackup } from '../estate/config-backup';
 import { ScheduledRun } from '../estate/schedule-planner';
 
 // Re-exported so the slot renderers keep one place to import their helpers from.
@@ -117,6 +118,8 @@ export interface LiveHealth {
   error?: string | null;
   trackedJobs: number;
   intervalMs: number;
+  /** The server's configuration backup, once read. */
+  configBackup?: ConfigBackup;
   /** Every Veeam server watched, and which one the slots show. Listed when there are several. */
   servers?: LiveServerHealth[];
 }
@@ -131,6 +134,8 @@ export interface LiveServerHealth {
   address?: string;
   /** How many jobs it has, once its job list has been read. */
   jobs?: number;
+  /** Its configuration backup, once read: said under the server when something is wrong with it. */
+  configBackup?: ConfigBackup;
   /** Why it is not watched, in Veeam's or the network's words, when it is not. */
   error?: string | null;
 }
@@ -198,6 +203,8 @@ export const renderHealth = (health: LiveHealth, clock: Clock): string => {
       `<b>Учётная запись мониторинга:</b> ${authLabel(health.authenticated)}`,
       `<b>Заданий под наблюдением:</b> ${health.trackedJobs}`,
     );
+    const backup = health.configBackup && configBackupWords(health.configBackup, clock);
+    if (backup) lines.push(`<b>Копия конфигурации:</b> ${backup.trouble ? '⚠️ ' : ''}${backup.text}`);
   } else {
     lines.push('<b>Связь:</b> нет');
   }
@@ -254,6 +261,10 @@ const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], cl
     // matters more than which server is shown, and the other topics name the
     // server they show on top anyway.
     lines.push(`${server.selected ? '🔵' : '🟢'} ${serverName(server)}${jobs}`);
+    // Only when something is wrong with it: a date under every server would
+    // be a list nobody reads, and the alarm has already said it once.
+    const backup = server.configBackup && configBackupWords(server.configBackup, clock);
+    if (backup?.trouble) lines.push(`⚠️ <i>копия конфигурации: ${backup.text}</i>`);
   }
   for (const server of unasked) lines.push(`⚪ ${serverName(server)} — ещё не опрошен`);
 
@@ -267,6 +278,24 @@ const renderServersHealth = (health: LiveHealth, servers: LiveServerHealth[], cl
 
   lines.push('', healthFooter(health, clock));
   return truncate(lines.join('\n'));
+};
+
+/**
+ * The configuration backup in a few words: the day of the latest good one,
+ * or what is wrong with it. Nothing while it has no run that has ended.
+ */
+const configBackupWords = (backup: ConfigBackup, clock: Clock): { trouble: boolean; text: string } | undefined => {
+  const { last, good, problem, staleDays } = backup;
+  const day = (at: number): string => dayOf(new Date(at).toISOString(), clock);
+  if (problem === 'never') return { trouble: true, text: 'Veeam её не делает' };
+  if (problem === 'failed' && last) {
+    return { trouble: true, text: `ошибка ${day(last.at)}${good ? `, удачная — ${day(good.at)}` : ''}` };
+  }
+  if (!good) return undefined;
+  if (problem === 'stale') {
+    return { trouble: true, text: `${day(good.at)}, новой нет больше ${staleDays} ${plural(staleDays, 'дня', 'дней', 'дней')}` };
+  }
+  return { trouble: false, text: `${day(good.at)}${good.result === 'warning' ? ', с предупреждением' : ''}` };
 };
 
 const healthIcon = (fine: number, troubled: number): string => {

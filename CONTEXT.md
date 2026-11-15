@@ -236,6 +236,30 @@ zero.
 Owned by `src/estate/repository-capacity.ts`. The 💾 slot renders what
 it is given, like every other live slot.
 
+## Configuration backup
+
+Veeam's backup of its own configuration — what a lost backup server is
+rebuilt from, with its jobs, repositories and passwords — as its newest runs
+show it: the latest one that ended, the latest **good** one, and what is wrong.
+A good run is a success or a warning: Veeam ends the run with a warning when
+the backup is not encrypted and so holds no passwords, which is a setting, said
+in the console every day, and not a failure.
+
+Three things are wrong with it, said as one alarm a day while any lasts:
+**never** (Veeam keeps no run of it at all), **failed** (its latest run
+failed — said at once), **stale** (the latest good one is older than
+`TELEGRAM_CONFIG_BACKUP_DAYS`). Fine again, its alarm is forgotten, so the next
+problem is news at once.
+
+Read from the sessions by type, every half hour on every server: the backup's
+settings, `/configBackup`, are open to the Backup Administrator role only, and
+the monitor's account is a viewer. Sessions that come back with not one
+configuration backup among them were not filtered by type, and say nothing
+either way.
+
+The reading is `src/estate/config-backup.ts`; the alarm
+`src/monitor/config-backup-alarm.ts`; 🩺 says when the latest good one was made.
+
 ## Repository report
 
 Every repository of every server, as one PDF `/repos` sends: how full it is,
