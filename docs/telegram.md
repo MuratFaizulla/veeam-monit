@@ -49,11 +49,15 @@ Veeam retries only the runs it started itself, so for jobs that are started by h
 
 Veeam's configuration backup is what a lost backup server is rebuilt from: its jobs, repositories and passwords. Every half hour the bot reads the last ten runs of it on every server and warns when:
 
-- its latest run failed: at once, with Veeam's words and when the last good one was made;
+- its latest run failed: at once, with the reason from the run's log and when the last good one was made;
 - the last good one is older than `TELEGRAM_CONFIG_BACKUP_DAYS` days, 2 by default: its schedule was turned off, say;
 - Veeam keeps no run of it at all.
 
-The warning comes once a day while it lasts. Once the backup is fine again, the next problem is said at once. A run that ended with a warning counts as made: Veeam ends it so when the backup is not encrypted, and then it holds no passwords. 🩺 says when the last good one was made («Копия конфигурации: сегодня в 10:00», configuration backup: today at 10:00); with several servers, only under a server whose backup is in trouble.
+The warning comes once a day while it lasts. Once the backup is fine again, the next problem is said at once.
+
+A run that ended with a warning counts as made. When its log says the backup is not encrypted, it is a warning of its own, once a week: Veeam then leaves the passwords and certificates out, and a lost server has them all entered again by hand. A newer Veeam does not make an unencrypted backup at all, and its run fails every day with «Cannot create configuration backup without encryption enabled». Either way, encryption is turned on where the backup is set.
+
+Why a run failed or warned is written in its log only, so the bot reads the log of the latest run when it did not succeed. 🩺 says when the last good one was made («Копия конфигурации: сегодня в 10:00», configuration backup: today at 10:00); with several servers, only under a server whose backup is in trouble.
 
 The runs are read from the sessions, which the Backup Viewer role may read. The backup's settings, `/configBackup`, and the licence, `/license`, are open to the Backup Administrator role only, so the bot does not read them. `TELEGRAM_CONFIG_BACKUP_DAYS=0` turns the check off.
 

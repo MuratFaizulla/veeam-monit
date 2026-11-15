@@ -9,8 +9,16 @@ const HOUR = 3_600_000;
 export const CONFIG_BACKUP_ALARM = 'config-backup';
 const COOLDOWN_MS = 24 * HOUR;
 
+/**
+ * A backup made without encryption has an alarm and a cooldown of its own: it
+ * is a setting somebody has to change, said once a week, and a failure after
+ * it must not wait out its week.
+ */
+export const UNENCRYPTED_ALARM = 'config-backup:unencrypted';
+const UNENCRYPTED_COOLDOWN_MS = 7 * 24 * HOUR;
+
 /** Where it is set, in the console: whoever reads the alarm goes there next. */
-const WHERE = 'In the Veeam console: Menu → Configuration Backup.';
+const WHERE = 'It is set in the Veeam console: Menu → Configuration Backup.';
 
 /**
  * Says what is wrong with one server's configuration backup, through that
@@ -28,10 +36,28 @@ export const sendConfigBackupAlarm = async (
   if (!backup) return;
   if (!backup.problem) {
     sending.forget(CONFIG_BACKUP_ALARM);
+    sending.forget(UNENCRYPTED_ALARM);
+    return;
+  }
+  if (backup.problem === 'unencrypted') {
+    // A backup was made: whatever was wrong before is over.
+    sending.forget(CONFIG_BACKUP_ALARM);
+    await sending.send({ ...unencryptedAlarm(backup, clock), dedupeKey: UNENCRYPTED_ALARM, cooldownMs: UNENCRYPTED_COOLDOWN_MS });
     return;
   }
   await sending.send({ ...alarmOf(backup, clock), dedupeKey: CONFIG_BACKUP_ALARM, cooldownMs: COOLDOWN_MS });
 };
+
+const unencryptedAlarm = (backup: ConfigBackup, clock: Clock): NotificationEvent => ({
+  kind: 'infrastructure',
+  severity: 'warning',
+  title: 'Configuration backup is not encrypted',
+  fields: [['Last backup', backup.good && whenOf(backup.good, clock)]],
+  body:
+    `${(backup.reasons ?? []).filter((reason) => /encryption/i.test(reason)).join('\n')}\n\n` +
+    'Veeam leaves the passwords and certificates out of a backup it does not encrypt, and a lost backup ' +
+    'server has them all entered again by hand. Turn encryption on in the Veeam console: Menu → Configuration Backup.',
+});
 
 const alarmOf = (backup: ConfigBackup, clock: Clock): NotificationEvent => {
   const { last, good, staleDays } = backup;
@@ -54,7 +80,7 @@ const alarmOf = (backup: ConfigBackup, clock: Clock): NotificationEvent => {
         ['Run', last && whenOf(last, clock)],
         ['Last good backup', good ? `${whenOf(good, clock)} (${agoOf(good, clock)})` : 'none among the latest runs'],
       ],
-      body: last?.message,
+      body: backup.reasons ? `${backup.reasons.join('\n')}\n\n${WHERE}` : last?.message,
     };
   }
   return {

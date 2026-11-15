@@ -295,6 +295,7 @@ const configBackupWords = (backup: ConfigBackup, clock: Clock): { trouble: boole
   if (problem === 'stale') {
     return { trouble: true, text: `${day(good.at)}, новой нет больше ${staleDays} ${plural(staleDays, 'дня', 'дней', 'дней')}` };
   }
+  if (problem === 'unencrypted') return { trouble: true, text: `${day(good.at)}, без шифрования — пароли в неё не попадают` };
   return { trouble: false, text: `${day(good.at)}${good.result === 'warning' ? ', с предупреждением' : ''}` };
 };
 

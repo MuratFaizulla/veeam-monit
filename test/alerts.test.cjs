@@ -488,6 +488,74 @@ test('a server that keeps no configuration backup is said to; one that did not f
   assert.equal(backupOf([{ id: 'j1', jobId: '1', sessionType: 'BackupJob', state: 'Stopped', result: { result: 'Success' } }]), undefined);
 });
 
+/** Veeam's log of a run, as `sessionLog` hands it over: [status, title] a record. */
+const logOf = (...records) => records.map(([status, title]) => ({ status, title, description: '' }));
+
+/** A newer Veeam refuses an unencrypted configuration backup outright, every day, in three seconds. */
+const NO_ENCRYPTION_FAILED = logOf(
+  ['Succeeded', 'Job started at 11/15/2026 10:00:08 AM'],
+  ['Failed', 'Cannot create configuration backup without encryption enabled'],
+  ['Failed', 'Job stopped with failures'],
+);
+
+/** An older one makes it, and leaves the passwords and certificates out. */
+const NO_ENCRYPTION_WARNED = logOf(
+  ['Succeeded', 'Job started at 11/15/2026 10:00:18 AM'],
+  ['Warning', 'Skipping credentials backup because encryption is disabled. This will complicate the restore process significantly. Enable configuration backup encryption to stop receiving this warning'],
+  ['Warning', 'Skipping server certificate backup because encryption is disabled'],
+  ['Succeeded', 'Configuration backup 10.8 MB has been moved to repository BKP02'],
+  ['Warning', 'Failed to connect to GCP plug-in: Failed to login to platform service'],
+  ['Warning', 'Job finished with warnings'],
+);
+
+test('why a configuration backup failed or warned is read from its log, and a backup without encryption is a problem of its own', () => {
+  const { explained, unexplained } = require('../dist/estate/config-backup');
+  const failed = backupOf([configRun('c2', 0.1, 'Failed', ''), configRun('c1', 1.1, 'Success')]);
+  assert.equal(unexplained(failed), 'c2');
+  assert.deepEqual(explained(failed, NO_ENCRYPTION_FAILED).reasons, ['Cannot create configuration backup without encryption enabled']);
+  assert.equal(explained(failed, NO_ENCRYPTION_FAILED).problem, 'failed');
+
+  const warned = backupOf([configRun('c1', 0.1, 'Warning', 'Warning')]);
+  assert.equal(warned.last.message, undefined, '"Warning" is only the result again');
+  const unencrypted = explained(warned, NO_ENCRYPTION_WARNED);
+  assert.equal(unencrypted.problem, 'unencrypted');
+  assert.equal(unencrypted.reasons.length, 3, 'every line that warned, and not the last, which only says how it ended');
+
+  // A warning about something else leaves a backup that is fine.
+  const elsewhere = explained(warned, logOf(['Warning', 'Failed to connect to GCP plug-in'], ['Warning', 'Job finished with warnings']));
+  assert.equal(elsewhere.problem, undefined);
+  assert.deepEqual(elsewhere.reasons, ['Failed to connect to GCP plug-in']);
+
+  assert.equal(unexplained(backupOf([configRun('c1', 0.1, 'Success', 'Success')])), undefined, 'a success needs no log');
+});
+
+test('a configuration backup without encryption is said once a week, and a failure after it at once', async () => {
+  const { sendConfigBackupAlarm } = require('../dist/monitor/config-backup-alarm');
+  const { explained } = require('../dist/estate/config-backup');
+  const w = world();
+  const clock = clockAt('2026-11-15T12:00:00+05:00');
+  const sending = sendingOf(w, BAAS, { several: true, clock });
+  const send = (backup) => sendConfigBackupAlarm(backup, { now: new Date(clock.now()), timezone: ZONE }, sending);
+  const unencrypted = explained(backupOf([configRun('c1', 0.1, 'Warning', 'Warning')]), NO_ENCRYPTION_WARNED);
+  const titles = () => w.api.sent().map((m) => m.text.split('\n')[0]);
+
+  await send(unencrypted);
+  clock.pass(DAY);
+  await send(unencrypted);
+  assert.deepEqual(titles(), ['🟡 <b>BAAS · Configuration backup is not encrypted</b>'], 'once a week');
+  const text = w.api.sent()[0].text;
+  assert.match(text, /Skipping credentials backup because encryption is disabled/);
+  assert.match(text, /Skipping server certificate backup/);
+  assert.doesNotMatch(text, /GCP/, 'only what is about the encryption');
+
+  await send(backupOf([configRun('c2', 0, 'Failed', 'Repository BKP01 is unavailable'), configRun('c1', 1.1, 'Warning')]));
+  assert.equal(titles().at(-1), '🟡 <b>BAAS · Configuration backup failed</b>', 'its own cooldown, not the week of the other');
+
+  clock.pass(6 * DAY);
+  await send(unencrypted);
+  assert.equal(titles().at(-1), '🟡 <b>BAAS · Configuration backup is not encrypted</b>', 'and a week on, again');
+});
+
 test('a configuration backup in trouble is said once a day, and at once again after it was fine', async () => {
   const { sendConfigBackupAlarm } = require('../dist/monitor/config-backup-alarm');
   const w = world();
@@ -527,7 +595,7 @@ test('each server\'s configuration backup is read half-hourly by the cycle, and 
   const w = world({ TELEGRAM_CONFIG_BACKUP_DAYS: '2', TELEGRAM_TIMEZONE: ZONE });
   const clock = clockAt(new Date().toISOString());
   const asked = [];
-  let runs = [configRun('c2', 0.1, 'Failed', 'Repository BKP01 is unavailable', clock.now()), configRun('c1', 1.1, 'Success', undefined, clock.now())];
+  let runs = [configRun('c2', 0.1, 'Failed', '', clock.now()), configRun('c1', 1.1, 'Success', undefined, clock.now())];
   const veeam = veeamFake({
     '/api/v1/serverTime': { serverTime: 'now' },
     '/api/v1/jobs/states': { data: [] },
@@ -538,12 +606,16 @@ test('each server\'s configuration backup is read half-hourly by the cycle, and 
       asked.push(req.params.typeFilter);
       return { data: runs };
     },
+    // The failed run's message is empty: why it failed is in its log.
+    '/api/v1/sessions/c2/logs': { records: NO_ENCRYPTION_FAILED },
   });
   const { monitor } = watching(w, [serverOf(w, veeam)], undefined, clock.now);
 
   await monitor.check();
   assert.deepEqual(asked, ['ConfigurationBackup']);
-  assert.equal(w.api.sent().filter((m) => /Configuration backup failed/.test(m.text)).length, 1);
+  const failed = w.api.sent().filter((m) => /Configuration backup failed/.test(m.text));
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].text, /<pre>Cannot create configuration backup without encryption enabled\n\nIt is set in the Veeam console/);
   assert.equal(monitor.servers()[0].configBackup.problem, 'failed');
 
   clock.pass(10 * MINUTE);
@@ -579,6 +651,11 @@ test('🩺 says when the last configuration backup was made, and under a server 
     '<b>Копия конфигурации:</b> ⚠️ 10.11 в 12:00, новой нет больше 2 дней',
   );
   assert.equal(lineOf(single(backupOf([]))), '<b>Копия конфигурации:</b> ⚠️ Veeam её не делает');
+  const { explained } = require('../dist/estate/config-backup');
+  assert.equal(
+    lineOf(single(explained(backupOf([configRun('c1', 0.1, 'Warning', 'Warning')]), NO_ENCRYPTION_WARNED))),
+    '<b>Копия конфигурации:</b> ⚠️ сегодня в 09:36, без шифрования — пароли в неё не попадают',
+  );
   assert.equal(lineOf(single(undefined)), undefined, 'not read yet');
 
   const server = (name, configBackup) => ({ name, selected: false, reachable: true, authenticated: true, jobs: 10, configBackup });

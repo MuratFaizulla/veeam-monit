@@ -241,15 +241,20 @@ it is given, like every other live slot.
 Veeam's backup of its own configuration — what a lost backup server is
 rebuilt from, with its jobs, repositories and passwords — as its newest runs
 show it: the latest one that ended, the latest **good** one, and what is wrong.
-A good run is a success or a warning: Veeam ends the run with a warning when
-the backup is not encrypted and so holds no passwords, which is a setting, said
-in the console every day, and not a failure.
+A good run is a success or a warning. Why a run failed or warned is written in
+its log alone — the session's message is empty, or says "Warning" — so the log
+of the latest run is read when it did not succeed, and its lines that failed or
+warned are the **reasons**.
 
 Three things are wrong with it, said as one alarm a day while any lasts:
 **never** (Veeam keeps no run of it at all), **failed** (its latest run
 failed — said at once), **stale** (the latest good one is older than
-`TELEGRAM_CONFIG_BACKUP_DAYS`). Fine again, its alarm is forgotten, so the next
-problem is news at once.
+`TELEGRAM_CONFIG_BACKUP_DAYS`). A fourth, **unencrypted**, is a warning whose
+log says encryption is disabled: the backup was made without the passwords and
+certificates. It is a setting somebody has to change, said once a week under a
+cooldown of its own, so a failure after it is not held back for the week. A
+newer Veeam refuses such a backup outright, and that is **failed**. Fine again,
+both alarms are forgotten, so the next problem is news at once.
 
 Read from the sessions by type, every half hour on every server: the backup's
 settings, `/configBackup`, are open to the Backup Administrator role only, and

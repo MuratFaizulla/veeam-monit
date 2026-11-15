@@ -17,7 +17,7 @@ import { ServerWatch } from './server-watch';
 import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
-import { ConfigBackup, configBackupOf, CONFIG_BACKUP_RUNS } from '../estate/config-backup';
+import { ConfigBackup, configBackupOf, CONFIG_BACKUP_RUNS, explained, unexplained } from '../estate/config-backup';
 import { sendConfigBackupAlarm } from './config-backup-alarm';
 
 const HOUR = 3_600_000;
@@ -380,7 +380,10 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     watch.configBackupAskedAt = this.now();
     const sessions = await watch.estate.reader.configBackupSessions(CONFIG_BACKUP_RUNS);
     const { configBackupDays: staleDays, timezone } = this.config;
-    watch.configBackup = configBackupOf(sessions, this.now(), { staleDays, timezone });
+    const backup = configBackupOf(sessions, this.now(), { staleDays, timezone });
+    // Why it failed or warned is in its log alone: one more read, only then.
+    const failedOrWarned = unexplained(backup);
+    watch.configBackup = backup && failedOrWarned ? explained(backup, await watch.estate.reader.sessionLog(failedOrWarned)) : backup;
     const clock = { now: new Date(this.now()), timezone };
     await sendConfigBackupAlarm(watch.configBackup, clock, watch.sending);
   }
