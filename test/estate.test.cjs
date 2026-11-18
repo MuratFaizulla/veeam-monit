@@ -903,21 +903,23 @@ test('a job of many machines goes on over further pages, the days\' header on ea
   const report = pointsReportOf(nightsOf({ machines, first: '2026-10-03', last: '2026-10-21', fulls: ['2026-10-03', '2026-10-10'], failed: failing, silent: Object.fromEntries(Object.keys(failing).map((day) => [day, machines.slice(30, 40)])) }), TZ);
   const html = pointsReportPage(report, TZ);
 
-  const pages = html.split('<section class="page">').slice(1);
-  assert.equal(pages.length, 3);
-  assert.deepEqual(pages.map((page) => (page.match(/<span class="nm">/g) ?? []).length), [13, 26, 21]);
-  for (const [at, page] of pages.entries()) {
+  // The first page holds FIRST_ROWS machines; the rest go on, NEXT_ROWS a page, each under the days' header of its own.
+  const [cover, flow] = html.split('<div class="flow">');
+  assert.equal(cover.split('<section class="page">').length - 1, 1);
+  const parts = flow.split('<div class="cont">').slice(1);
+  assert.deepEqual([cover, ...parts].map((page) => (page.match(/<span class="nm">/g) ?? []).length), [22, 38]);
+  for (const [at, page] of [cover, ...parts].entries()) {
     assert.match(page, /<span class="hd" style="text-align:left">Машина<\/span>/, `page ${at + 1} has the days' header`);
-    assert.match(page, new RegExp(`стр\\. ${at + 1} из 3`));
   }
-  assert.match(pages[1], /Точки по дням, 18\.09–22\.10 · продолжение/);
-  assert.match(pages[1], /Машины 14–39 из 60/);
-  assert.match(pages[2], /<span class="nm">farm-app-60<\/span>/);
+  assert.match(parts[0], /Точки по дням, 18\.09–22\.10 · продолжение/);
+  assert.match(parts[0], /Машины 23–60 из 60/);
+  assert.match(parts[0], /<span class="nm">farm-app-60<\/span>/);
+  assert.match(html, /\.cont \{ break-before: page; \}/);
   // Three groups of errors, two of them shown; three steps.
   assert.equal(report.errors.length, 3);
-  assert.equal((pages[0].match(/<p class="err">/g) ?? []).length, 2);
-  assert.match(pages[0], /<span class="more">и ещё 1 — в сетке<\/span>/);
-  assert.equal((pages[0].match(/<p class="act">/g) ?? []).length, 3);
+  assert.equal((flow.match(/<p class="err">/g) ?? []).length, 2);
+  assert.match(flow, /<span class="more">и ещё 1 — в сетке<\/span>/);
+  assert.equal((flow.match(/<p class="act">/g) ?? []).length, 3);
 });
 
 test('a backup file is put in the run whose points it holds, and a Full still being written is said as such', () => {

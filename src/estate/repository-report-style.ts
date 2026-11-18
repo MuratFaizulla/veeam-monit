@@ -308,4 +308,87 @@ div.orph { display: flex; flex-direction: column; margin-top: 2.4mm; }
 .or-v { text-align: right; font-weight: 650; color: var(--ink); }
 .or-d { text-align: right; color: var(--muted); font-size: 7.5pt; }
 .more { font-size: 7.5pt; color: var(--muted); margin-top: 1.4mm; }
+
+/* ------------------------------------------------------------------ *
+ * In the look of Veeam's User Guide: the green, light green headings,
+ * tables with a grey head and white words, square corners, the page's
+ * line at its foot. Over the sheet above, which keeps the layout.
+ * ------------------------------------------------------------------ */
+:root {
+  /* The palette of Veeam's User Guide: its green, the dark green of the console's head, the orange of its pictures and its red. Violet is a Full's alone, as the Guide draws a .vbk; backups no job owns are grey. */
+  --guide: #00b336; --brand: #00d15f; --brand2: #00d15f; --deep: #00b336; --head: #8c8c8c; --rule: #c8c8c8;
+  --used: #005f4b; --orph: repeating-linear-gradient(135deg, #8a9891 0 0.7mm, #dfe4e1 0.7mm 1.4mm);
+  --crit: #e8403a; --crit-bg: #fdeceb; --crit-ink: #b3261e; --crit-line: #f6b9b4;
+  --warn: #fe8a25; --warn-bg: #fff3e8; --warn-ink: #a04b00; --warn-line: #ffd1a8;
+  --ok: #00d15f; --ok-bg: #e6faef; --ok-ink: #005f4b; --ok-line: #aaefca;
+  --brand-soft: #e6faef; --brand-line: #aaefca; --win: #f0fbf5;
+}
+body { font-weight: 350; }
+.page::before { content: none; }
+.page { padding: 9mm 12mm 7mm; }
+.top { order: 99; margin-top: auto; padding: 2mm 0 0; border-bottom: 0; border-top: 0.25mm solid var(--rule); font-weight: 300; color: #4a4a4a; }
+.top .logo { display: none; }
+h2 { font-weight: 300; color: var(--guide); letter-spacing: -0.005em; }
+h3 { font-weight: 400; color: var(--guide); }
+h3 small { font-weight: 300; }
+.main h3::before { content: none; }
+.panel, .rc, .prob, .kpi, .verdict, .grid, .mx, .rec, .track, .bar, .a-n, .ic, .key, .chip, .pill.big { border-radius: 0 !important; }
+.grid { border-collapse: collapse; border: 0; }
+.grid th, .mx th { background: var(--head); color: #fff; font-weight: 500; border: 0.25mm solid var(--head); }
+.grid td { border: 0.25mm solid var(--rule); }
+.grid tr.crit td, .grid tr.warn td, .grid tr.unk td { background: #fff; }
+.gr-n b, .gr-f b, .gr-v, .k-v, .rc-n, .rhead h1 { font-weight: 600; }
+.k-v { font-weight: 300; font-size: 17pt; }
+.k-l { background: var(--head); color: #fff; margin: -2.6mm -3.2mm 0.8mm; padding: 1mm 3.2mm; letter-spacing: 0.02em; text-transform: none; font-size: 7.6pt; font-weight: 500; }
+.kpi { background: #fff; border: 0.25mm solid var(--rule); }
+.kpi.warn, .kpi.crit { background: #fff; }
+.rhead h1 { font-weight: 300; color: var(--guide); }
+.verdict { font-weight: 600; border-left: 0.9mm solid var(--warn); background: var(--warn-bg); box-shadow: none !important; color: var(--ink) !important; }
+.verdict.crit { background: var(--crit-bg); border-left-color: var(--crit); }
+.verdict.ok { background: var(--ok-bg); border-left-color: var(--brand); }
+.verdict.unk { background: #f5f6f7; border-left-color: #adacaf; }
+.verdict.crit > svg circle { fill: var(--crit); } .verdict.ok > svg circle { fill: var(--brand); }
+.verdict.crit > svg path, .verdict.ok > svg path { stroke: #fff; }
+.a-n { border-radius: 50% !important; }
+.fi-more { font-size: 7.5pt; color: var(--muted); margin-top: 1.4mm; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* The cover: the side in the Guide's green, with its wave and the logo in white */
+.side { background: linear-gradient(160deg, var(--guide) 0%, #00d15f 75%, #3fe57f 100%); }
+.side .g-wave { position: absolute; inset: 0; width: 100%; height: 100%; }
+.side > *:not(.g-wave) { position: relative; }
+.brand { color: #fff; border-bottom-color: rgba(255, 255, 255, 0.35); }
+.side h1 { font-weight: 300; }
+.side .lead, .side .when, .sum p { color: #fff; }
+.sum small { color: #fff; opacity: 0.85; }
+.sum b { font-weight: 300; }
+.sum b span { color: #fff; }
+.headline h2 { font-weight: 400; color: var(--ink); font-size: 15pt; }
+.headline p { font-size: 9pt; }
+
+/* The rest of the sheet in the same palette */
+.ic.warn, .a-n { color: #fff; }
+.lg-max, .t-max.good { background: #aaefca; }
+.t-max.meh { background: #ffd1a8; }
+.t-max.bad { background: #f6b9b4; }
+.lg-live, .track i.t-live { background: repeating-linear-gradient(45deg, rgba(0, 95, 75, 0.85) 0 0.8mm, rgba(0, 95, 75, 0.22) 0.8mm 1.6mm); }
+.track i.t-live.hang { background: repeating-linear-gradient(45deg, rgba(232, 64, 58, 0.85) 0 0.8mm, rgba(232, 64, 58, 0.22) 0.8mm 1.6mm); }
+.t-now, .lg-now { border-left-color: var(--used) !important; }
+.g-axis em { color: var(--used); }
+.hc { border-radius: 0; }
+.hc.peak { box-shadow: inset 0 0 0 0.55mm #8e71f4; }
+.hh.win { box-shadow: inset 0 -0.5mm 0 var(--brand); }
+.scale i { border-radius: 0; }
+
+/* Neutral in the Guide's dark-green tints, what goes on now in its link blue */
+:root { --unk: #639c90; --unk-bg: #f1f6f5; --unk-ink: #2a7666; --unk-line: #c7dcd7; --link: #00a7e2; --link-pale: #d9edfd; }
+.bar, .key.free { background: #e3edeb; }
+.gr-p a, .rc-p { color: var(--link); }
+.chip.run { background: var(--link-pale); color: #00739c; }
+.lg-live, .track i.t-live { background: repeating-linear-gradient(45deg, rgba(0, 167, 226, 0.9) 0 0.8mm, rgba(0, 167, 226, 0.25) 0.8mm 1.6mm); }
+.mx-c.idle { color: #2a7666; }
+
+/* Where it slows down, in the Guide's dark-green scale; Target, the repository itself, in its orange */
+.sp-Source { background: #005f4b; } .sp-Proxy { background: #2a7666; } .sp-Network { background: #639c90; } .sp-Target { background: var(--warn); }
+.sp-bar { border-radius: 0; }
+.cap-l b { white-space: nowrap; }
 `;

@@ -4,7 +4,7 @@ import { shortName } from './job-report-page';
 import { CALENDAR_DAYS, Cell, MachineDays } from './points-calendar';
 import { daysWords, momentLabel, namesWords, PointsReport, Tile } from './points-report';
 import { envelope, ReportDocument, stampOf } from './report-envelope';
-import { VEEAM_LOGO } from './veeam-logo';
+import { GUIDE, guideBand, guideFoot, guideStyle } from './guide-look';
 
 /**
  * The Points report as one HTML document for the browser to print, in the
@@ -27,26 +27,20 @@ import { VEEAM_LOGO } from './veeam-logo';
 export const pointsReportPage = (report: PointsReport, timezone: string): ReportDocument => {
   const stamp = stampOf(report.at, timezone);
   const rows = report.calendar.rows;
-  const first = rows.slice(0, FIRST_ROWS);
-  const rest = chunks(rows.slice(FIRST_ROWS), NEXT_ROWS);
-  const pages = 1 + rest.length;
   return envelope({
     lang: 'ru',
     title: `${report.name} — точки восстановления — ${stamp}`,
-    style: STYLE,
-    body: [
-      firstPage(report, first, stamp, timezone, pages),
-      ...rest.map((shown, place) => nextPage(report, shown, FIRST_ROWS + place * NEXT_ROWS, place + 2, pages)),
-    ].join(''),
+    style: `${guideStyle(footOf(report, stamp))}${STYLE}`,
+    body: firstPage(report, rows.slice(0, FIRST_ROWS), rows.slice(FIRST_ROWS), stamp, timezone),
   });
 };
 
-/** Machines the first page holds under its head and numbers, with the cards under them. */
-export const FIRST_ROWS = 13;
-/** Machines a page after it holds. */
-export const NEXT_ROWS = 26;
+/** Machines the first page holds under its head and numbers; the rest go on in the pages after it. */
+export const FIRST_ROWS = 22;
+/** Machines a page after it holds, each such page under the days' header of its own. */
+export const NEXT_ROWS = 50;
 
-const chunks = <T>(items: T[], size: number): T[][] =>
+export const chunks = <T>(items: T[], size: number): T[][] =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, place) => items.slice(place * size, (place + 1) * size));
 
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
@@ -54,8 +48,6 @@ const MONTHS = ['январь', 'февраль', 'март', 'апрель', '�
 /** The page's colours, as drawn. */
 const DOT = { crit: '#FF5A5F', warn: '#FFB224', ok: '#00D15F', unknown: '#ADACAF' } as const;
 
-/** A name drawn smaller the longer it is, so that it stays on its line. */
-const nameSize = (name: string): string => (name.length <= 24 ? '' : name.length <= 32 ? ' style="font-size:20px"' : name.length <= 44 ? ' style="font-size:17px"' : ' style="font-size:15px"');
 /** A number drawn smaller the longer it is: «сб 24.10, 22:00» wrapped at the size of «2,4 ТБ». */
 const valueSize = (value: string): string => (value.length <= 11 ? '' : value.length <= 15 ? ' m' : ' s');
 /**
@@ -71,47 +63,39 @@ const cut = (text: string, most: number): string => {
   return `${text.slice(0, space > 0 ? space : most - 1).replace(/[\s,:;—-]+$/, '')}…`;
 };
 
-const firstPage = (report: PointsReport, shown: MachineDays[], stamp: string, timezone: string, pages: number): string => {
+const firstPage = (report: PointsReport, shown: MachineDays[], rest: MachineDays[], stamp: string, timezone: string): string => {
   const { status, verdict } = report;
   const said = `${verdict.problem.charAt(0).toUpperCase()}${verdict.problem.slice(1)}${verdict.facts.length ? ` — ${verdict.facts.join(' · ')}` : ''}.`;
   return `<section class="page">
-  <aside class="side">
-    <div class="brand">${VEEAM_LOGO}<span>Backup &amp; Replication</span></div>
-    <div>
-      <div class="eyebrow">Точки восстановления</div>
-      <h1 class="job"${nameSize(report.name)}>${esc(report.name).replace(/_/g, '_<wbr>')}</h1>
-      <div class="st"><span class="dot" style="background:${DOT[status]}"></span><span>${esc(report.word)}</span></div>
-    </div>
-    <ul class="facts">${report.facts.map((fact) => `<li>${esc(fact)}</li>`).join('')}</ul>
-    <div class="stamp"><span>${esc(report.server)} · за ${CALENDAR_DAYS} дней</span><span>${stamp}</span></div>
-  </aside>
-  <div class="main">
-    <div class="band ${status}"><span class="dot" style="background:${DOT[status]}"></span><div class="verdict">${esc(said)}</div></div>
-    <div class="tiles">${report.tiles.map(tile).join('')}</div>
-    ${grid(report, shown, 0, false)}
-    <div class="bottom">
-      <div class="card bcard">${errors(report)}</div>
-      <div class="card bcard">${steps(report)}</div>
-      <div class="card bcard">${chains(report, timezone)}</div>
-    </div>
-    ${foot(report, 1, pages)}
-  </div>
-</section>`;
+  ${guideBand('точки восстановления')}
+  <div class="g-kicker eyebrow">Точки восстановления</div>
+  <h1 class="job">${esc(report.name).replace(/_/g, '_<wbr>')}</h1>
+  <hr class="g-rule">
+  <div class="g-meta"><span class="g-state st"><span class="dot" style="background:${DOT[status]}"></span>${esc(report.word)}</span><span>${esc(report.server)} · за ${CALENDAR_DAYS} дней</span><span>${stamp}</span></div>
+  <div class="g-note ${status} band"><div class="verdict">${esc(said)}</div></div>
+  <h2 class="g-h2">Коротко</h2>
+  <div class="tiles">${report.tiles.map(tile).join('')}</div>
+  ${grid(report, shown, 0, false)}
+  ${guideFoot(footOf(report, stamp))}
+</section>
+<div class="flow">
+  ${chunks(rest, NEXT_ROWS)
+    .map((part, place) => `<div class="cont">${grid(report, part, shown.length + place * NEXT_ROWS, true)}</div>`)
+    .join('')}
+  <div class="sect">${steps(report)}</div>
+  <div class="sect">${errors(report)}</div>
+  <div class="sect">${chains(report, timezone)}</div>
+  <h3 class="g-h2">Настройки задания</h3>
+  <ul class="facts">${report.facts.map((fact) => `<li>${esc(fact)}</li>`).join('')}</ul>
+  ${foot(report)}
+</div>`;
 };
 
-const nextPage = (report: PointsReport, shown: MachineDays[], from: number, page: number, pages: number): string => `<section class="page">
-  <div class="main">
-    <div class="chead">
-      <div class="ch-l">${VEEAM_LOGO}<span class="eyebrow">Точки восстановления</span><b>${esc(report.name)}</b></div>
-      <div class="meta">Машины ${from + 1}–${from + shown.length} из ${report.calendar.rows.length}</div>
-    </div>
-    ${grid(report, shown, from, true)}
-    ${foot(report, page, pages)}
-  </div>
-</section>`;
+/** The foot line of every page. */
+const footOf = (report: PointsReport, stamp: string): string => `Veeam Backup & Replication | Точки восстановления ${report.name} | ${stamp}`;
 
 const tile = ({ label, value, note, alarm }: Tile): string =>
-  `<div class="card tile"><div class="tl-k">${esc(label)}</div><div class="tl-v${valueSize(value)}">${esc(value)}</div>${note ? `<div class="tl-s${alarm ? ' bad' : ''}">${esc(note)}</div>` : ''}</div>`;
+  `<div class="tile"><div class="tl-k">${esc(label)}</div><div class="tl-v${valueSize(value)}">${esc(value)}</div>${note ? `<div class="tl-s${alarm ? ' bad' : ''}">${esc(note)}</div>` : ''}</div>`;
 
 const CELL: Record<Cell, string> = { full: 'f', increment: 'i', failed: 'x', retired: 'r', none: 'e' };
 
@@ -145,6 +129,7 @@ const grid = (report: PointsReport, shown: MachineDays[], from: number, continue
   return `<section class="card gcard">
     <div class="sec-h">
       <h2>Точки по дням, ${calendarLabel(days[0].day)}–${calendarLabel(days[days.length - 1].day)}${continued ? ' · продолжение' : ''}</h2>
+      ${continued ? `<div class="meta">Машины ${from + 1}–${from + shown.length} из ${report.calendar.rows.length}</div>` : ''}
       <div class="legend">${legend.map(([kind, label]) => `<span class="lg"><span class="sw c ${kind}"></span>${label}</span>`).join('')}</div>
     </div>
     <div class="grid">
@@ -216,8 +201,8 @@ const chains = (report: PointsReport, timezone: string): string => {
   const current = found.spans[found.spans.length - 1];
   const oldest = found.spans.length > 1 ? found.spans[0] : undefined;
   const legend = [
-    ...(oldest ? [`<span class="lg"><span class="sw" style="background:#6B7697"></span>${label(oldest)}${oldest.leaves !== undefined ? `, уйдёт ~${calendarLabel(oldest.leaves)}` : ', самая старая'}</span>`] : []),
-    `<span class="lg"><span class="sw" style="background:#010D35"></span>${label(current)}, текущая</span>`,
+    ...(oldest ? [`<span class="lg"><span class="sw" style="background:${GUIDE.fullOldest}"></span>${label(oldest)}${oldest.leaves !== undefined ? `, уйдёт ~${calendarLabel(oldest.leaves)}` : ', самая старая'}</span>`] : []),
+    `<span class="lg"><span class="sw" style="background:${GUIDE.full}"></span>${label(current)}, текущая</span>`,
   ].join('');
   const newest = [...found.spans].reverse();
   const shown = newest.slice(0, CHAIN_ROWS);
@@ -237,111 +222,77 @@ const chains = (report: PointsReport, timezone: string): string => {
       ${note ? `<div class="meta small">${esc(note)}</div>` : ''}`;
 };
 
-const foot = (report: PointsReport, page: number, pages: number): string =>
-  `<div class="foot"><span>${esc(report.foot)}${pages > 1 ? ` · стр. ${page} из ${pages}` : ''}</span><span>Запуски по сессиям — «Отчёт PDF» под карточкой задания</span></div>`;
+const foot = (report: PointsReport): string =>
+  `<div class="foot"><span>${esc(report.foot)}</span><span>Запуски по сессиям — «Отчёт PDF» под карточкой задания</span></div>`;
 
 /* ------------------------------------------------------------------ *
- * The sheet, as drawn: 1123 × 794 px, A4 landscape
+ * The look of Veeam's User Guide (./guide-look), and the grid's own
  * ------------------------------------------------------------------ */
 
 const STYLE = `
-@page { size: 297mm 210mm; margin: 0; }
-html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { margin: 0; background: #EEF4F6; }
-.page { width: 297mm; height: 210mm; box-sizing: border-box; background: #EEF4F6; color: #232323; font-family: 'Inter Variable', system-ui, sans-serif; display: flex; overflow: hidden; font-size: 12px; line-height: 1.45; font-variant-numeric: tabular-nums; break-after: page; }
-.page:last-child { break-after: auto; }
-.page * { box-sizing: border-box; }
-h1, h2, h3 { margin: 0; }
+.page { page: cover; position: relative; height: 297mm; padding: 0 16mm; overflow: hidden; break-after: page; box-sizing: border-box; }
+.page *, .flow * { box-sizing: border-box; }
+.job { margin: 0; color: ${GUIDE.green}; font-weight: 300; font-size: 26pt; line-height: 1.12; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dot { width: 3.4mm; height: 3.4mm; border-radius: 50%; display: inline-block; flex: none; }
+.verdict { font-weight: 600; }
+.bad { color: #e5484d; }
+.meta { color: ${GUIDE.muted}; }
+.meta.small { font-size: 8pt; margin-top: 1.4mm; }
 
-/* The navy panel the report opens on */
-.side { width: 272px; flex: none; background: #010D35; color: #D6DBE6; padding: 40px 28px 28px; display: flex; flex-direction: column; gap: 24px; }
-.brand { display: flex; align-items: center; gap: 11px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.18); font-size: 9.5px; color: #ADB4C6; white-space: nowrap; }
-.veeam-logo { height: 32px; width: auto; flex: none; }
-.eyebrow { font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #00D15F; }
-.job { margin-top: 6px; font-size: 23px; line-height: 1.12; font-weight: 650; letter-spacing: -0.01em; color: #fff; overflow-wrap: anywhere; }
-.st { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13.5px; font-weight: 600; color: #fff; }
-.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
-.facts { list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 1.4; color: #fff; }
-.facts li { padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); overflow-wrap: anywhere; }
-.facts li:last-child { border-bottom: none; }
-.stamp { margin-top: auto; display: flex; justify-content: space-between; gap: 8px; font-size: 9.5px; color: #A3ACC2; padding-top: 9px; border-top: 1px solid rgba(255, 255, 255, 0.18); white-space: nowrap; }
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 0.25mm solid ${GUIDE.rule}; border-top: none; }
+.tile { min-width: 0; border-left: 0.25mm solid ${GUIDE.rule}; } .tile:first-child { border-left: none; }
+.tl-k { background: ${GUIDE.head}; color: #fff; font-weight: 500; font-size: 8pt; padding: 1.9mm 2.6mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-v { font-size: 14pt; font-weight: 300; line-height: 1.2; padding: 2mm 2.6mm 0; overflow-wrap: anywhere; }
+.tl-v.m { font-size: 12.5pt; } .tl-v.s { font-size: 11pt; }
+.tl-s { font-size: 7.6pt; color: ${GUIDE.muted}; padding: 0.4mm 2.6mm 2.2mm; }
 
-/* The page beside it */
-.main { flex: 1; min-width: 0; padding: 22px 24px 16px; display: flex; flex-direction: column; gap: 9px; }
-.card { background: #fff; border: 1px solid #DFE6EA; border-radius: 9px; }
-.band { flex: none; display: flex; align-items: center; gap: 11px; border-radius: 9px; padding: 11px 16px; background: #fff; color: #14171C; border: 1px solid #DFE6EA; }
-.band .dot { width: 14px; height: 14px; }
-.band.crit { background: #c4373d; border-color: #c4373d; color: #fff; } .band.warn { background: #FFF7E3; border-color: #FFE0A3; } .band.ok { background: #00d15f; border-color: #00d15f; color: #fff; }
-.band.crit .dot, .band.ok .dot { background: #fff !important; }
-.verdict { font-size: 16px; line-height: 1.3; font-weight: 650; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.meta { color: #505861; font-size: 12px; }
-.meta.small { font-size: 11px; }
-.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; flex: none; }
-.tile { padding: 9px 12px; min-width: 0; }
-.tl-k { font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #505861; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-v { font-size: 19px; font-weight: 650; margin-top: 3px; line-height: 24px; letter-spacing: -0.01em; color: #010D35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-v.m { font-size: 16px; }
-.tl-v.s { font-size: 13.5px; }
-.tl-s { font-size: 11px; color: #505861; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bad { color: #E63946; }
-h2 { font-size: 13.5px; font-weight: 650; color: #010D35; white-space: nowrap; }
-.gcard { padding: 11px 14px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
-.sec-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.legend { display: flex; gap: 11px; font-size: 11px; color: #505861; flex-wrap: wrap; }
-.sec-h .legend { flex-wrap: nowrap; white-space: nowrap; }
-.lg { display: inline-flex; align-items: center; gap: 5px; }
-.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
-.grid { display: flex; flex-direction: column; gap: 3px; }
-.row { display: grid; grid-template-columns: 132px repeat(${CALENDAR_DAYS}, minmax(0, 1fr)) 40px; gap: 2px; align-items: center; }
-.mon { font-size: 11px; font-weight: 600; color: #505861; border-bottom: 1px solid #DFE6EA; padding-bottom: 3px; white-space: nowrap; overflow: hidden; }
-.hd { font-size: 9.5px; color: #505861; text-align: center; line-height: 1.3; }
-.hd.we { color: #8A8F98; }
-.hd.fd { color: #010D35; font-weight: 650; }
-.hd.miss { color: #E63946; }
-.nm { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 4px; }
-.cnt { font-size: 12px; font-weight: 650; text-align: right; }
-.none { color: #505861; font-size: 12px; padding: 4px 0; }
-.c { display: block; height: 14px; border-radius: 3px; }
-.sw.c { display: inline-block; height: 10px; border-radius: 3px; }
-.f { background: #010D35; }
-.i { background: #00D15F; }
-.x { background: #FF5A5F; }
-.r { background: #E3E9ED; }
-.e { background: #fff; border: 1px dashed #C7D0D6; }
-.mf { outline: 2px solid #FF5A5F; outline-offset: -2px; }
-.bottom { flex: 1; min-height: 0; display: grid; grid-template-columns: 0.85fr 1.15fr 1.2fr; gap: 9px; }
-.bcard { padding: 11px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; overflow: hidden; font-size: 12px; line-height: 1.38; }
-.bcard h3 { font-size: 13.5px; font-weight: 650; color: #010D35; flex: none; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; white-space: nowrap; padding-bottom: 6px; border-bottom: 1px solid #EEF4F6; }
-.err { margin: 0; flex: none; }
-.who { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+h2 { margin: 0; }
+.gcard { margin-top: 5mm; }
+.gcard h2 { color: ${GUIDE.green}; font-weight: 300; font-size: 15pt; line-height: 1.2; }
+.sec-h { margin-bottom: 1.6mm; break-after: avoid; }
+.legend { display: flex; gap: 0.6mm 3.6mm; font-size: 7.6pt; color: ${GUIDE.muted}; flex-wrap: wrap; margin-top: 1mm; }
+.lg { display: inline-flex; align-items: center; gap: 1.2mm; white-space: nowrap; }
+.sw { width: 2.8mm; height: 2.8mm; display: inline-block; flex: none; }
+.grid { display: flex; flex-direction: column; gap: 0.7mm; }
+.row { display: grid; grid-template-columns: 42mm repeat(${CALENDAR_DAYS}, minmax(0, 1fr)) 9mm; gap: 0.45mm; align-items: center; break-inside: avoid; }
+.mon { font-size: 7.4pt; font-weight: 600; color: ${GUIDE.ink}; border-bottom: 0.25mm solid ${GUIDE.rule}; padding-bottom: 0.6mm; white-space: nowrap; overflow: hidden; }
+.hd { font-size: 6.4pt; color: ${GUIDE.muted}; text-align: center; line-height: 1.3; }
+.hd.we { color: #9a9a9a; } .hd.fd { color: ${GUIDE.ink}; font-weight: 650; } .hd.miss { color: #e5484d; font-weight: 650; }
+.nm { font-size: 7.8pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1mm; }
+.cnt { font-size: 8pt; font-weight: 650; text-align: right; }
+.none { color: ${GUIDE.muted}; padding: 1mm 0; }
+.c { display: block; height: 3.5mm; }
+.sw.c { display: inline-block; height: 2.8mm; }
+.f { background: ${GUIDE.full}; } .i { background: ${GUIDE.increment}; } .x { background: ${GUIDE.failed}; } .r { background: ${GUIDE.tealPale}; }
+.e { background: #fff; border: 0.25mm dashed ${GUIDE.tealSoft}; }
+.mf, .sw.c.mf { background: repeating-linear-gradient(135deg, ${GUIDE.failed} 0 0.6mm, #fff 0.6mm 0.9mm); outline: none; }
+
+.cont { break-before: page; }
+.cont .gcard { margin-top: 0; }
+.sect h3 { margin: 5.5mm 0 2mm; color: ${GUIDE.green}; font-weight: 300; font-size: 15pt; line-height: 1.2; break-after: avoid; display: flex; align-items: baseline; gap: 3mm; }
+.more { font-size: 8pt; color: ${GUIDE.muted}; }
+.err { margin: 0 0 2mm; break-inside: avoid; }
 .err b { font-weight: 650; }
-.errt { color: #D92D3A; display: -webkit-box; margin-top: 2px; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-.more { font-size: 11px; font-weight: 400; color: #505861; }
-.act { margin: 0; flex: none; }
-.act b { display: block; font-weight: 650; color: #14171C; }
-.act .ad { display: block; color: #3A4048; }
-.act.calm { color: #505861; }
-.imp { display: inline-block; margin-left: 4px; font-weight: 650; color: #E63946; }
-.note { display: inline-block; margin-left: 4px; color: #505861; font-weight: 650; }
-.track { position: relative; height: 12px; border-radius: 6px; background: #EEF4F6; overflow: hidden; margin-top: 2px; flex: none; }
-.track .rm { position: absolute; left: 0; top: 0; bottom: 0; background: #DCE3E8; }
-.track .ca { position: absolute; top: 0; bottom: 0; background: #6B7697; box-shadow: inset 1px 0 0 #fff; }
-.track .cc { position: absolute; top: 0; bottom: 0; background: #C9CFDD; box-shadow: inset 1px 0 0 #fff; }
-.track .cb { position: absolute; top: 0; bottom: 0; background: #010D35; box-shadow: inset 1px 0 0 #fff; }
-.track .tk { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #FF5A5F; }
-.axis { display: flex; justify-content: space-between; font-size: 11px; color: #505861; flex: none; }
-.bcard .legend { flex: none; }
-.ct { width: 100%; border-collapse: collapse; font-size: 11px; flex: none; }
-.ct th, .ct td { text-align: left; padding: 2px 2px; border-bottom: 1px solid #EEF4F6; font-weight: 400; white-space: nowrap; }
-.ct th { color: #505861; font-weight: 600; }
+.errt { display: block; color: #c23a40; margin-top: 0.4mm; overflow-wrap: anywhere; }
+.act { margin: 0 0 2.4mm; break-inside: avoid; }
+.act b { display: block; font-weight: 650; font-size: 9pt; }
+.act .ad { display: block; color: #333; }
+.act.calm { color: ${GUIDE.muted}; }
+.imp { margin-left: 1.2mm; font-weight: 650; color: #e5484d; }
+.note { margin-left: 1.2mm; color: ${GUIDE.muted}; font-weight: 600; }
+.track { position: relative; height: 3.4mm; background: ${GUIDE.tealMist}; overflow: hidden; }
+.track .rm { position: absolute; left: 0; top: 0; bottom: 0; background: ${GUIDE.tealPale}; }
+.track .ca { position: absolute; top: 0; bottom: 0; background: ${GUIDE.fullOldest}; box-shadow: inset 0.3mm 0 0 #fff; }
+.track .cc { position: absolute; top: 0; bottom: 0; background: ${GUIDE.fullOlder}; box-shadow: inset 0.3mm 0 0 #fff; }
+.track .cb { position: absolute; top: 0; bottom: 0; background: ${GUIDE.full}; box-shadow: inset 0.3mm 0 0 #fff; }
+.track .tk { position: absolute; top: 0; bottom: 0; width: 0.6mm; background: #e5484d; }
+.axis { display: flex; justify-content: space-between; font-size: 7.6pt; color: ${GUIDE.muted}; margin-top: 0.6mm; }
+.ct { width: 100%; border-collapse: collapse; margin-top: 2.4mm; }
+.ct th { background: ${GUIDE.head}; color: #fff; font-weight: 500; font-size: 8pt; text-align: left; padding: 1.9mm 2.6mm; border: 0.25mm solid ${GUIDE.head}; }
+.ct td { padding: 1.7mm 2.6mm; border: 0.25mm solid ${GUIDE.rule}; }
 .ct .n { text-align: right; }
-.ct .dim { color: #505861; }
-
-/* The pages after the first open on a navy bar */
-.chead { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 18px; border-radius: 9px; background: #010D35; color: #fff; }
-.chead .meta { color: #ADB4C6; }
-.chead .veeam-logo { height: 22px; }
-.ch-l { display: flex; align-items: center; gap: 12px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.ch-l b { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; }
-.foot { display: flex; justify-content: space-between; gap: 16px; font-size: 11px; color: #505861; padding: 0 2px; flex: none; margin-top: auto; white-space: nowrap; }
+.ct .dim { color: ${GUIDE.muted}; }
+.facts { list-style: none; margin: 0; padding: 0; border-top: 0.25mm solid ${GUIDE.rule}; }
+.facts li { padding: 1.7mm 2.6mm; border: 0.25mm solid ${GUIDE.rule}; border-top: none; overflow-wrap: anywhere; break-inside: avoid; }
+.foot { display: flex; justify-content: space-between; gap: 6mm; font-size: 7.8pt; color: ${GUIDE.muted}; margin-top: 5mm; }
 `;

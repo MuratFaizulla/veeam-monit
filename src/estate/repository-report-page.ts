@@ -2,7 +2,7 @@ import { escapeHtml as esc } from '../telegram/format';
 import { plural } from '../telegram/time';
 import { envelope, ReportDocument, stampOf, Status, STATUS_WORD } from './report-envelope';
 import { STYLE } from './repository-report-style';
-import { VEEAM_LOGO } from './veeam-logo';
+import { VEEAM_LOGO_WHITE } from './guide-look';
 import { Stage } from './run-speed';
 import {
   Attachment,
@@ -43,7 +43,8 @@ export const reportPage = (report: RepositoryReport, only: ReportRepository[] | 
     repository,
     pages: [overviewPage(repository, view), ...chartPages(repository, view), ...actionPages(repository)],
   }));
-  const front = only ? 0 : 3;
+  const links = only ? [] : attachmentPages(view);
+  const front = only ? 0 : 2 + links.length;
   const pageOf = new Map<ReportRepository, number>();
   let next = front + 1;
   for (const { repository, pages } of sections) {
@@ -54,7 +55,7 @@ export const reportPage = (report: RepositoryReport, only: ReportRepository[] | 
   const frame = (crumb: string[], number: number, body: string) => `<section class="page">${top(crumb, number, total, view)}${body}</section>`;
   const pages = only
     ? []
-    : [cover(view, pageOf, total), frame(['Репозитории', 'Все хранилища'], 2, cards(view, pageOf)), frame(['Репозитории', 'Подключения'], 3, attachments(view))];
+    : [cover(view, pageOf, total), frame(['Репозитории', 'Все хранилища'], 2, cards(view, pageOf)), ...links.map((body, index) => frame(['Репозитории', 'Подключения'], 3 + index, body))];
   for (const { repository, pages: own } of sections) {
     own.forEach((body, index) =>
       pages.push(frame(['Репозитории', ...(repository.site ? [repository.site] : []), repository.short], (pageOf.get(repository) as number) + index, body)),
@@ -79,9 +80,9 @@ const tone = (status: Status | 'unknown'): string => (status === 'unknown' ? 'un
  */
 const MARK: Record<string, string> = {
   ok: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#00D15F"/><path d="M4.4 8.3l2.4 2.4 4.8-5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  warn: '<svg viewBox="0 0 16 16"><path d="M8 .9a1.2 1.2 0 0 1 1 .6l6.6 11.6a1.2 1.2 0 0 1-1 1.8H1.4a1.2 1.2 0 0 1-1-1.8L7 1.5a1.2 1.2 0 0 1 1-.6z" fill="#FFB224"/><path d="M8 5.4v4.2" stroke="#3a2800" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.1" r="1" fill="#3a2800"/></svg>',
-  crit: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#FF5A5F"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>',
-  unk: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#8A9891"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="#fff"/></svg>',
+  warn: '<svg viewBox="0 0 16 16"><path d="M8 .9a1.2 1.2 0 0 1 1 .6l6.6 11.6a1.2 1.2 0 0 1-1 1.8H1.4a1.2 1.2 0 0 1-1-1.8L7 1.5a1.2 1.2 0 0 1 1-.6z" fill="#FE8A25"/><path d="M8 5.4v4.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.1" r="1" fill="#fff"/></svg>',
+  crit: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#E8403A"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>',
+  unk: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#639C90"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="#fff"/></svg>',
 };
 const mark = (status: Status | 'unknown'): string => MARK[tone(status)];
 const pill = (status: Status, big = false) => `<span class="pill ${tone(status)}${big ? ' big' : ''}">${mark(status)}${STATUS_WORD[status]}</span>`;
@@ -141,17 +142,17 @@ const bar = (repository: ReportRepository): string => {
 };
 // --- Load hour by hour: one green, the darker the busier; the busiest hour is ringed
 const HEAT: Array<[string, string]> = [
-  ['#F5F7F6', 'transparent'],
-  ['#D9F5E2', '#003D2B'],
-  ['#BDEDCB', '#003D2B'],
-  ['#9CE2B2', '#003D2B'],
-  ['#74D494', '#003D2B'],
-  ['#3FC16F', '#003D2B'],
-  ['#00A83A', '#FFFFFF'],
-  ['#008A3A', '#FFFFFF'],
-  ['#006B36', '#FFFFFF'],
-  ['#005A30', '#FFFFFF'],
-  ['#003D2B', '#FFFFFF'],
+  ['#F1F6F5', 'transparent'],
+  ['#E6FAEF', '#003D30'],
+  ['#CCF5DE', '#003D30'],
+  ['#AAEFCA', '#003D30'],
+  ['#7CE7AD', '#003D30'],
+  ['#3FDC86', '#003D30'],
+  ['#00D15F', '#003D30'],
+  ['#00B352', '#FFFFFF'],
+  ['#00964A', '#FFFFFF'],
+  ['#007A4A', '#FFFFFF'],
+  ['#005F4B', '#FFFFFF'],
 ];
 const heatOf = (count: number): [string, string] => HEAT[Math.min(HEAT.length - 1, count)];
 const inWindow = (hour: number) => hour >= 18 || hour < 7;
@@ -386,8 +387,8 @@ const actionPages = (repository: ReportRepository): string[] => {
 // --- The cover
 /** Repositories the cover has room to list; the rest are on the page of cards. */
 const COVER_ROWS = 6;
-/** Things to do first the cover has room for, in two columns. */
-const COVER_FIRST = 6;
+/** Things to do first the cover has room for, two rows of two; the rest are named in a line under them. */
+const COVER_FIRST = 4;
 
 const cover = (view: View, pageOf: Map<ReportRepository, number>, total: number): string => {
   const { report } = view;
@@ -440,7 +441,8 @@ const cover = (view: View, pageOf: Map<ReportRepository, number>, total: number)
   });
   return `<section class="page cover">
     <aside class="side">
-      <div class="brand">${VEEAM_LOGO}<span>Backup &amp; Replication</span></div>
+      <svg class="g-wave" viewBox="0 0 300 760" preserveAspectRatio="none"><path d="M0 0 L300 0 L300 180 Q220 260 150 200 L0 80Z" fill="#fff" opacity=".12"/><path d="M300 520 L300 760 L140 760Z" fill="#fff" opacity=".14"/></svg>
+      <div class="brand">${VEEAM_LOGO_WHITE}<span>Backup &amp; Replication</span></div>
       <h1>Состояние репозиториев</h1>
       <p class="lead">За ${report.days} дней: ${report.servers.length} ${plural(report.servers.length, 'сервер', 'сервера', 'серверов')} Veeam, ${all.length} ${storagesWord(all.length)}${named.length > 1 ? ` на ${named.length} площадках` : ''}.${silent.length ? ` Не ${silent.length === 1 ? 'ответил' : 'ответили'}: ${silent.join(', ')}.` : ''}</p>
       <div class="when">${view.stamp}</div>
@@ -467,7 +469,14 @@ const cover = (view: View, pageOf: Map<ReportRepository, number>, total: number)
                   .map((thing, index) => `<div class="fi ${thing.severity}"><div class="a-n">${index + 1}</div><div><div class="fi-t">${esc(thing.title)}</div><div class="fi-d">${esc(thing.detail)}</div></div></div>`)
                   .join('')
               : '<div class="empty">Срочных дел нет.</div>'
-          }</div>
+          }</div>${
+            report.first.length > COVER_FIRST
+              ? `<div class="fi-more">Ещё ${report.first.length - COVER_FIRST}: ${report.first
+                  .slice(COVER_FIRST)
+                  .map((thing) => esc(lower(thing.title)))
+                  .join('; ')}.</div>`
+              : ''
+          }
         </div>
         <div><h3>Куда ставить новую задачу</h3>
           <div class="recs">${recommendations.join('')}</div>
@@ -502,7 +511,24 @@ const cards = (view: View, pageOf: Map<ReportRepository, number>): string => `
     .join('')}`;
 
 // --- Which server attaches what
-const attachments = (view: View): string => {
+
+/**
+ * Millimetres the attachments' page has under its head, and what its table
+ * and its two panels take: a repository's row is two lines, a site's one, a
+ * finding in the panel two. Over the room, the panels go on a page of their
+ * own rather than off the bottom of this one.
+ */
+const ATTACHMENT_ROOM_MM = 160;
+const attachmentPages = (view: View): string[] => {
+  const { table, panels, findings } = attachments(view);
+  const { repositories, sites } = view.report;
+  const tableTall = 11 + 9.5 * repositories.length + 6.5 * sites.filter((site) => site.name).length;
+  const panelsTall = 16 + 9.5 * Math.max(findings, 5);
+  if (tableTall + panelsTall <= ATTACHMENT_ROOM_MM) return [`${table}${panels}`];
+  return [table, `${section('Кто к чему подключён — продолжение', 'Что в подключениях настроено не так, и как читать этот отчёт.')}${panels}`];
+};
+
+const attachments = (view: View): { table: string; panels: string; findings: number } => {
   const { report } = view;
   const cell = (attachment: Attachment) =>
     attachment === null
@@ -512,7 +538,7 @@ const attachments = (view: View): string => {
         : `<span class="mx-c ${attachment.on ? 'on' : 'idle'}${attachment.twice ? ' twice' : ''}">${attachment.on}<small>/${attachment.all}</small>${attachment.twice ? '<em>2 репоз.</em>' : ''}</span>`;
   const settings = report.repositories.flatMap((repository) => repository.settings.map((setting) => ({ setting, repository })));
   const shared = report.repositories.filter((repository) => repository.servers.length > 1);
-  return `
+  const table = `
   ${section('Кто к чему подключён', 'В ячейке — задачи этого сервера, которые пишут в хранилище: работают / всего. 0 — подключено, но никто не пишет. «—» — не подключено.')}
   <table class="mx">
     <thead><tr><th>Хранилище</th>${report.servers
@@ -531,8 +557,8 @@ const attachments = (view: View): string => {
             .join('')}`,
       )
       .join('')}</tbody>
-  </table>
-  <div class="duo">
+  </table>`;
+  const panels = `  <div class="duo">
     <div class="panel"><h3>${glyph('gear')} Ошибки настройки</h3>
       <div class="cfg">${settings
         .map(
@@ -563,4 +589,5 @@ const attachments = (view: View): string => {
       </div>
     </div>
   </div>`;
+  return { table, panels, findings: settings.length + (shared.length ? 1 : 0) };
 };

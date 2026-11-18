@@ -113,7 +113,7 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
 
 <p align="center">
   <strong>📄 A job's report: «Отчёт PDF» under its card</strong><br />
-  <img src="docs/assets/screenshots/report-job.png" width="820" alt="The first page of a job's PDF report: the verdict, five numbers, a month of runs as bars, the machines with what went wrong, what to do, and who else wrote to the repository that night" />
+  <img src="docs/assets/screenshots/report-job.png" width="520" alt="The first page of a job's PDF report, in the look of Veeam's User Guide: the green band with Veeam's logo, the job, the verdict, five numbers, a month of runs as bars and what to do" />
 </p>
 
 <table>
@@ -122,7 +122,7 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
     <th>💾 <code>/repos</code>: every repository</th>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/assets/screenshots/report-points.png" width="420" alt="The first page of a job's points report: a missed Full, five numbers, five weeks of points a machine to a row, what to do and the chains on disk" /></td>
+    <td valign="top"><img src="docs/assets/screenshots/report-points.png" width="420" alt="The first page of a job's points report: a missed Full, five numbers, and five weeks of points a machine to a row — a Full violet, an increment green, the missed Full hatched red" /></td>
     <td valign="top"><img src="docs/assets/screenshots/report-repositories.png" width="420" alt="The cover of the repository report: which repository needs action today, every repository with its free space, what to do first and where a new job fits on each site" /></td>
   </tr>
 </table>
