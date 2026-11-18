@@ -58,6 +58,7 @@ The bot speaks Russian, so the quotes of its messages and buttons below stay in 
 
 ### Fixed
 
+- «⏳ Слишком часто» (too often) no longer answers a press that follows another read within five seconds — «🗂 Точки» or «Отчёт PDF» pressed a second after `/job` opened the card, or a colleague's command a moment before. One limit was shared by every read in the group; now only the same read asked again in the same chat within five seconds is held back, as a double tap, and is answered «⏳ Уже запрошено» (already asked).
 - The Repository report's «Разобрать … ТБ бэкапов без задачи» (sort out the backups no job owns) named the three repositories that held the most of them even when some held none, as «BKP01 0,0 ТБ»; it names only those that hold some.
 - While the host's DNS does not answer, the bot reaches Telegram at the address it last resolved. Every send and every button used to fail with `EAI_AGAIN api.telegram.org` for as long as the resolvers were silent, with Telegram itself where it had been.
 - The Summary counts the jobs that have never run, as «Ещё не запускались», so its lines add up to «Всего заданий». On a server of replicas it said 41 jobs and accounted for 21.

@@ -42,12 +42,14 @@ const CHECK_COOLDOWN_MS = 30_000;
 const CHECK_COOLDOWN_KEY = 'command:check';
 
 /**
- * The read-only commands are cheap — two requests at most — but they are still
- * requests against a production Veeam, and a group is a room full of people
- * with a keyboard each.
+ * The same read asked twice within this, in the same chat — a double tap, or
+ * two people pressing one card's Button — is answered once. Any other read
+ * goes ahead at once: a card's «Точки» pressed a second after `/job` opened
+ * the card is not too often, and the reads that are heavy are printed one at
+ * a time anyway.
  */
 const READ_COOLDOWN_MS = 5_000;
-const READ_COOLDOWN_KEY = 'command:read';
+const readKey = (what: string, chat?: TelegramChat): string => `command:read:${chat?.id ?? 'any'}:${what.trim().toLowerCase()}`;
 
 /** What somebody setting the bot up types to learn the chat's id. */
 const SETUP_WORDS = ['/chatid', '/start', '/status'];
@@ -239,10 +241,10 @@ export class TelegramCommandsService implements Answers {
    */
   private async act(action: Action, asked: Asked): Promise<Reply | undefined> {
     if (action.kind === 'job') {
-      return this.reading(() => this.estate.describeJobById(action.id, action.server));
+      return this.reading(`job:${action.server}:${action.id}`, () => this.estate.describeJobById(action.id, action.server), [], undefined, asked.chat);
     }
     if (action.kind === 'points') {
-      return this.reading(() => this.estate.describePointsById(action.id, action.server), [], asked);
+      return this.reading(`points:${action.server}:${action.id}`, () => this.estate.describePointsById(action.id, action.server), [], asked);
     }
     if (action.kind === 'report') return this.jobReport(asked, action.id, action.server);
     return commandPressed(action.kind)?.answer(this, asked);
@@ -331,11 +333,11 @@ export class TelegramCommandsService implements Answers {
   }
 
   summary(): Promise<Reply> {
-    return this.reading(() => this.estate.summary(), REFRESH_SUMMARY_BUTTON);
+    return this.reading('summary', () => this.estate.summary(), REFRESH_SUMMARY_BUTTON);
   }
 
   job(name: string): Promise<Reply> {
-    return this.reading(() => this.estate.describeJob(name), SUMMARY_BUTTON);
+    return this.reading(`job:${name}`, () => this.estate.describeJob(name), SUMMARY_BUTTON);
   }
 
   /**
@@ -344,7 +346,7 @@ export class TelegramCommandsService implements Answers {
    * the choices, when the name is none or several jobs share it.
    */
   points(asked: Asked): Promise<Reply> {
-    return this.reading(() => this.estate.describePoints(asked.argument), SUMMARY_BUTTON, asked);
+    return this.reading(`points:${asked.argument}`, () => this.estate.describePoints(asked.argument), SUMMARY_BUTTON, asked);
   }
 
   /**
@@ -355,7 +357,7 @@ export class TelegramCommandsService implements Answers {
    * at once too, and nothing follows.
    */
   repositories(asked: Asked): Reply {
-    const tooSoon = this.tooSoon();
+    const tooSoon = this.tooSoon(`repos:${asked.argument}`, asked.chat);
     if (tooSoon) return tooSoon;
     const { text, later } = this.estate.repositoryReport(asked.argument.trim());
     if (!later) return { lines: [text], markup: mainKeyboard() };
@@ -369,7 +371,7 @@ export class TelegramCommandsService implements Answers {
    * once, and the PDF follows, as the Repository report does.
    */
   private jobReport(asked: Asked, id: string, server?: string): Reply {
-    const tooSoon = this.tooSoon();
+    const tooSoon = this.tooSoon(`report:${server}:${id}`, asked.chat);
     if (tooSoon) return tooSoon;
     const { text, later } = this.estate.jobReport(id, server);
     return { lines: [text], ...(later ? { later: this.sending(asked, later) } : {}) };
@@ -608,22 +610,29 @@ export class TelegramCommandsService implements Answers {
    * A failure is answered too: an unanswered command reads as a dead bot.
    */
   private async reading(
+    what: string,
     ask: () => Promise<Answer>,
     tail: ButtonRow = [],
     asked?: Asked,
+    chat = asked?.chat,
   ): Promise<Reply> {
-    return this.tooSoon() ?? this.answered(ask, tail, asked);
+    return this.tooSoon(what, chat) ?? this.answered(ask, tail, asked);
   }
 
-  /** The rate limit on reads: what is said when it holds, and otherwise it is armed. */
-  private tooSoon(): Reply | undefined {
-    if (this.store.cooldowns.isSuppressed(READ_COOLDOWN_KEY)) {
+  /**
+   * The same read `what` asked again in the chat within seconds: said to have
+   * been asked, rather than read twice. Otherwise it is let through and
+   * remembered.
+   */
+  private tooSoon(what: string, chat?: TelegramChat): Reply | undefined {
+    const key = readKey(what, chat);
+    if (this.store.cooldowns.isSuppressed(key)) {
       return {
-        lines: ['⏳ <b>Слишком часто</b>', '', 'Подождите несколько секунд и повторите.'],
+        lines: ['⏳ <b>Уже запрошено</b>', '', 'Ответ на это уже отправлен или придёт через несколько секунд.'],
         markup: mainKeyboard(),
       };
     }
-    this.store.cooldowns.arm(READ_COOLDOWN_KEY, READ_COOLDOWN_MS);
+    this.store.cooldowns.arm(key, READ_COOLDOWN_MS);
     return undefined;
   }
 

@@ -598,7 +598,6 @@ test('a job\'s Button opens the job on its own server, whichever is selected', a
 
   // Somebody selects BAAS before anybody presses the button above.
   w.store.selectServer('baas');
-  w.store.cooldowns.clear('command:read');
   await pressed(w, 'a:job:ast:a1');
 
   const card = w.api.sent().at(-1);

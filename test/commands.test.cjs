@@ -593,12 +593,28 @@ test('/points without a name offers the jobs that need somebody, and a press sen
   const offered = reply.reply_markup.inline_keyboard[0][0];
   assert.deepEqual([offered.text, offered.callback_data], ['OPS_Exchange', `a:pts:${SERVER}:1`]);
 
-  // Asking again within seconds is held back; a press a while later is not.
-  w.store.cooldowns.clear('command:read');
+  // The list just read does not hold back a press on it: a different read goes ahead at once.
   await pressed(w, offered.callback_data);
   await w.commands.settled();
   assert.equal(w.api.sent().at(-1).text, '⏳ <b>Готовлю PDF по точкам OPS_Exchange</b> — несколько секунд.');
   assert.match(w.api.of('sendDocument').at(-1).caption, /^🗂 <b>OPS_Exchange<\/b> · точки восстановления\n/u);
+});
+
+test('a card\'s «Точки» goes ahead the second after the card; the same press twice is answered once', async () => {
+  const w = exchange({}, answersWorld);
+  await scanned(w);
+
+  await typed(w, '/job exchange');
+  await pressed(w, `a:pts:${SERVER}:1`);
+  await w.commands.settled();
+  assert.doesNotMatch(w.api.sent().map((message) => message.text ?? '').join('\n'), /Уже запрошено|Слишком часто/u);
+  assert.equal(w.api.of('sendDocument').length, 1);
+
+  // A double tap: the second press of the same Button is said to be asked already, and read nothing.
+  await pressed(w, `a:pts:${SERVER}:1`);
+  await w.commands.settled();
+  assert.match(w.api.sent().at(-1).text, /^⏳ <b>Уже запрошено<\/b>/u);
+  assert.equal(w.api.of('sendDocument').length, 1);
 });
 
 test('the 🗂 key lists every job by 🛡\'s verdict, the worst first, and a job\'s key sends its points, the list staying for the next', async () => {
