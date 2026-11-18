@@ -554,7 +554,6 @@ test('a second /repos within half an hour is a matter of seconds, and asks Veeam
 
   await answered(w, '/repos');
   const reads = w.asked.length;
-  w.store.cooldowns.clear('command:read');
   w.api.reset();
   await answered(w, '/repos bkp01');
 
