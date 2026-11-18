@@ -28,7 +28,6 @@ const KEYS = {
   // Asks which server first: a calendar is one server's month.
   calendar: { label: '📅 Календарь', does: 'PDF: задания сервера за месяц — календарь, ночь по часам, vCenter и прокси' },
   digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
-  check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
   // Offers every job of the Selected server to pick, the worst first.
   job: { label: '📦 Задание', does: 'выбрать задание из списка: карточка, ⚡ скорость, настройки' },
   // Offers every job of the Selected server by 🛡's verdict, the worst first.
@@ -43,8 +42,8 @@ const KEYS = {
  * The keys, a row each. `/menu` alone has none: the keyboard is the menu.
  */
 const ROWS: readonly (readonly MenuCommand[])[] = [
-  ['servers', 'repos', 'calendar'],
-  ['digest', 'check'],
+  ['servers', 'repos'],
+  ['digest', 'calendar'],
   ['job', 'points'],
   ['status', 'topics'],
   ['clear', 'help'],
