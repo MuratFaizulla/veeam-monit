@@ -143,9 +143,10 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .vh-s { text-align: right; white-space: nowrap; }
 .vr .vh-d { font-size: 7.5pt; font-weight: 400; margin-top: 0.4mm; color: #505861; }
 .vr .vh.ok td { background: #00d15f; border-bottom-color: #00d15f; color: #fff; }
-.vr .vh.bad td { background: #c4373d; border-bottom-color: #c4373d; color: #fff; }
-.vr .vh.warn td { background: #fff7e3; border-bottom-color: #ffe0a3; } .vr .vh.warn .vh-s { color: #a66800; }
-.vr .vh.run td { background: #eef3ff; } .vr .vh.run .vh-s { color: #3700ff; }
+/* A failure in a red a shade quieter than the marks', so that a page of them does not shout over the rest */
+.vr .vh.bad td { background: #dc5b55; border-bottom-color: #dc5b55; color: #fff; }
+.vr .vh.warn td { background: #fff3e8; border-bottom-color: #ffd1a8; } .vr .vh.warn .vh-s { color: #a04b00; }
+.vr .vh.run td { background: #e6f5fc; border-bottom-color: #b5e2f5; } .vr .vh.run .vh-s { color: #0083b3; }
 .vr .vh.ok .vh-d, .vr .vh.bad .vh-d { color: inherit; opacity: 0.92; }
 .vr .vi { table-layout: auto; }
 .vr .vi col.c1 { width: 46mm; }
@@ -164,8 +165,8 @@ html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .vr .note { font-size: 6.8pt; word-break: break-word; color: #505861; }
 .vr .dim { color: #6b727c; }
 .vr .st { font-weight: 650; }
-.vr .st.ok { color: #00893e; }
-.vr .st.warn { color: #c77d00; }
-.vr .st.bad { color: #e63946; }
-.vr .st.run { color: #3700ff; }
+.vr .st.ok { color: #05b151; }
+.vr .st.warn { color: #a04b00; }
+.vr .st.bad { color: #e8403a; }
+.vr .st.run { color: #00a7e2; }
 `;

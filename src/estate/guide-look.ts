@@ -21,7 +21,7 @@ export const VEEAM_LOGO_WHITE = VEEAM_LOGO.replace('fill="#00D15F"', 'fill="none
  * A restore point as the Guide draws its files: a Full (.vbk) violet, an increment (.vib) green, and the older Fulls of a chain in lighter violets.
  */
 export const GUIDE = {
-  green: '#00b336', bright: '#00d15f', ink: '#1f1f1f', muted: '#5f5f5f', rule: '#c8c8c8', head: '#8c8c8c', warning: '#ffb224', failed: '#e8403a',
+  green: '#00b336', bright: '#00d15f', ink: '#1f1f1f', muted: '#5f5f5f', rule: '#c8c8c8', head: '#8c8c8c', warning: '#fe8a25', failed: '#e8403a',
   full: '#8e71f4', increment: '#00d15f', fullOlder: '#b3a0f7', fullOldest: '#d9cffb',
   // The Guide's dark green and its tints, for what is neutral: past, empty, not known. Its link blue for what is going on now.
   dark: '#005f4b', teal: '#639c90', tealSoft: '#a9c9c2', tealPale: '#c7dcd7', tealMist: '#e3edeb',
@@ -72,9 +72,9 @@ body { margin: 0; background: #fff; font-family: 'Inter Variable', 'Segoe UI', s
 .g-table td { padding: 1.7mm 2.6mm; border: 0.25mm solid ${GUIDE.rule}; vertical-align: top; }
 .g-table tr { break-inside: avoid; }
 .g-spec td:first-child { width: 34%; font-weight: 600; }
-.g-note { margin-top: 4.5mm; padding: 2.8mm 4mm; border-left: 0.9mm solid ${GUIDE.warning}; background: #fff8ea; font-size: 9.6pt; line-height: 1.38; }
-.g-note.crit { border-left-color: ${GUIDE.failed}; background: #fff1f1; }
-.g-note.ok { border-left-color: ${GUIDE.green}; background: #effaf3; }
+.g-note { margin-top: 4.5mm; padding: 2.8mm 4mm; border-left: 0.9mm solid ${GUIDE.warning}; background: #fff3e8; font-size: 9.6pt; line-height: 1.38; }
+.g-note.crit { border-left-color: ${GUIDE.failed}; background: #fdeceb; }
+.g-note.ok { border-left-color: ${GUIDE.green}; background: #e6faef; }
 .g-note.unknown { border-left-color: #adacaf; background: #f5f6f7; }
 .g-note b { font-weight: 650; }
 `;
