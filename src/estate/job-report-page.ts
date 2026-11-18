@@ -37,14 +37,14 @@ const ERROR_ROWS = 3;
 const CHAIN_ROWS = 6;
 
 /** One family: Veeam's green, and an amber and a coral as strong as it is. */
-const COLOUR = { success: '#00d15f', warning: '#ffb224', failed: '#ff5a5f', none: '#00a7e2', empty: '#e3edeb' } as const;
+const COLOUR = { success: '#00d15f', warning: '#fe8a25', failed: '#e8403a', none: '#00a7e2', empty: '#e3edeb' } as const;
 
 /** A state is its mark and its word, never the colour alone. */
 const MARK: Record<Status, string> = {
   crit: `<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${COLOUR.failed}"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>`,
-  warn: `<svg class="js-mk" viewBox="0 0 16 16"><path d="M8 1.2 15.4 14.2H.6z" fill="${COLOUR.warning}"/><path d="M8 6v4" stroke="#3d2a00" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="#3d2a00"/></svg>`,
-  ok: `<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${COLOUR.success}"/><path d="M4.6 8.3l2.3 2.3 4.5-4.9" stroke="#010d35" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-  unknown: '<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#adacaf"/><path d="M5.4 8h5.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  warn: `<svg class="js-mk" viewBox="0 0 16 16"><path d="M8 1.2 15.4 14.2H.6z" fill="${COLOUR.warning}"/><path d="M8 6v4" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="#ffffff"/></svg>`,
+  ok: `<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${COLOUR.success}"/><path d="M4.6 8.3l2.3 2.3 4.5-4.9" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  unknown: '<svg class="js-mk" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="#639c90"/><path d="M5.4 8h5.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
 };
 /** How a run ended, as the panel says its last one. */
 const RESULT: Record<Outcome, [Status, string]> = { success: ['ok', 'Успешно'], warning: ['warn', 'С предупреждением'], failed: ['crit', 'Ошибка'], none: ['unknown', 'Идёт'] };
@@ -73,7 +73,11 @@ const summary = (report: JobReport, timezone: string, stamp: string): string => 
   ${numbers(report, timezone, isReplica(report))}
   <h2 class="g-h2">Запуски за ${report.days} дней</h2>
   ${chart(report, timezone)}
-  <div class="js-legend"><span><i style="background:${COLOUR.success}"></i>успешно</span><span><i style="background:${COLOUR.warning}"></i>с предупреждением</span><span><i style="background:${COLOUR.failed}"></i>ошибка</span><span><i class="run"></i>идёт</span><span><b>×</b> не было запуска по расписанию</span>${report.usual ? `<span><i class="dash"></i>обычно ${spanOf(report.usual)}</span>` : ''}</div>
+  <div class="js-legend">${
+    report.runs.some((run) => run.full !== undefined)
+      ? `<span><i style="background:${GUIDE.full}"></i>Full</span><span><i style="background:${COLOUR.success}"></i>инкремент</span>`
+      : `<span><i style="background:${COLOUR.success}"></i>успешно</span>`
+  }<span><i style="background:${COLOUR.warning}"></i>с предупреждением</span><span><i style="background:${COLOUR.failed}"></i>ошибка</span><span><i class="run"></i>идёт</span><span><b>×</b> не было запуска по расписанию</span>${report.usual ? `<span><i class="dash"></i>обычно ${spanOf(report.usual)}</span>` : ''}</div>
   <h2 class="g-h2">Что сделать</h2>
   ${stepsTable(report)}
   ${guideFoot(footOf(report, stamp))}
@@ -172,7 +176,7 @@ const numbers = (report: JobReport, timezone: string, replica: boolean): string 
  */
 const chart = (report: JobReport, timezone: string): string => {
   const W = 1000;
-  const H = 132;
+  const H = 160;
   const left = 58;
   const right = 14;
   const top = 10;
@@ -186,7 +190,7 @@ const chart = (report: JobReport, timezone: string): string => {
   const hi = Math.log(ceiling);
   const y = (minutes: number) => top + (H - top - bottom) * (1 - (Math.log(Math.max(5, Math.min(ceiling, minutes))) - lo) / (hi - lo));
   const base = H - bottom;
-  const barWidth = Math.max(4, Math.min(16, ((W - left - right) / report.days) * 0.6));
+  const barWidth = Math.max(4, Math.min(22, ((W - left - right) / report.days) * 0.7));
   const lines = ticks
     .filter(([minutes]) => minutes <= ceiling)
     .map(([minutes, label]) => `<line x1="${left}" x2="${W - right}" y1="${y(minutes).toFixed(1)}" y2="${y(minutes).toFixed(1)}" class="g"/><text x="${left - 8}" y="${(y(minutes) + 4.5).toFixed(1)}" text-anchor="end">${label}</text>`)
@@ -203,7 +207,16 @@ const chart = (report: JobReport, timezone: string): string => {
     const X = x(run.start) - barWidth / 2;
     const Y = base - height;
     const path = `M${X.toFixed(1)} ${base} V${(Y + r).toFixed(1)} Q${X.toFixed(1)} ${Y.toFixed(1)} ${(X + r).toFixed(1)} ${Y.toFixed(1)} H${(X + barWidth - r).toFixed(1)} Q${(X + barWidth).toFixed(1)} ${Y.toFixed(1)} ${(X + barWidth).toFixed(1)} ${(Y + r).toFixed(1)} V${base} Z`;
-    return `<path d="${path}" ${going ? `fill="#fff" stroke="${COLOUR.none}" stroke-width="1.6"` : `fill="${COLOUR[run.result] ?? COLOUR.none}"`}/>`;
+    // A good run in the colour the Guide draws its file in: a Full violet (.vbk), an increment green (.vib). A warning or a failure says so instead.
+    const fill = run.result === 'success' && run.full ? GUIDE.full : COLOUR[run.result] ?? COLOUR.none;
+    const shape = `<path d="${path}" ${going ? `fill="#fff" stroke="${COLOUR.none}" stroke-width="1.6"` : `fill="${fill}"`}/>`;
+    // Its file written up the bar, .vbk or .vib, as the Guide writes it in the box, where the bar is tall enough to hold it.
+    const word = run.full === undefined ? '' : run.full ? '.vbk' : '.vib';
+    const fits = word && !going && height >= word.length * 5.8 + 6 && barWidth >= 11;
+    const ink = fill === COLOUR.success ? '#003d30' : '#fff';
+    return fits
+      ? `${shape}<text class="k" transform="translate(${(X + barWidth / 2 + 3.6).toFixed(1)} ${(base - 4).toFixed(1)}) rotate(-90)" fill="${ink}">${word}</text>`
+      : shape;
   };
   const missed = report.missed.map((at) => `<text x="${x(at).toFixed(1)}" y="${base - 5}" text-anchor="middle" class="m">×</text>`).join('');
   const empty = report.runs.length ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">За ${report.days} дней запусков не было</text>`;
@@ -260,7 +273,7 @@ const machinesTable = (report: JobReport, timezone: string): string => {
   const rows = shown
     .map(
       (machine) =>
-        `<tr${machine.error ? ' class="js-hasx"' : ''}><td><div class="js-name">${machineMark(machine)}<div><span>${breakable(shortName(machine.name))}</span></div></div></td><td><div class="js-hist${machine.history.length > DENSE_RUNS ? ' dense' : ''}">${machine.history.map((outcome) => `<i style="background:${outcome === 'none' ? COLOUR.empty : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}</tr>${
+        `<tr${machine.error ? ' class="js-hasx"' : ''}><td><div class="js-name">${machineMark(machine)}<div><span>${breakable(shortName(machine.name))}</span></div></div></td><td><div class="js-hist${machine.history.length > DENSE_RUNS ? ' dense' : ''}">${machine.history.map((outcome, column) => `<i style="background:${outcome === 'none' ? COLOUR.empty : outcome === 'success' && report.history.fulls?.[column] ? GUIDE.full : COLOUR[outcome]}"></i>`).join('')}</div></td>${machine.unread ? UNREAD : saves(machine, timezone)}</tr>${
           // Under the machine, across the row: the name's column is too narrow to hold what Veeam said.
           machine.error ? `<tr class="js-x"><td colspan="4"><div class="js-err">${esc(machine.error)}${machine.errorTone === 'healed' ? ' · повтор помог' : ''}</div></td></tr>` : ''
         }`,
@@ -327,14 +340,14 @@ const STYLE = `
 .nw { white-space: nowrap; } .r { text-align: right; }
 .js-mk { width: 3.6mm; height: 3.6mm; flex: none; vertical-align: -0.6mm; }
 .g-state .js-mk { width: 4mm; height: 4mm; }
-.js-bad { color: #e5484d; } .js-dim { color: ${GUIDE.muted}; }
+.js-bad { color: #e8403a; } .js-dim { color: ${GUIDE.muted}; }
 .js-partial { color: ${GUIDE.muted}; font-size: 7.8pt; margin-top: 1.4mm; padding-left: 4.9mm; }
 
 .js-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 0.25mm solid ${GUIDE.rule}; border-top: none; }
 .js-tile { min-width: 0; border-left: 0.25mm solid ${GUIDE.rule}; display: flex; flex-direction: column; } .js-tile:first-child { border-left: none; }
 .js-tk { background: ${GUIDE.head}; color: #fff; font-weight: 500; font-size: 8pt; padding: 1.9mm 2.6mm; min-height: 11.5mm; box-sizing: border-box; }
 .js-tv { font-size: 16pt; font-weight: 300; line-height: 1.15; white-space: nowrap; padding: 2mm 2.6mm 0; } .js-tv small { font-size: 8.4pt; color: ${GUIDE.muted}; }
-.js-tile.bad .js-tv { color: #e5484d; }
+.js-tile.bad .js-tv { color: #e8403a; }
 .js-td { font-size: 7.6pt; color: ${GUIDE.muted}; padding: 0.4mm 2.6mm 2.2mm; }
 
 .js-chart { width: 100%; height: auto; display: block; font-family: 'Inter Variable', sans-serif; }
@@ -342,6 +355,7 @@ const STYLE = `
 .js-chart .g { stroke: #e6e6e6; stroke-width: 1; } .js-chart .a { stroke: #9a9a9a; stroke-width: 1; }
 .js-chart .u { stroke: #6b6b6b; stroke-width: 1.2; stroke-dasharray: 5 4; }
 .js-chart .m { font-size: 16px; font-weight: 650; fill: ${GUIDE.ink}; }
+.js-chart .k { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
 .js-legend { display: flex; flex-wrap: wrap; gap: 0.6mm 4mm; font-size: 7.6pt; color: ${GUIDE.muted}; margin-top: 1.2mm; }
 .js-legend span { white-space: nowrap; }
 .js-legend i { display: inline-block; width: 2.8mm; height: 2.8mm; margin-right: 1.1mm; vertical-align: -0.4mm; }
@@ -352,7 +366,7 @@ const STYLE = `
 .js-steps { display: flex; flex-direction: column; gap: 2.6mm; }
 .js-step { display: flex; gap: 2.6mm; break-inside: avoid; }
 .js-step .n { flex: none; width: 5.2mm; height: 5.2mm; border-radius: 50%; background: ${GUIDE.green}; color: #fff; font-weight: 650; font-size: 8pt; display: flex; align-items: center; justify-content: center; margin-top: 0.2mm; }
-.js-step.crit .n { background: ${COLOUR.failed}; } .js-step.warn .n { background: ${COLOUR.warning}; color: #3d2a00; }
+.js-step.crit .n { background: ${COLOUR.failed}; } .js-step.warn .n { background: ${COLOUR.warning}; color: #ffffff; }
 .js-step b { font-weight: 650; display: block; font-size: 9pt; }
 .js-step p { margin: 0.4mm 0 0; color: #333; }
 .js-tags { display: flex; flex-wrap: wrap; gap: 1mm 3mm; margin-top: 0.8mm; } .js-tags span::before { content: '□ '; color: ${GUIDE.muted}; }

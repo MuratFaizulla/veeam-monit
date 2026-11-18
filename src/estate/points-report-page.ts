@@ -46,7 +46,7 @@ export const chunks = <T>(items: T[], size: number): T[][] =>
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 
 /** The page's colours, as drawn. */
-const DOT = { crit: '#FF5A5F', warn: '#FFB224', ok: '#00D15F', unknown: '#ADACAF' } as const;
+const DOT = { crit: '#E8403A', warn: '#FE8A25', ok: '#00D15F', unknown: '#639C90' } as const;
 
 /** A number drawn smaller the longer it is: «сб 24.10, 22:00» wrapped at the size of «2,4 ТБ». */
 const valueSize = (value: string): string => (value.length <= 11 ? '' : value.length <= 15 ? ' m' : ' s');
@@ -235,7 +235,7 @@ const STYLE = `
 .job { margin: 0; color: ${GUIDE.green}; font-weight: 300; font-size: 26pt; line-height: 1.12; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .dot { width: 3.4mm; height: 3.4mm; border-radius: 50%; display: inline-block; flex: none; }
 .verdict { font-weight: 600; }
-.bad { color: #e5484d; }
+.bad { color: #e8403a; }
 .meta { color: ${GUIDE.muted}; }
 .meta.small { font-size: 8pt; margin-top: 1.4mm; }
 
@@ -257,7 +257,7 @@ h2 { margin: 0; }
 .row { display: grid; grid-template-columns: 42mm repeat(${CALENDAR_DAYS}, minmax(0, 1fr)) 9mm; gap: 0.45mm; align-items: center; break-inside: avoid; }
 .mon { font-size: 7.4pt; font-weight: 600; color: ${GUIDE.ink}; border-bottom: 0.25mm solid ${GUIDE.rule}; padding-bottom: 0.6mm; white-space: nowrap; overflow: hidden; }
 .hd { font-size: 6.4pt; color: ${GUIDE.muted}; text-align: center; line-height: 1.3; }
-.hd.we { color: #9a9a9a; } .hd.fd { color: ${GUIDE.ink}; font-weight: 650; } .hd.miss { color: #e5484d; font-weight: 650; }
+.hd.we { color: #9a9a9a; } .hd.fd { color: ${GUIDE.ink}; font-weight: 650; } .hd.miss { color: #e8403a; font-weight: 650; }
 .nm { font-size: 7.8pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1mm; }
 .cnt { font-size: 8pt; font-weight: 650; text-align: right; }
 .none { color: ${GUIDE.muted}; padding: 1mm 0; }
@@ -273,19 +273,19 @@ h2 { margin: 0; }
 .more { font-size: 8pt; color: ${GUIDE.muted}; }
 .err { margin: 0 0 2mm; break-inside: avoid; }
 .err b { font-weight: 650; }
-.errt { display: block; color: #c23a40; margin-top: 0.4mm; overflow-wrap: anywhere; }
+.errt { display: block; color: #e8403a; margin-top: 0.4mm; overflow-wrap: anywhere; }
 .act { margin: 0 0 2.4mm; break-inside: avoid; }
 .act b { display: block; font-weight: 650; font-size: 9pt; }
 .act .ad { display: block; color: #333; }
 .act.calm { color: ${GUIDE.muted}; }
-.imp { margin-left: 1.2mm; font-weight: 650; color: #e5484d; }
+.imp { margin-left: 1.2mm; font-weight: 650; color: #e8403a; }
 .note { margin-left: 1.2mm; color: ${GUIDE.muted}; font-weight: 600; }
 .track { position: relative; height: 3.4mm; background: ${GUIDE.tealMist}; overflow: hidden; }
 .track .rm { position: absolute; left: 0; top: 0; bottom: 0; background: ${GUIDE.tealPale}; }
 .track .ca { position: absolute; top: 0; bottom: 0; background: ${GUIDE.fullOldest}; box-shadow: inset 0.3mm 0 0 #fff; }
 .track .cc { position: absolute; top: 0; bottom: 0; background: ${GUIDE.fullOlder}; box-shadow: inset 0.3mm 0 0 #fff; }
 .track .cb { position: absolute; top: 0; bottom: 0; background: ${GUIDE.full}; box-shadow: inset 0.3mm 0 0 #fff; }
-.track .tk { position: absolute; top: 0; bottom: 0; width: 0.6mm; background: #e5484d; }
+.track .tk { position: absolute; top: 0; bottom: 0; width: 0.6mm; background: #e8403a; }
 .axis { display: flex; justify-content: space-between; font-size: 7.6pt; color: ${GUIDE.muted}; margin-top: 0.6mm; }
 .ct { width: 100%; border-collapse: collapse; margin-top: 2.4mm; }
 .ct th { background: ${GUIDE.head}; color: #fff; font-weight: 500; font-size: 8pt; text-align: left; padding: 1.9mm 2.6mm; border: 0.25mm solid ${GUIDE.head}; }

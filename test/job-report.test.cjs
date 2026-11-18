@@ -255,6 +255,19 @@ test('the chain is the Evidence\'s, a day a row: a Full where most of a run\'s p
   assert.match(quiet(), /<span class="nw">13\.10<\/span><span class="js-tag">инкремент<\/span>.*?<b>4,0 ГБ<\/b><\/span><span class="r nw js-dim">18 ГБ<\/span>/);
   assert.match(quiet(), /<span class="nw">10\.10<\/span><span class="js-tag full">Full<\/span>.*?<b>100 ГБ<\/b><\/span><span class="r nw js-dim">400 ГБ<\/span>/);
   assert.match(quiet({}, []), /<div class="js-dim">У задания нет ни одной точки восстановления\.<\/div>/);
+
+  // On the month's chart a run is drawn as the Guide draws its file: the Full of 10.10 violet, the increments green, each with its file, .vbk or .vib, up the bar.
+  const nights = edgeReading({ neighbours: [], neighbourRuns: [], attempts: [night('c1', 13), night('b1', 12), night('a1', 10)] });
+  const month = jobReportOf(nights, TZ);
+  assert.deepEqual(month.runs.map((run) => run.full), [true, false, false]);
+  const chart = jobReportPage(month, sessionReportOf(nights, TZ), TZ);
+  assert.equal((chart.match(/<path d="[^"]+" fill="#8e71f4"\/>/g) ?? []).length, 1);
+  assert.match(chart, /rotate\(-90\)" fill="#fff">\.vbk<\/text>/);
+  assert.equal((chart.match(/rotate\(-90\)" fill="#003d30">\.vib<\/text>/g) ?? []).length, 2);
+  assert.match(chart, /<i style="background:#8e71f4"><\/i>Full<\/span><span><i style="background:#00d15f"><\/i>инкремент<\/span>/);
+  // And a machine's history the same: its Full of 10.10 violet, its increments green.
+  assert.deepEqual(month.history.fulls, [true, false, false]);
+  assert.match(chart, /<div class="js-hist"><i style="background:#8e71f4"><\/i><i style="background:#00d15f"><\/i><i style="background:#00d15f"><\/i><\/div>/);
   assert.match(quiet({ evidence: { status: 'pending', reason: 'Точки восстановления ещё не прочитаны.' } }), /<div class="js-dim">Точки восстановления ещё не прочитаны\.<\/div>/);
 });
 

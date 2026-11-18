@@ -3,7 +3,7 @@ import { durationOf, fromServerClock, instantOf, Job } from '../veeam/estate';
 import { linesOf, saidOf } from '../veeam/session-text';
 import { VeeamBackupFile, VeeamJob, VeeamRepositoryState, VeeamTaskSession } from '../veeam/types';
 import { PendingEvidence } from './evidence';
-import { describeFulls, FullSchedule, fullSchedulesOf, nextFullDay } from './full-schedule';
+import { describeFulls, FullSchedule, fullSchedulesOf, isFullDay, nextFullDay } from './full-schedule';
 import { JobHistory } from './job-reads';
 import { JobJudgement, Severity, Trouble, Verdict, verdictWords } from './job-standing';
 import { RunSize, runSizesOf, sizesOf } from './points-sizes';
@@ -74,6 +74,12 @@ export interface JobRun {
   /** Machines saved, of those the run went through; undefined when the tasks were not read. */
   saved?: number;
   machines?: number;
+  /**
+   * Whether it wrote a Full: as its retained points say, or, for a run older
+   * than they reach, as the settings owe one that day to its first run.
+   * Absent where neither tells.
+   */
+  full?: boolean;
 }
 
 /** One machine over the period. */
@@ -169,7 +175,14 @@ export interface JobReport {
   /** Scheduled starts no run came for. */
   missed: number[];
   /** The runs the machines' history is about: their first and last start, and how many. */
-  history: { from?: number; to?: number; runs: number; byDay: boolean };
+  history: {
+    from?: number;
+    to?: number;
+    runs: number;
+    byDay: boolean;
+    /** A column a Full: a run, or a day with a run, that wrote one; absent where it is not known. As the machines' history has its columns. */
+    fulls?: Array<boolean | undefined>;
+  };
   machines: ReportMachine[];
   errors: ErrorGroup[];
   /** Newest first. */
@@ -401,6 +414,21 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
   const nextFull = fullSchedules?.length ? nextFullDay(fullSchedules, at, timezone) : undefined;
   const lastFull = sizesOf(reading.files, retained)?.full;
 
+  // A Full or an increment, for the month's chart: the retained points written while it ran, else the Full the settings owe its day — once, to the day's first run.
+  const firstOfDay = new Set<number>();
+  const daysSeen = new Set<number>();
+  for (const run of runs) {
+    const day = dayIn(run.start, timezone);
+    if (!daysSeen.has(day)) firstOfDay.add(run.start);
+    daysSeen.add(day);
+  }
+  const fullOf = (start: number, end: number | undefined): boolean | undefined => {
+    const written = retained.filter((point) => point.full !== undefined && point.at >= start - MINUTE && point.at <= (end ?? at) + MINUTE);
+    if (written.length) return written.some((point) => point.full);
+    if (!fullSchedules?.length) return undefined;
+    return firstOfDay.has(start) && isFullDay(fullSchedules, dayIn(start, timezone));
+  };
+
   const repositoryName = reading.repository?.name;
   const repository = reading.repository && repositoryName
     ? {
@@ -435,9 +463,19 @@ export const jobReportOf = (reading: JobReading, timezone: string): JobReport =>
       pieces,
       minutes,
       ...(read && done.size ? { saved: [...done.values()].filter((task) => saved(outcomeOf(task.result?.result))).length, machines: done.size } : {}),
+      ...((full) => (full === undefined ? {} : { full }))(fullOf(start, end)),
     })),
     missed,
-    history: { from: withTasks[0]?.start, to: withTasks.at(-1)?.start, runs: withTasks.length, byDay },
+    history: {
+      from: withTasks[0]?.start,
+      to: withTasks.at(-1)?.start,
+      runs: withTasks.length,
+      byDay,
+      fulls: columns.map((group) => {
+        const kinds = group.map((run) => fullOf(run.start, run.end));
+        return kinds.some((kind) => kind === true) ? true : kinds.every((kind) => kind === undefined) ? undefined : false;
+      }),
+    },
     machines,
     errors,
     chain,
