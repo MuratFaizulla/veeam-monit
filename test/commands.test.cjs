@@ -44,7 +44,7 @@ test('every declared command is in the menu and has a paragraph in /help', async
 
   assert.deepEqual(
     BOT_COMMANDS.map((entry) => entry.command),
-    ['status', 'menu', 'servers', 'digest', 'job', 'points', 'repos', 'check', 'topics', 'clear', 'help'],
+    ['status', 'menu', 'servers', 'digest', 'job', 'points', 'repos', 'calendar', 'check', 'topics', 'clear', 'help'],
   );
   for (const { name } of COMMANDS) {
     assert.ok(BOT_COMMANDS.some((entry) => entry.command === name), `/${name} в меню`);
@@ -99,9 +99,9 @@ test('everything the menu offers is answered, and so are the hidden spellings', 
     const w = world();
     await typed(w, `/${command}`);
     await w.commands.settled();
-    // /repos says the file is coming, then sends it.
+    // /repos and /calendar say the file is coming, then send it.
     assert.equal(w.api.sent().length, 1, `/${command} отвечен`);
-    assert.equal(w.api.of('sendDocument').length, command === 'repos' ? 1 : 0, `/${command} и файл`);
+    assert.equal(w.api.of('sendDocument').length, ['repos', 'calendar'].includes(command) ? 1 : 0, `/${command} и файл`);
   }
 
   // Not in the menu, never in /help: /start is what Telegram sends on "Start",
@@ -438,7 +438,7 @@ test('a button and its reader cannot disagree about what it means', () => {
   // The menu names only commands the bot actually answers.
   assert.deepEqual(
     BOT_COMMANDS.map((c) => c.command).sort(),
-    ['check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'repos', 'servers', 'status', 'topics'],
+    ['calendar', 'check', 'clear', 'digest', 'help', 'job', 'menu', 'points', 'repos', 'servers', 'status', 'topics'],
   );
 });
 

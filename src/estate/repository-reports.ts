@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { VeeamEstateReader } from '../veeam/estate-reader.service';
-import { VeeamRepositoryState, VeeamSession } from '../veeam/types';
+import { VeeamRepositoryState, VeeamRestorePoint, VeeamSession } from '../veeam/types';
 import { Answer } from './answer';
 import { printedAnswer, STATUS_ICON, STATUS_WORD } from './report-envelope';
 import { ReportPrinter } from './report-printer';
@@ -207,18 +207,23 @@ export class RepositoryReports {
  * the points cannot be read or none says its session and its type, as on an
  * older Veeam: the report then goes by the days each job takes its Full on.
  */
-const fullSessions = async (reader: VeeamEstateReader): Promise<Map<string, boolean>> => {
-  const tally = new Map<string, { points: number; fulls: number }>();
+export const fullSessions = async (reader: Pick<VeeamEstateReader, 'restorePoints'>): Promise<Map<string, boolean>> => {
   try {
-    for (const point of await reader.restorePoints()) {
-      if (!point.sessionId || !point.type) continue;
-      const run = tally.get(point.sessionId) ?? { points: 0, fulls: 0 };
-      run.points += 1;
-      if (point.type.toLowerCase() === 'full') run.fulls += 1;
-      tally.set(point.sessionId, run);
-    }
+    return fullSessionsOf(await reader.restorePoints());
   } catch {
     return new Map();
+  }
+};
+
+/** The same, of restore points already read. */
+export const fullSessionsOf = (points: VeeamRestorePoint[]): Map<string, boolean> => {
+  const tally = new Map<string, { points: number; fulls: number }>();
+  for (const point of points) {
+    if (!point.sessionId || !point.type) continue;
+    const run = tally.get(point.sessionId) ?? { points: 0, fulls: 0 };
+    run.points += 1;
+    if (point.type.toLowerCase() === 'full') run.fulls += 1;
+    tally.set(point.sessionId, run);
   }
   return new Map([...tally].map(([session, run]) => [session, run.fulls * 2 > run.points]));
 };

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { aboutServer, escapeHtml, renderEvent } from '../telegram/format';
 import { TelegramStateStore } from '../telegram/state.store';
 import { Answer } from './answer';
+import { CalendarReports } from './calendar-reports';
 import { addressable, digestEvent, summarise } from './digest';
 import { JobChoice, PointsChoice } from './job-choices';
 import { JobReports } from './job-reports';
@@ -60,6 +61,7 @@ export class EstateAnswers {
     private readonly reports: RepositoryReports,
     private readonly jobReports: JobReports,
     private readonly pointsReports: PointsReports,
+    private readonly calendarReports: CalendarReports,
   ) {
     this.named = estates.all.length > 1;
   }
@@ -168,6 +170,30 @@ export class EstateAnswers {
   /** The repositories the report can be asked for, in its order, as the cycles last saw them, and how long it takes. */
   repositoryChoices(): ReportChoices {
     return this.reports.choices();
+  }
+
+  /**
+   * One server's month of jobs as a calendar, asked for: the Selected server,
+   * or the one `query` names — part of its name, in any case. Said at once to
+   * be coming, and the PDF `later`; a name that matches no server is answered
+   * at once with the names there are.
+   */
+  calendar(query: string): Answer {
+    const asked = query.trim().toLowerCase();
+    const estate = asked
+      ? this.estates.all.find(({ name, key }) => name.toLowerCase() === asked || key.toLowerCase() === asked) ??
+        this.estates.all.find(({ name }) => name.toLowerCase().includes(asked))
+      : this.estates.selected(this.store.selectedServer());
+    if (!estate) {
+      return {
+        text: [
+          `🔍 <b>Сервера «${escapeHtml(query.trim())}» нет</b>`,
+          '',
+          `Есть: ${this.estates.all.map(({ name }) => escapeHtml(name)).join(', ')}.`,
+        ].join('\n'),
+      };
+    }
+    return this.calendarReports.asked(estate);
   }
 }
 

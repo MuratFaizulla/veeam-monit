@@ -309,6 +309,19 @@ export interface VeeamNamedResource {
   type?: string;
 }
 
+/** Item of GET /api/v1/backupInfrastructure/proxies: a proxy and how it is set to work. */
+export interface VeeamProxy extends VeeamNamedResource {
+  description?: string;
+  server?: {
+    hostId?: string;
+    /** `auto`, `directAccess`, `virtualAppliance` (Hot-Add) or `network` (NBD). */
+    transportMode?: string;
+    failoverToNetwork?: boolean;
+    /** How many disks it processes at once. */
+    maxTaskCount?: number;
+  };
+}
+
 /** Item of .../repositories/states — capacity figures live here, not in the config. */
 export interface VeeamRepositoryState {
   id?: string;

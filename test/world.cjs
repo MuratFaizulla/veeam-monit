@@ -34,6 +34,7 @@ const { capacities, capacityOf } = require('../dist/estate/repository-capacity')
 const { RepositoryReports } = require('../dist/estate/repository-reports');
 const { JobReports } = require('../dist/estate/job-reports');
 const { PointsReports } = require('../dist/estate/points-reports');
+const { CalendarReports } = require('../dist/estate/calendar-reports');
 const { EstateAnswers } = require('../dist/estate/estate-answers');
 const { ServerEstates } = require('../dist/estate/server-estates');
 
@@ -195,6 +196,10 @@ function idleAnswers() {
       later: async () => ({ text: `отчёт ${query}`, document: { filename: 'report.pdf', content: Buffer.from('%PDF') } }),
     }),
     repositoryChoices: () => ({ repositories: [], takes: 'PDF — за секунды.' }),
+    calendar: (query) => ({
+      text: `⏳ календарь ${query}`,
+      later: async () => ({ text: `календарь ${query}`, document: { filename: 'calendar.pdf', content: Buffer.from('%PDF') } }),
+    }),
   };
 }
 
@@ -331,7 +336,7 @@ function clockAt(iso) {
  * tells it what repositories its cycles saw.
  */
 function answersOf(w, servers, printer = printerOf(), reports = new RepositoryReports(w.config, estatesOf(servers), printer)) {
-  return new EstateAnswers(estatesOf(servers), w.store, reports, new JobReports(w.config, printer), new PointsReports(w.config, printer));
+  return new EstateAnswers(estatesOf(servers), w.store, reports, new JobReports(w.config, printer), new PointsReports(w.config, printer), new CalendarReports(w.config, printer));
 }
 
 /**
@@ -524,7 +529,7 @@ module.exports = {
   configuration, TelegramStateStore, TelegramTransportService, TelegramTopicsService,
   TelegramRoutingService, TelegramService, TelegramUpdatesService, TelegramCommandsService, TelegramGeneral, TelegramChatAccess,
   TelegramLiveService, MonitorService, BackupEvidenceService, VeeamHttpService, VeeamInventoryService, LiveSnapshotsService, monitorOf, watching, serverOf, jobReadsOf, printerOf, RepositoryReports,
-  EstateAnswers, answersOf,
+  EstateAnswers, answersOf, estatesOf,
   announcement, probe, capacities, capacityOf,
   NOTIFICATION_KINDS, NOTIFICATION_SEVERITIES,
 };
