@@ -305,7 +305,7 @@ test('the menu under the input field turns into the servers, and a server\'s key
 
   const switched = w.api.sent().find((message) => /Показан сервер BAAS/.test(message.text));
   assert.ok(switched, 'the switch is confirmed');
-  assert.deepEqual(labels(switched.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт'], 'and the main menu is back');
+  assert.deepEqual(labels(switched.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт', '📅 Календарь'], 'and the main menu is back');
   assert.equal(switched.reply_parameters.message_id, baas.id);
   assert.equal(w.store.selectedServer(), 'baas');
 
@@ -328,7 +328,7 @@ test('the keys of the main menu are answered as the commands they stand for', as
   await home.done;
   const menu = w.api.sent().at(-1);
   assert.deepEqual(labels(menu.reply_markup), [
-    ['🖥 Серверы', '📄 Отчёт'],
+    ['🖥 Серверы', '📄 Отчёт', '📅 Календарь'],
     ['📊 Сводка', '🔄 Проверить'],
     ['📦 Задание', '🗂 Точки'],
     ['🩺 Статус', '📑 Темы'],
@@ -683,4 +683,28 @@ test('a server taken off the list takes the runs being followed on it along', ()
   store.flush();
   fs.rmSync(file, { force: true });
   fs.rmSync(`${file}.bak`, { force: true });
+});
+
+test('the 📅 key offers every server, the selected one first, and a server\'s key sends that server\'s calendar', async () => {
+  const { menuPressed } = require('../dist/updates/menu');
+  const w = twoServers();
+
+  await keyed(w, '📅 Календарь').done;
+  const offer = w.api.sent().at(-1);
+  assert.match(offer.text, /Календарь заданий/);
+  assert.deepEqual(labels(offer.reply_markup), [['📅 AST', '📅 BAAS'], ['⬅️ На главную']]);
+  assert.equal(offer.reply_markup.selective, true);
+
+  // A server's key here asks for its calendar; the same name in the server menu selects it.
+  const servers = [{ name: 'AST' }, { name: 'BAAS' }];
+  assert.deepEqual(menuPressed('📅 BAAS', servers), { kind: 'calendar', name: 'BAAS' });
+  assert.deepEqual(menuPressed('BAAS', servers), { kind: 'server', name: 'BAAS' });
+  assert.equal(menuPressed('📅 Нет такого', servers), undefined);
+
+  w.api.reset();
+  await keyed(w, '📅 BAAS').done;
+  const coming = w.api.sent()[0];
+  assert.match(coming.text, /Готовлю календарь заданий BAAS/);
+  assert.deepEqual(labels(coming.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт', '📅 Календарь'], 'and the main menu is back');
+  await w.commands.settled();
 });

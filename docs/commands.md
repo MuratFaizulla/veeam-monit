@@ -75,6 +75,7 @@ The keys are labelled in Russian; the English meaning is in brackets.
 | --- | --- |
 | 🖥 Серверы (Servers) | The list of servers; the keyboard turns into the server buttons and «⬅️ На главную» (back to the main menu). Pressing one selects that server. |
 | 📄 Отчёт (Report) | The repositories by site, with their free space; the keyboard turns into «📚 Все репозитории» (every repository), a «🗄 BKP03» button per repository and «⬅️ На главную». Pressing one is `/repos` for it, or for all; the main menu comes back. The list is what the last minute's check read, so it opens at once |
+| 📅 Календарь (Calendar) | Every server, the selected one first; the keyboard turns into a «📅 AST» button per server and «⬅️ На главную». Pressing one is `/calendar` for that server: «⏳ Готовлю календарь заданий…», then the PDF; the main menu comes back |
 | 📊 Сводка (Digest) | The same as `/digest` |
 | 🔄 Проверить (Check) | The same as `/check` |
 | 📦 Задание (Job) | Every job of the selected server to pick from, so nobody has to type a name: the keyboard turns into a key per job marked 🔴 failed, 🟡 warning, ▶️ running, 🟢 fine, ⚪ never run or ⏸ switched off — the ones not in order first, then by name — 50 to a page with «➡️ Дальше» (next) and «⬅️ Назад» (back), and «⬅️ На главную». Pressing a job opens its card; the keyboard stays, so the next job is one press away. `/job` typed without a name still offers the failing jobs as buttons under the message |
