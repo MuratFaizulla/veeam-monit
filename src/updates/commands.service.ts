@@ -21,6 +21,8 @@ import {
   Pressed,
   REPOSITORY,
   reportMenu,
+  calendarMenu,
+  CALENDAR,
   serverMenu,
 } from './menu';
 import { serverIcon } from '../live/format';
@@ -186,12 +188,14 @@ export class TelegramCommandsService implements Answers {
     }
     if (key.kind === 'server') return this.selected(key.name);
     if (key.kind === 'repository') return this.repositories({ ...asked, argument: key.name });
+    if (key.kind === 'calendar') return this.calendar({ ...asked, argument: key.name }, true);
     if (key.kind === 'job') return this.job(key.name);
     if (key.kind === 'jobs') return this.jobChoices(key.page);
     if (key.kind === 'points') return this.points({ ...asked, argument: key.name });
     if (key.kind === 'pointsPage') return this.pointsChoices(key.page);
     // Asked which repository first, as the server key asks which server.
     if (key.name === 'repos') return this.reportChoices();
+    if (key.name === 'calendar') return this.calendarChoices();
     // And which job, rather than typing its name: for its card, or its points.
     if (key.name === 'job') return this.jobChoices();
     if (key.name === 'points') return this.pointsChoices();
@@ -370,11 +374,34 @@ export class TelegramCommandsService implements Answers {
    * at once is that it is coming, and the PDF follows; a name that matches
    * no server is said at once, and nothing follows.
    */
-  calendar(asked: Asked): Reply {
+  calendar(asked: Asked, pressed = false): Reply {
     const tooSoon = this.tooSoon(`calendar:${asked.argument}`, asked.chat);
     if (tooSoon) return tooSoon;
     const { text, later } = this.estate.calendar(asked.argument);
-    return later ? { lines: [text], later: this.sending(asked, later) } : { lines: [text], markup: mainKeyboard() };
+    if (!later) return { lines: [text], markup: mainKeyboard() };
+    // Whoever pressed a server's key in the calendar menu gets the main menu back.
+    return { lines: [text], ...(pressed ? { markup: mainMenu({ selective: true }) } : {}), later: this.sending(asked, later) };
+  }
+
+  /**
+   * The 📅 key: which server's month. The keyboard turns into a key per
+   * server for whoever pressed it, the Selected one first.
+   */
+  private calendarChoices(): Reply {
+    const servers = this.monitor.servers();
+    return {
+      lines: [
+        '📅 <b>Календарь заданий</b>',
+        '',
+        'PDF за текущий месяц: как прошла каждая ночь и что запланировано, задания по дням,',
+        'ночь по часам, машины по vCenter и прокси, расписание каждого задания.',
+        '',
+        ...servers.map((server) => `${CALENDAR}${escapeHtml(server.name)}${server.selected ? ' — выбранный' : ''}`),
+        '',
+        'Выберите сервер кнопкой под полем ввода. PDF придёт через 10–30 секунд.',
+      ],
+      markup: calendarMenu(servers),
+    };
   }
 
   /**

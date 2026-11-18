@@ -516,7 +516,7 @@ test('the 📄 key offers every repository by site, and a repository\'s key send
   const chosen = await keyed(w, '🗄 BKP01');
   const note = w.api.sent().at(-1);
   assert.match(note.text, /^⏳ <b>Готовлю отчёт: BKP01<\/b>/);
-  assert.deepEqual(labels(note.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт'], 'и главное меню вернулось');
+  assert.deepEqual(labels(note.reply_markup)[0], ['🖥 Серверы', '📄 Отчёт', '📅 Календарь'], 'и главное меню вернулось');
   assert.equal(note.reply_parameters.message_id, chosen);
   await w.commands.settled();
   assert.match(w.api.of('sendDocument')[0].document.filename, /^Репозиторий BKP01 /);

@@ -25,6 +25,8 @@ const KEYS = {
   servers: { label: '🖥 Серверы', does: 'выбрать сервер, который показывают живые темы' },
   // Asks which repository first: the whole report is thirty pages.
   repos: { label: '📄 Отчёт', does: 'PDF по репозиториям: все или один на выбор' },
+  // Asks which server first: a calendar is one server's month.
+  calendar: { label: '📅 Календарь', does: 'PDF: задания сервера за месяц — календарь, ночь по часам, vCenter и прокси' },
   digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   check: { label: '🔄 Проверить', does: 'опросить Veeam сейчас' },
   // Offers every job of the Selected server to pick, the worst first.
@@ -41,7 +43,7 @@ const KEYS = {
  * The keys, a row each. `/menu` alone has none: the keyboard is the menu.
  */
 const ROWS: readonly (readonly MenuCommand[])[] = [
-  ['servers', 'repos'],
+  ['servers', 'repos', 'calendar'],
   ['digest', 'check'],
   ['job', 'points'],
   ['status', 'topics'],
@@ -63,6 +65,11 @@ export const EVERY_REPOSITORY = '📚 Все репозитории';
  * look it up in.
  */
 export const REPOSITORY = '🗄 ';
+/**
+ * Begins the key of one server in the calendar menu, and tells it from the
+ * server menu's key of the same server, which selects it.
+ */
+export const CALENDAR = '📅 ';
 /**
  * What a job's key in the job menu begins with: how the job stands, in the
  * icons the bot says it with everywhere. The mark is also what tells the key
@@ -157,6 +164,18 @@ export const reportMenu = (repositories: Array<{ short: string; site: string }>)
   };
 };
 
+/** The calendar menu: a key per server, two to a row, the Selected one first, and the way back. Always selective. */
+export const calendarMenu = (servers: Array<{ name: string; selected: boolean }>): TelegramReplyKeyboard => ({
+  keyboard: keys([
+    ...pairs([...servers].sort((a, b) => Number(b.selected) - Number(a.selected)).map(({ name }) => `${CALENDAR}${name}`)),
+    [HOME],
+  ]),
+  is_persistent: true,
+  resize_keyboard: true,
+  input_field_placeholder: 'Выберите сервер — придёт PDF',
+  selective: true,
+});
+
 /** Which page of `count` jobs `page` comes to, kept within the pages there are. */
 export const jobPage = (count: number, page: number): { at: number; pages: number } => {
   const pages = Math.max(1, Math.ceil(count / JOBS_PER_PAGE));
@@ -201,6 +220,8 @@ export type Pressed =
   | { kind: 'command'; name: MenuCommand }
   | { kind: 'home' }
   | { kind: 'server'; name: string }
+  /** A key of the calendar menu: one server's month, by its name. */
+  | { kind: 'calendar'; name: string }
   /** A key of the report menu: one repository, or `''` for every one. */
   | { kind: 'repository'; name: string }
   /** A key of the job menu: one job, by its name. */
@@ -222,6 +243,10 @@ export const menuPressed = (text: string, servers: Array<{ name: string }>): Pre
   const command = (Object.keys(KEYS) as MenuCommand[]).find((name) => KEYS[name].label === said);
   if (command) return { kind: 'command', name: command };
   if (said === HOME) return { kind: 'home' };
+  if (said.startsWith(CALENDAR)) {
+    const name = said.slice(CALENDAR.length).trim();
+    if (servers.some((server) => server.name === name)) return { kind: 'calendar', name };
+  }
   if (said === EVERY_REPOSITORY) return { kind: 'repository', name: '' };
   if (said.startsWith(REPOSITORY) && said.length > REPOSITORY.length) {
     return { kind: 'repository', name: said.slice(REPOSITORY.length).trim() };
