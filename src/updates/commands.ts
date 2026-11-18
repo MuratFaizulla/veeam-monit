@@ -63,6 +63,7 @@ export interface Answers {
   job(name: string): Promise<Reply>;
   points(asked: Asked): Promise<Reply>;
   repositories(asked: Asked): Reply;
+  calendar(asked: Asked): Reply;
   knownTopics(asked: Asked): Reply;
   clear(asked: Asked): Promise<Reply>;
 }
@@ -178,6 +179,17 @@ const DECLARED = [
       'С именем — один репозиторий: <code>/repos bkp03</code>. Первый раз собирается пару минут.',
     ],
     answer: (answers, asked) => answers.repositories(asked),
+  },
+  {
+    name: 'calendar',
+    argument: '<сервер>',
+    menu: 'Календарь заданий сервера на месяц в PDF: /calendar или /calendar сервер',
+    help: [
+      'календарь заданий одного сервера за месяц в PDF: как прошла каждая ночь и что',
+      'запланировано, задания по дням, ночь по часам, Full, что вылезает за 07:00.',
+      'Без имени — выбранный сервер, с именем — другой: <code>/calendar ast01</code>.',
+    ],
+    answer: (answers, asked) => answers.calendar(asked),
   },
   {
     name: 'check',

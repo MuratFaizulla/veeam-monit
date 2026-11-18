@@ -13,6 +13,7 @@ import {
   VeeamJobState,
   VeeamLogRecord,
   VeeamNamedResource,
+  VeeamProxy,
   VeeamRepositoryState,
   VeeamRestorePoint,
   VeeamSession,
@@ -208,6 +209,11 @@ export class VeeamEstateReader {
   /** The files one backup keeps on its repository, and the restore points each holds. */
   backupFiles(backupId: string): Promise<VeeamBackupFile[]> {
     return this.pages<VeeamBackupFile>(`${BACKUPS}/${encodeURIComponent(backupId)}/backupFiles`, {}, SCAN_PAGE);
+  }
+
+  /** Every backup proxy, with its transport mode and how many tasks it takes at once. */
+  proxies(): Promise<VeeamProxy[]> {
+    return this.pages<VeeamProxy>(PROXIES);
   }
 
   /** Every restore point, newest first. */

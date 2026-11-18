@@ -60,7 +60,7 @@ Veeam can already email a report per job session, and its console shows every se
 - 🛡 **Protection is judged by restore points, per machine**, against each job's own rhythm and its Full schedule, not by a bare "Success".
 - 🗄 **Veeam's own configuration backup**, what a lost backup server is rebuilt from: a warning when it failed, went out of date or is not made at all.
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
-- 📄 **Three PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; and every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits.
+- 📄 **Four PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits; and one server's month as a calendar, every night as it went or is planned, every job by the day and by the hour, and what runs past the window.
 - ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, an on-demand check.
 - 🖥 **Several Veeam servers in one bot**. A server outside the domain can sign in with an account of its own.
 - 🔒 **Safe by default**: pinned Veeam certificates, a read-only account, an unprivileged container, and a bot that answers only its own groups.
@@ -72,7 +72,7 @@ flowchart LR
     V["Veeam Backup & Replication<br/>REST API :9419"] -- "HTTPS, read only<br/>every minute" --> B["Veeam Telegram Monitor<br/>one Docker container"]
     B -- "alerts" --> A["🚨 Alerts · 🟢 Recovered"]
     B -- "edited in place" --> L["Live topics<br/>🩺 ▶️ 📅 📈 💾 🛡"]
-    G["General<br/>menu and commands"] -- "/job · /points · /repos · /digest" --> B
+    G["General<br/>menu and commands"] -- "/job · /points · /repos · /calendar · /digest" --> B
     B -- "PDF reports" --> G
 ```
 

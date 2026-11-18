@@ -366,6 +366,18 @@ export class TelegramCommandsService implements Answers {
   }
 
   /**
+   * `/calendar` — one server's month as a PDF: some seconds, so what is said
+   * at once is that it is coming, and the PDF follows; a name that matches
+   * no server is said at once, and nothing follows.
+   */
+  calendar(asked: Asked): Reply {
+    const tooSoon = this.tooSoon(`calendar:${asked.argument}`, asked.chat);
+    if (tooSoon) return tooSoon;
+    const { text, later } = this.estate.calendar(asked.argument);
+    return later ? { lines: [text], later: this.sending(asked, later) } : { lines: [text], markup: mainKeyboard() };
+  }
+
+  /**
    * The 📄 Button under a Job card: that job's month as a PDF. A few dozen
    * requests and a print, so what the report says it comes to is said at
    * once, and the PDF follows, as the Repository report does.
