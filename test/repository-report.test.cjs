@@ -234,6 +234,30 @@ test('the whole report opens on a cover, then the cards, the attachments and eve
   assert.match(html, /<h1 id="r-br">BR/);
 });
 
+test('a big estate keeps the cover to four things to do and moves the attachments\' panels to a page of their own', () => {
+  const reading = sharedReading();
+  // Ten more shares on the first server, nearly full: each one a thing to do first.
+  for (let at = 1; at <= 10; at += 1) {
+    reading.servers[0].repositories.push(repository(`x${at}`, `NAS02_BKP${String(at).padStart(2, '0')}`, `\\\\192.0.2.20\\NAS02_BKP${at}`, { freeTB: 3 }));
+  }
+  const report = reportOf(reading, SITES, 'UTC');
+  const html = reportPage(report, undefined, 'UTC');
+  const cover = html.slice(0, html.indexOf('</section>'));
+
+  assert.ok(report.first.length > 4, `${report.first.length} things to do first`);
+  assert.equal((cover.match(/<div class="fi /g) ?? []).length, 4);
+  assert.match(cover, new RegExp(`<div class="fi-more">Ещё ${report.first.length - 4}: `));
+
+  const pages = html.split('<section class="page').slice(1);
+  const table = pages.findIndex((page) => /<h2>Кто к чему подключён<\/h2>/.test(page));
+  assert.ok(table > 0);
+  assert.doesNotMatch(pages[table], /Ошибки настройки/);
+  assert.match(pages[table + 1], /<h2>Кто к чему подключён — продолжение<\/h2>/);
+  assert.match(pages[table + 1], /Ошибки настройки/);
+  // Every page numbered in turn, the repositories' first pages after both.
+  pages.forEach((page, index) => assert.match(page, new RegExp(`<b>${index + 1}</b> / ${pages.length}`), `page ${index + 1}`));
+});
+
 test('one repository asked for gets its own pages and no cover', () => {
   const report = reportOf(sharedReading(), SITES, 'UTC');
   const html = reportPage(report, repositoriesNamed(report, 'br'), 'UTC');

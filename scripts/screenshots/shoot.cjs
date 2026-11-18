@@ -210,7 +210,11 @@ import sys
 from PIL import Image
 for name in sys.argv[1:]:
     image = Image.open(name)
-    quantized = image.quantize(256, method=Image.Quantize.FASTOCTREE) if image.mode == 'RGBA' else image.convert('RGB').quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    # Pillow before 9.1 has the methods as plain numbers: MEDIANCUT 0, FASTOCTREE 2, no dither 0.
+    method = getattr(Image, 'Quantize', None)
+    fast, median = (method.FASTOCTREE, method.MEDIANCUT) if method else (2, 0)
+    dither = Image.Dither.NONE if hasattr(Image, 'Dither') else 0
+    quantized = image.quantize(256, method=fast) if image.mode == 'RGBA' else image.convert('RGB').quantize(256, method=median, dither=dither)
     quantized.save(name, optimize=True)
 `;
 const shrink = () => {
@@ -232,12 +236,13 @@ const shrink = () => {
         console.log(picture(dir, `${name}-${theme}`, html, screen.width));
       }
     }
-    // A report's first page, A4 landscape as it prints, in a frame that reads on a light page and a dark one.
+    // A report's first page as it prints — the Job report and the Points report A4 upright, the Repository report landscape — in a frame that reads on a light page and a dark one.
     for (const [name, report] of Object.entries(bot.reports)) {
       const page = path.join(dir, `${name}-page.html`);
       fs.writeFileSync(page, report);
-      const html = `<!doctype html><html><head><meta charset="utf-8"><style>body { margin: 0; background: transparent; width: 1171px; } #shot { padding: 24px; } .sheet { width: 1123px; height: 794px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 6px 22px rgba(0,0,0,.22); } iframe { border: 0; display: block; }</style></head><body><div id="shot"><div class="sheet"><iframe src="file://${page}" width="1123" height="794"></iframe></div></div></body></html>`;
-      console.log(picture(dir, `report-${name}`, html, 1171, 1.5));
+      const [w, h] = name === 'repositories' ? [1123, 794] : [794, 1123];
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>body { margin: 0; background: transparent; width: ${w + 48}px; } #shot { padding: 24px; } .sheet { width: ${w}px; height: ${h}px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 6px 22px rgba(0,0,0,.22); } iframe { border: 0; display: block; }</style></head><body><div id="shot"><div class="sheet"><iframe src="file://${page}" width="${w}" height="${h}"></iframe></div></div></body></html>`;
+      console.log(picture(dir, `report-${name}`, html, w + 48, 1.5));
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
