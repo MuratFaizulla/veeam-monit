@@ -61,7 +61,7 @@ Veeam can already email a report per job session, and its console shows every se
 - 🗄 **Veeam's own configuration backup**, what a lost backup server is rebuilt from: a warning when it failed, went out of date or is not made at all.
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
 - 📄 **Four PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits; and one server's month as a calendar, every night as it went or is planned, every job by the day and by the hour, and what runs past the window.
-- ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, an on-demand check.
+- ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, a server's calendar.
 - 🖥 **Several Veeam servers in one bot**. A server outside the domain can sign in with an account of its own.
 - 🔒 **Safe by default**: pinned Veeam certificates, a read-only account, an unprivileged container, and a bot that answers only its own groups.
 
@@ -127,6 +127,11 @@ Every minute the bot asks each Veeam server for its jobs and repositories, and t
   </tr>
 </table>
 
+<p align="center">
+  <strong>📅 <code>/calendar</code>: one server's month</strong><br />
+  <img src="docs/assets/screenshots/report-calendar.png" width="720" alt="The cover of the calendar report: the server and the month, the verdict, five numbers — jobs, runs by result, the share that went well, Fulls, runs past 07:00 — what to look at first and what starts tonight" />
+</p>
+
 ## Requirements
 
 - **Docker with Compose**, or Node.js 22+ and npm.
@@ -174,12 +179,13 @@ Rather not build? Every release is published as an image, `ghcr.io/muratfaizulla
 | `/job <name>` | One job's card: last result and reason, runs, schedule, settings, what held the last run back. «📄 Отчёт PDF» under it sends the job's last 30 days as a PDF |
 | `/points <name>` | One job's restore points as a PDF: 🛡's verdict, five weeks a machine to a row, errors, what to do, chains and sizes |
 | `/repos [name]` | Every repository of every server as a PDF, or one: free space, backups no job owns, load hour by hour, what to do and where a new job fits |
+| `/calendar [server]` | One server's month of jobs as a PDF: every night as it went or is planned, every job by the day and by the hour, what runs past 07:00, the machines by vCenter and the proxies. Without a name, the selected server |
 | `/check` | Poll Veeam now |
 | `/topics` | The forum topics the bot knows |
 | `/clear` | Empty General of the last two days, then put the menu back |
 | `/menu`, `/help` | The menu under the input field; this list |
 
-A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam_DB_Kingston`. Every command is also a key of the menu.
+A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam_DB_Kingston`. Most of them are keys of the menu under the input field too; `/check` is a button under the bot's answers.
 
 ## Documentation
 

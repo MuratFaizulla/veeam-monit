@@ -25,9 +25,9 @@ const KEYS = {
   servers: { label: '🖥 Серверы', does: 'выбрать сервер, который показывают живые темы' },
   // Asks which repository first: the whole report is thirty pages.
   repos: { label: '📄 Отчёт', does: 'PDF по репозиториям: все или один на выбор' },
+  digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   // Asks which server first: a calendar is one server's month.
   calendar: { label: '📅 Календарь', does: 'PDF: задания сервера за месяц — календарь, ночь по часам, vCenter и прокси' },
-  digest: { label: '📊 Сводка', does: 'задания выбранного сервера и какие из них не в порядке' },
   // Offers every job of the Selected server to pick, the worst first.
   job: { label: '📦 Задание', does: 'выбрать задание из списка: карточка, ⚡ скорость, настройки' },
   // Offers every job of the Selected server by 🛡's verdict, the worst first.
