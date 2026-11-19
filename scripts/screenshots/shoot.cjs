@@ -5,7 +5,7 @@
 // The bot is run as the tests run it (test/world.cjs), with its clock set to one
 // night, against a Veeam that answers from estate.cjs: two passes of the monitor
 // fill the live topics and raise two alerts, then /menu, /job, the job's report,
-// /points and /repos are asked in General. What it would send to Telegram is set
+// /points, /repos and /calendar are asked in General. What it would send to Telegram is set
 // in a Telegram-like window, light and dark; the first page of each PDF is shown
 // as it prints. Everything lands in docs/assets/screenshots.
 //
@@ -96,11 +96,12 @@ async function said() {
   await ask('report', () => pressed(encode({ kind: 'report', id: 'j1', server: server.key })));
   await ask('points', () => typed('/points chemplant'));
   await ask('repos', () => typed('/repos'));
+  await ask('calendar', () => typed('/calendar'));
 
   if (estate.unknown.size) throw new Error(`The estate does not answer ${[...estate.unknown].join(', ')}`);
-  if (printer.pages.length !== 3) throw new Error(`Expected three reports printed, got ${printer.pages.length}`);
-  const [job, points, repositories] = printer.pages.map(String);
-  return { topics, order: created.map((topic) => topic.name), answered, reports: { job, points, repositories } };
+  if (printer.pages.length !== 4) throw new Error(`Expected four reports printed, got ${printer.pages.length}`);
+  const [job, points, repositories, calendar] = printer.pages.map(String);
+  return { topics, order: created.map((topic) => topic.name), answered, reports: { job, points, repositories, calendar } };
 }
 
 /* ------------------------------------------------------------------ *
@@ -236,11 +237,11 @@ const shrink = () => {
         console.log(picture(dir, `${name}-${theme}`, html, screen.width));
       }
     }
-    // A report's first page as it prints — the Job report and the Points report A4 upright, the Repository report landscape — in a frame that reads on a light page and a dark one.
+    // A report's first page as it prints — the Job report and the Points report A4 upright, the Repository report and the Calendar landscape — in a frame that reads on a light page and a dark one.
     for (const [name, report] of Object.entries(bot.reports)) {
       const page = path.join(dir, `${name}-page.html`);
       fs.writeFileSync(page, report);
-      const [w, h] = name === 'repositories' ? [1123, 794] : [794, 1123];
+      const [w, h] = name === 'repositories' || name === 'calendar' ? [1123, 794] : [794, 1123];
       const html = `<!doctype html><html><head><meta charset="utf-8"><style>body { margin: 0; background: transparent; width: ${w + 48}px; } #shot { padding: 24px; } .sheet { width: ${w}px; height: ${h}px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 6px 22px rgba(0,0,0,.22); } iframe { border: 0; display: block; }</style></head><body><div id="shot"><div class="sheet"><iframe src="file://${page}" width="${w}" height="${h}"></iframe></div></div></body></html>`;
       console.log(picture(dir, `report-${name}`, html, w + 48, 1.5));
     }
