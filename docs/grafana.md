@@ -4,23 +4,25 @@
 
 The bot reads every Veeam server once a minute. With `METRICS_TOKEN` set it also serves what it read at `/api/metrics`, in the format Prometheus scrapes, and `deploy/grafana/` runs a Prometheus and a Grafana beside it with two ready dashboards.
 
-**«Veeam — обзор»** (Veeam overview), every server on one page:
+**«Veeam — обзор»** (Veeam overview), every server on one page, the verdict first:
 
-- the bot itself, and whether each Veeam server answered;
-- how many jobs failed, warned or are running now;
-- the jobs that failed or warned, with their last run, how many machines failed and what Veeam said;
+- a row of tiles: the bot, the servers that did not answer, the jobs that failed or warned, what runs now, the configuration backups with a problem and the fullest repository;
+- every server on one line: whether it answered, its failed, warned and running jobs, its configuration backup and its fullest repository; a click shows that server alone;
+- what is broken now, errors first and the newest on top: how long ago, how many machines failed and what Veeam said;
 - what runs now, each with its progress and how long it has been running;
-- every repository, how full it is and how fast its free space goes;
-- failed jobs and running jobs per server over time: the backup window and where it is crowded;
-- Veeam's configuration backup on every server, and how long ago the last good one was made;
+- the fullest repositories and how fast their free space goes;
 - jobs a schedule should run that have not run for more than a week;
-- every job, under «Все задания» (all jobs), with its last result, run, length and size.
+- failed jobs and running jobs per server over time: the backup window and where it is crowded;
+- folded at the bottom: jobs long in error, every job, every repository of every server.
+
+A failed or warned job counts when it is enabled and alive: it ran within the week, or it has a next run scheduled. A disabled job is not counted, nor one that failed long ago and has neither run since nor a run ahead: those are under «Давно в ошибке» (long in error), folded. A storage that several Veeam servers use is shown once, by its name; every server's Default Backup Repository is its own.
 
 **«Veeam — задание»** (one job), opened by clicking a job's name in any of those tables, or picked by server and name at the top:
 
-- how its newest ended session went, when it started, how long it ran, what it read and sent on, its speed and its bottleneck;
-- what Veeam said of that session, and every machine of it with its result and, when it did not succeed, the reason in Veeam's words;
-- its progress, when it runs now;
+- how its newest ended session went, and beside it what Veeam said of it;
+- how long ago it ended and how long it ran, its machines by how they ended, its next run, and its progress when it runs now;
+- every machine of that session, the failed first, with the reason in Veeam's words when it did not succeed;
+- what it read and sent on, its speed and its bottleneck;
 - every run's result, length, size and speed over time.
 
 A scrape asks Veeam nothing: it reads what the bot already read. For the job page the bot reads, every two minutes and only while `METRICS_TOKEN` is set, the sessions begun since its last read: one page, beside its cycle rather than in it. The first read after a start reaches back a month to find each job's newest session. Each new ended session's machines are then read once. Prometheus keeps 90 days.
@@ -70,7 +72,9 @@ In `deploy/grafana/.env` on the server, which the script creates:
 | `PROMETHEUS_IMAGE`, `GRAFANA_IMAGE` | the versions in `docker-compose.yml` | Other images; the server must already hold them. |
 | `TZ` | `Asia/Qyzylorda` | Grafana's time zone. |
 
-The dashboard is provisioned from `deploy/grafana/grafana/dashboards/` and cannot be saved over in Grafana's editor: a change made there is lost at the next start. Save a copy under another name, or change the file and deploy again.
+The dashboards are provisioned from `deploy/grafana/grafana/dashboards/` and cannot be saved over in Grafana's editor: a change made there is lost at the next start. Save a copy under another name, or change them for good: they are written by `deploy/grafana/dashboards.py`, so change that, run `python3 deploy/grafana/dashboards.py` and deploy again.
+
+A snapshot (Поделиться → Снимок) stays in this Grafana: publishing one to grafana.com is turned off, as it would carry the jobs' and machines' names out.
 
 ## The metrics
 
