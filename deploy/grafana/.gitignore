@@ -1,0 +1,3 @@
+# Written on the server: the bot's METRICS_TOKEN, and Grafana's admin password.
+metrics-token
+.env

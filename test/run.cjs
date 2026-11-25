@@ -20,4 +20,5 @@ require('./alerts.test.cjs');
 require('./config.test.cjs');
 require('./logging.test.cjs');
 require('./servers.test.cjs');
+require('./http.test.cjs');
 require('./architecture.test.cjs');

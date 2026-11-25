@@ -36,8 +36,9 @@ export const mountOpenApi = (app: INestApplication): void => {
         [
           'Сервис следит за Veeam Backup & Replication и пишет изменения в Telegram.',
           '',
-          'Эти эндпоинты — управление самим мониторингом, а не чтение данных Veeam:',
-          'дашборда в этой ветке нет. Всё, кроме `/health` и вебхука Telegram,',
+          'Эти эндпоинты — управление самим мониторингом, а не чтение данных Veeam.',
+          'Исключение — `/metrics`: то, что прочитал последний цикл, для Prometheus,',
+          'по токену `METRICS_TOKEN`. Всё, кроме `/health`, `/metrics` и вебхука Telegram,',
           'требует заголовка `X-Telegram-Admin-Key` со значением `TELEGRAM_ADMIN_KEY`.',
           'Если ключ не задан в конфигурации, эти эндпоинты отвечают 403 всем —',
           'пустой секрет никогда не означает «секрет не нужен».',
@@ -63,6 +64,7 @@ export const mountOpenApi = (app: INestApplication): void => {
         },
         'webhookSecret',
       )
+      .addBearerAuth({ type: 'http', scheme: 'bearer', description: 'Значение METRICS_TOKEN.' }, 'metricsToken')
       .build(),
   );
 

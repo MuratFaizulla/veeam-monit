@@ -69,3 +69,4 @@ Every setting is made in `.env`; the full list with comments is in [.env.example
 | `PORT` | `3000` | HTTP port inside the container. |
 | `HOST_BIND`, `HOST_PORT` | `127.0.0.1`, `3000` | Where Compose publishes the port on the host. |
 | `API_DOCS` | `false` | The Swagger page at `/api/docs`; see [http-api.md](http-api.md). |
+| `METRICS_TOKEN` | none | Turns on `/api/metrics` for Prometheus, which must send it as a bearer token; at least 32 characters (`openssl rand -hex 32`). Empty, the endpoint answers 404. See [grafana.md](grafana.md). |

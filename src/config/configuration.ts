@@ -26,6 +26,12 @@ export interface AppConfig {
    * they need the interactive API catalogue.
    */
   docs: boolean;
+  /**
+   * The bearer token /api/metrics asks Prometheus for. Empty turns the
+   * endpoint off: it lists every server, job and repository by name, and an
+   * unset secret must never mean "no secret required".
+   */
+  metricsToken: string;
   veeam: {
     /**
      * Every Veeam server watched, in the order people see them listed. Never
@@ -408,9 +414,11 @@ export const readConfig = (env: Environment): AppConfig =>
     // Empty closes what the key guards; set, it must be long enough not to be
     // guessed. The message never repeats the value: it would land in the log.
     const adminKey = read.text('TELEGRAM_ADMIN_KEY', '');
+    const metricsToken = read.text('METRICS_TOKEN', '');
     for (const [key, value] of [
       ['TELEGRAM_ADMIN_KEY', adminKey],
       ['TELEGRAM_WEBHOOK_SECRET', webhookSecret],
+      ['METRICS_TOKEN', metricsToken],
     ]) {
       read.require(
         value === '' || value.length >= SECRET_LENGTH,
@@ -421,6 +429,7 @@ export const readConfig = (env: Environment): AppConfig =>
     return {
       port: read.integer('PORT', 3000, { min: 1, max: 65535 }),
       docs: read.flag('API_DOCS', false),
+      metricsToken,
       veeam: {
         servers,
         apiVersion: read.text('VEEAM_API_VERSION', '1.2-rev1'),

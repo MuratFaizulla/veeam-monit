@@ -1,4 +1,6 @@
 import { ConfigBackup } from '../estate/config-backup';
+import { RepositoryCapacity } from '../estate/repository-capacity';
+import { Job } from '../veeam/estate';
 import { DeliveryOutcome } from '../telegram/telegram.service';
 
 /** The Selected server's side of the monitor, with what it delivered overall. */
@@ -34,15 +36,34 @@ export interface ServerStatus {
   lastError: string | null;
 }
 
+/**
+ * What the latest pass read of one server, for a reader that charts it rather
+ * than talks about it: /api/metrics.
+ *
+ * Only what that pass read. A server that stopped answering has no jobs and no
+ * repositories here, rather than the ones it had an hour ago: a chart drawn
+ * from those would show an outage as a quiet night. Its configuration backup is
+ * the exception, because it is read half-hourly by design and stands until the
+ * next reading.
+ */
+export interface ServerReading extends Pick<ServerStatus, 'key' | 'name' | 'reachable' | 'authenticated' | 'configBackup'> {
+  /** When its latest pass ended, epoch ms; absent until one has. */
+  checkedAt?: number;
+  /** Its jobs, when the latest pass read them. */
+  jobs?: Job[];
+  /** Its repositories, when the latest pass read them. */
+  repositories?: RepositoryCapacity[];
+}
+
 /** What selecting a server came to. */
 export type Selection = 'selected' | 'already' | 'unknown';
 
 /**
  * What the rest of the service may ask of the monitor: the cycle.
  *
- * The bot's ear and the HTTP surface need four things from it: its health,
- * the servers and which one is selected, selecting another, and a pass on
- * demand. They used to take the whole monitor for that — a class with most of
+ * The bot's ear and the HTTP surface need five things from it: its health,
+ * the servers and which one is selected, what its latest pass read of them,
+ * selecting another, and a pass on demand. They used to take the whole monitor for that — a class with most of
  * the service behind it, so a test of one command had to build a Veeam, an
  * evidence scan and a delivery pipeline or hand-write a stub and hope it
  * matched.
@@ -61,6 +82,8 @@ export interface Monitor {
   readonly status: MonitorHealth;
   /** Every configured server, in the order they are listed. */
   servers(): ServerStatus[];
+  /** What the latest pass read of every server, in the same order. */
+  readings(): ServerReading[];
   /**
    * Makes `key` the Selected server. The live slots are redrawn for it at once
    * rather than at the next tick; alerts keep coming from every server.

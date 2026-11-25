@@ -62,6 +62,7 @@ Veeam can already email a report per job session, and its console shows every se
 - ⚡ **What held a run back.** A job's card shows the bottleneck Veeam reported (Source, Proxy, Network, Target), the transport mode of every disk (NBD, HotAdd…), the proxies and the repository gateway used, and the machines that took longest.
 - 📄 **Four PDF reports, asked for in the chat**: a job's last 30 days, with a verdict, every run, its machines and what to do, then every session as Veeam prints it; a job's restore points, five weeks a machine to a row, with missed Fulls, the chains and what they take up on disk; every repository of every server, with backups no job owns, how many jobs write at once hour by hour, and where a new job fits; and one server's month as a calendar, every night as it went or is planned, every job by the day and by the hour, and what runs past the window.
 - ⌨️ **Commands and a menu** under the input field: digest, a job's card, the reports, a server's calendar.
+- 📊 **A Grafana dashboard** of what the bot reads, every server on one page: failed jobs, repositories filling up, the backup window over time. Prometheus scrapes `/api/metrics`, and `deploy/grafana.sh` ships both to a server with no internet access.
 - 🖥 **Several Veeam servers in one bot**. A server outside the domain can sign in with an account of its own.
 - 🔒 **Safe by default**: pinned Veeam certificates, a read-only account, an unprivileged container, and a bot that answers only its own groups.
 
@@ -194,6 +195,7 @@ A name can be typed in part and in any case: `/job kingston db` finds `OPS_Veeam
 - Commands and the menu: [docs/commands.md](docs/commands.md)
 - Topics, Veeam's retries and live messages: [docs/telegram.md](docs/telegram.md)
 - HTTP API and Swagger: [docs/http-api.md](docs/http-api.md)
+- Grafana and the metrics: [docs/grafana.md](docs/grafana.md)
 - How the code is organised, CI and releases: [docs/architecture.md](docs/architecture.md)
 - Common problems and what to do: [docs/troubleshooting.md](docs/troubleshooting.md)
 - The domain language the code is written in: [CONTEXT.md](CONTEXT.md)

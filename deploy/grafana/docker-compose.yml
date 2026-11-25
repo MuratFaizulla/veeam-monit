@@ -1,0 +1,98 @@
+# Prometheus and Grafana beside the bot, charting what its cycles read: the
+# servers, every job's last result, the repositories' space and the
+# configuration backup, from /api/metrics. See docs/grafana.md.
+#
+# A Compose project of its own, started from this folder. The bot's project
+# knows nothing of it — deploy/offline.sh starts the bot alone, as before —
+# and this one starts nothing of the bot's: it only joins the bot's network,
+# so Prometheus reaches the bot by its container name and the bot's port stays
+# closed to everything else.
+name: veeam-grafana
+
+services:
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.15.1}
+    container_name: veeam-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-90d}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # The bot's METRICS_TOKEN; deploy/grafana.sh writes it from the bot's .env.
+      - ./metrics-token:/etc/prometheus/metrics-token:ro
+      - prometheus:/prometheus
+    # The bot's network, to scrape it; this project's own, for Grafana. Not
+    # published on the host: nobody but Grafana has a reason to ask it.
+    networks:
+      - monitor
+      - default
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.6}
+    container_name: veeam-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in deploy/grafana/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # The server reaches no internet, and nothing about it should leave for
+      # grafana.com: no usage reports, no update checks, no plugins fetched at
+      # start, no news feed.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # The dashboard is in Russian, as the bot is; so is Grafana around it.
+      GF_USERS_DEFAULT_LANGUAGE: ru-RU
+      # The overview opens first, rather than Grafana's welcome page.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/veeam-overview.json
+      TZ: ${TZ:-Asia/Qyzylorda}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    # Like the bot's port, on the server itself unless GRAFANA_BIND says
+    # otherwise: 0.0.0.0 opens it to the network, behind Grafana's login.
+    ports:
+      - "${GRAFANA_BIND:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prometheus:
+  grafana:
+
+networks:
+  # The bot's: its Compose project's default network, named after the folder
+  # the bot runs from (veeam-monit, as deploy/offline.sh calls it).
+  monitor:
+    external: true
+    name: ${MONITOR_NETWORK:-veeam-monit_default}

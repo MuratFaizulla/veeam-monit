@@ -14,7 +14,7 @@ import { sendRepositoryAlarms, spokenFor } from './repository-alarms';
 import { JobAlerts } from './job-alerts';
 import { ServerSending } from './server-sending';
 import { ServerWatch } from './server-watch';
-import { Monitor, MonitorHealth, Selection, ServerStatus } from './monitor';
+import { Monitor, MonitorHealth, Selection, ServerReading, ServerStatus } from './monitor';
 import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates';
 import { RepositoryReports } from '../estate/repository-reports';
 import { ConfigBackup, configBackupOf, CONFIG_BACKUP_RUNS, explained, unexplained } from '../estate/config-backup';
@@ -43,6 +43,8 @@ interface Watch {
   server: ServerWatch;
   lastCheckAt: string | null;
   jobs?: ServerStatus['jobs'];
+  /** What its latest pass read, for /api/metrics: see `ServerReading`. */
+  read: Pick<ServerReading, 'checkedAt' | 'jobs' | 'repositories'>;
   /** What the bot says about this server's jobs. */
   alerts: JobAlerts;
   /** When its configuration backup was last asked about, epoch ms. */
@@ -119,6 +121,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
           authCooldownMs: this.config.authAlertCooldownMs,
         }),
         lastCheckAt: null,
+        read: {},
         alerts: new JobAlerts(
           estate,
           store.jobMemoryOf(estate.key),
@@ -172,6 +175,20 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         jobs: watch.jobs,
         configBackup: watch.configBackup,
         lastError: error,
+      };
+    });
+  }
+
+  readings(): ServerReading[] {
+    return this.watches.map((watch) => {
+      const { reachable, authenticated } = watch.server.health;
+      return {
+        key: watch.estate.key,
+        name: watch.estate.name,
+        reachable,
+        authenticated,
+        configBackup: watch.configBackup,
+        ...watch.read,
       };
     });
   }
@@ -292,6 +309,12 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       }
     }
     watch.lastCheckAt = new Date(this.now()).toISOString();
+    // Replaced whole, what was not read included: see `ServerReading`.
+    watch.read = {
+      checkedAt: this.now(),
+      ...(jobs ? { jobs } : {}),
+      ...(repositories ? { repositories } : {}),
+    };
     return { jobs, working, repositories, authenticated, evidence };
   }
 

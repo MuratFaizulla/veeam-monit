@@ -997,7 +997,7 @@ test('the idle monitor the tests use offers exactly what the real one does', asy
 
   // The cycle and nothing else: what a command asks about the estate is the
   // estate's answers', which have idle answers of their own.
-  for (const member of ['servers', 'select', 'check']) {
+  for (const member of ['servers', 'readings', 'select', 'check']) {
     assert.equal(typeof real[member], 'function', `MonitorService.${member}`);
     assert.equal(typeof idle[member], 'function', `idle monitor ${member}`);
   }

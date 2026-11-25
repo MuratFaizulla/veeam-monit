@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { configuration, validateEnvironment } from './config/configuration';
 import { HealthController } from './http/health.controller';
+import { MetricsController } from './http/metrics.controller';
 import { EstateModule } from './estate/estate.module';
 import { LiveModule } from './live/live.module';
 import { MonitorModule } from './monitor/monitor.module';
@@ -12,7 +13,8 @@ import { VeeamModule } from './veeam/veeam.module';
 /**
  * Telegram-only build: the service watches Veeam and reports what changed.
  * There is no browser client, so there is no session handling and no
- * per-feature read endpoint — only the health probe and the Telegram surface.
+ * per-feature read endpoint — only the health probe, the metrics Prometheus
+ * scrapes, and the Telegram surface.
  *
  * One module per subject, and every import points one way:
  *
@@ -38,6 +40,6 @@ import { VeeamModule } from './veeam/veeam.module';
     MonitorModule,
     TelegramUpdatesModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, MetricsController],
 })
 export class AppModule {}

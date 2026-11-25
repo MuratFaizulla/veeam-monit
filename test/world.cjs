@@ -168,6 +168,7 @@ function idleMonitor() {
     servers: () => [{
       key: SERVER, name: SERVER, selected: true, reachable: null, authenticated: null, lastError: null,
     }],
+    readings: () => [{ key: SERVER, name: SERVER, reachable: null, authenticated: null }],
     select: (key) => (key === SERVER ? 'already' : 'unknown'),
     check: async () => 'ran',
     status: {
