@@ -59,6 +59,9 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # A snapshot stays here: published to grafana.com it would carry the
+      # jobs' and machines' names out.
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
       # The dashboard is in Russian, as the bot is; so is Grafana around it.
       GF_USERS_DEFAULT_LANGUAGE: ru-RU
       # The overview opens first, rather than Grafana's welcome page.
