@@ -41,6 +41,9 @@ const CONFIG_BACKUP_STATES: readonly ('ok' | ConfigBackupProblem)[] = ['ok', 'ne
 
 const GIB = 2 ** 30;
 
+/** The longest message or reason a label carries: one line worth reading, not a log. */
+const LABEL_TEXT = 300;
+
 /**
  * The whole exposition. `timezone` is the Veeam server's, for the job times
  * a build writes without an offset.
@@ -56,6 +59,19 @@ export const metricsText = (servers: ServerReading[], health: Pick<MonitorHealth
   const lastRun = family('veeam_job_last_run_timestamp_seconds', 'gauge', 'When the job last started.');
   const nextRun = family('veeam_job_next_run_timestamp_seconds', 'gauge', 'When the job is scheduled to start next; absent for a job nothing schedules.');
   const objects = family('veeam_job_objects', 'gauge', 'Machines and other objects the job protects.');
+  const sessionStart = family('veeam_job_last_session_start_timestamp_seconds', 'gauge', "When the job's newest ended session started.");
+  const sessionEnd = family('veeam_job_last_session_end_timestamp_seconds', 'gauge', "When the job's newest ended session ended.");
+  const sessionDuration = family('veeam_job_last_session_duration_seconds', 'gauge', "How long the job's newest ended session ran.");
+  const sessionResult = family('veeam_job_last_session_result', 'gauge', "How the job's newest ended session ended: 2 failed, 1 warning, 0 success.");
+  const sessionMessage = family('veeam_job_last_session_message', 'gauge', 'What Veeam said of that session when it failed or warned, as the message label; always 1.');
+  const sessionRead = family('veeam_job_last_session_read_bytes', 'gauge', "Bytes that session read from its machines' disks.");
+  const sessionTransferred = family('veeam_job_last_session_transferred_bytes', 'gauge', 'Bytes that session sent on, after compression and deduplication.');
+  const sessionProcessed = family('veeam_job_last_session_processed_bytes', 'gauge', "Bytes of its machines' disks that session went through, the blocks it skipped included.");
+  const sessionMachines = family('veeam_job_last_session_machines', 'gauge', 'Machines of that session by how they ended, the result label.');
+  const sessionBottleneck = family('veeam_job_last_session_bottleneck', 'gauge', 'The stage that held most of its machines back, as the bottleneck label; always 1.');
+  const machineResult = family('veeam_job_last_session_machine_result', 'gauge', 'How each machine of that session ended: 2 failed, 1 warning, 0 success, -1 none; the reason label says why when it did not succeed.');
+  const progress = family('veeam_job_session_progress_percent', 'gauge', 'How far the session the job is running now has got, 0 to 100.');
+  const runningSince = family('veeam_job_session_running_since_timestamp_seconds', 'gauge', 'When the session the job is running now started.');
   const capacity = family('veeam_repository_capacity_bytes', 'gauge', "The repository's capacity, taking Veeam's GB as GiB.");
   const free = family('veeam_repository_free_bytes', 'gauge', 'Free space on the repository.');
   const used = family('veeam_repository_used_bytes', 'gauge', 'Space in use on the repository: capacity minus free whenever Veeam reports free space.');
@@ -82,6 +98,38 @@ export const metricsText = (servers: ServerReading[], health: Pick<MonitorHealth
       pushInstant(lastRun, labels, job.lastRun, timezone);
       pushInstant(nextRun, labels, job.nextRun, timezone);
       if (isNumber(job.objectsCount)) objects.samples.push([labels, job.objectsCount]);
+
+      const { last, running: now } = reading.sessions?.get(job.id) ?? {};
+      if (last) {
+        sessionStart.samples.push([labels, seconds(last.startedAt)]);
+        if (last.endedAt !== undefined) {
+          sessionEnd.samples.push([labels, seconds(last.endedAt)]);
+          sessionDuration.samples.push([labels, Math.round((last.endedAt - last.startedAt) / 1000)]);
+        }
+        const ended = last.result === undefined ? undefined : RESULT_CODES[last.result];
+        if (ended !== undefined) sessionResult.samples.push([labels, ended]);
+        if (last.message && (last.result === 'failed' || last.result === 'warning')) {
+          sessionMessage.samples.push([{ ...labels, message: clipped(last.message) }, 1]);
+        }
+        const details = last.details;
+        if (details) {
+          if (details.read !== undefined) sessionRead.samples.push([labels, details.read]);
+          if (details.transferred !== undefined) sessionTransferred.samples.push([labels, details.transferred]);
+          if (details.processed !== undefined) sessionProcessed.samples.push([labels, details.processed]);
+          if (details.bottleneck) sessionBottleneck.samples.push([{ ...labels, bottleneck: details.bottleneck }, 1]);
+          const byResult = new Map<string, number>();
+          for (const machine of details.machines) {
+            byResult.set(machine.result || 'none', (byResult.get(machine.result || 'none') ?? 0) + 1);
+            const reason = machine.result === 'success' ? '' : clipped(machine.reason ?? '');
+            machineResult.samples.push([{ ...labels, machine: machine.name, reason }, RESULT_CODES[machine.result] ?? -1]);
+          }
+          for (const [each, count] of byResult) sessionMachines.samples.push([{ ...labels, result: each }, count]);
+        }
+      }
+      if (now) {
+        runningSince.samples.push([labels, seconds(now.startedAt)]);
+        if (isNumber(now.progressPercent)) progress.samples.push([labels, now.progressPercent]);
+      }
     }
 
     for (const repository of reading.repositories ?? []) {
@@ -104,7 +152,15 @@ export const metricsText = (servers: ServerReading[], health: Pick<MonitorHealth
   delivered.samples.push([{}, health.delivered]);
   undelivered.samples.push([{}, health.undelivered]);
 
-  return [up, authenticated, checked, result, running, disabled, lastRun, nextRun, objects, capacity, free, used, online, configResult, configGood, configState, delivered, undelivered]
+  return [
+    up, authenticated, checked,
+    result, running, disabled, lastRun, nextRun, objects,
+    sessionStart, sessionEnd, sessionDuration, sessionResult, sessionMessage, sessionRead, sessionTransferred, sessionProcessed,
+    sessionMachines, sessionBottleneck, machineResult, progress, runningSince,
+    capacity, free, used, online,
+    configResult, configGood, configState,
+    delivered, undelivered,
+  ]
     .filter((each) => each.samples.length > 0)
     .map(exposition)
     .join('');
@@ -125,6 +181,12 @@ const escaped = (value: string): string => value.replace(/\\/g, '\\\\').replace(
 const pushInstant = (into: Family, labels: Labels, text: Job['lastRun'], timezone: string): void => {
   const at = instantOf(text, timezone);
   if (at !== undefined) into.samples.push([labels, seconds(at)]);
+};
+
+/** A message as a label carries it: one line, at most `LABEL_TEXT` characters. */
+const clipped = (text: string): string => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > LABEL_TEXT ? `${line.slice(0, LABEL_TEXT - 1)}…` : line;
 };
 
 const flag = (value: boolean): number => (value ? 1 : 0);

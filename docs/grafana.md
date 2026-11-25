@@ -2,16 +2,28 @@
 
 [← README](../README.md) · [Documentation](README.md)
 
-The bot reads every Veeam server once a minute. With `METRICS_TOKEN` set it also serves what it read at `/api/metrics`, in the format Prometheus scrapes, and `deploy/grafana/` runs a Prometheus and a Grafana beside it with a ready dashboard, «Veeam — обзор» (Veeam overview):
+The bot reads every Veeam server once a minute. With `METRICS_TOKEN` set it also serves what it read at `/api/metrics`, in the format Prometheus scrapes, and `deploy/grafana/` runs a Prometheus and a Grafana beside it with two ready dashboards.
+
+**«Veeam — обзор»** (Veeam overview), every server on one page:
 
 - the bot itself, and whether each Veeam server answered;
-- how many jobs failed, warned or are running now, and the jobs that failed or warned, with their last and next runs;
+- how many jobs failed, warned or are running now;
+- the jobs that failed or warned, with their last run, how many machines failed and what Veeam said;
+- what runs now, each with its progress and how long it has been running;
 - every repository, how full it is and how fast its free space goes;
 - failed jobs and running jobs per server over time: the backup window and where it is crowded;
 - Veeam's configuration backup on every server, and how long ago the last good one was made;
-- jobs a schedule should run that have not run for more than a week.
+- jobs a schedule should run that have not run for more than a week;
+- every job, under «Все задания» (all jobs), with its last result, run, length and size.
 
-A scrape asks Veeam nothing: it reads what the bot's cycle already read. Prometheus keeps 90 days.
+**«Veeam — задание»** (one job), opened by clicking a job's name in any of those tables, or picked by server and name at the top:
+
+- how its newest ended session went, when it started, how long it ran, what it read and sent on, its speed and its bottleneck;
+- what Veeam said of that session, and every machine of it with its result and, when it did not succeed, the reason in Veeam's words;
+- its progress, when it runs now;
+- every run's result, length, size and speed over time.
+
+A scrape asks Veeam nothing: it reads what the bot already read. For the job page the bot reads, every two minutes and only while `METRICS_TOKEN` is set, the sessions begun since its last read: one page, beside its cycle rather than in it. The first read after a start reaches back a month to find each job's newest session. Each new ended session's machines are then read once. Prometheus keeps 90 days.
 
 ## Setting it up
 
@@ -73,6 +85,14 @@ The dashboard is provisioned from `deploy/grafana/grafana/dashboards/` and canno
 | `veeam_job_running`, `veeam_job_disabled` | the same | 1 or 0. |
 | `veeam_job_last_run_timestamp_seconds`, `veeam_job_next_run_timestamp_seconds` | the same | When it last started; when it starts next, absent when nothing schedules it. |
 | `veeam_job_objects` | the same | Machines and other objects it protects. |
+| `veeam_job_last_session_start_timestamp_seconds`, `_end_timestamp_seconds`, `_duration_seconds` | the same | Its newest ended session: an attempt, the last one when Veeam retried. |
+| `veeam_job_last_session_result` | the same | How that session ended: 2 failed, 1 warning, 0 success. |
+| `veeam_job_last_session_message` | the same, `message` | 1, with what Veeam said of it when it failed or warned: the machine and the reason, without the account it logged on with. |
+| `veeam_job_last_session_read_bytes`, `_transferred_bytes`, `_processed_bytes` | the same | Read from the machines' disks; sent on after compression and deduplication; gone through, skipped blocks included. Absent on REST API 1.1, which keeps no task sessions. |
+| `veeam_job_last_session_bottleneck` | the same, `bottleneck` | 1, with the stage that held most of its machines back: Source, Proxy, Network or Target. |
+| `veeam_job_last_session_machines` | the same, `result` | Its machines by how they ended. |
+| `veeam_job_last_session_machine_result` | the same, `machine`, `reason` | Each machine: 2 failed, 1 warning, 0 success, -1 none; `reason` when it did not succeed. |
+| `veeam_job_session_progress_percent`, `veeam_job_session_running_since_timestamp_seconds` | the same | The session it runs now: how far it has got, and since when. |
 | `veeam_repository_capacity_bytes`, `_free_bytes`, `_used_bytes` | `server`, `repository`, `repository_id` | Veeam's GB taken as GiB. Used is capacity minus free. |
 | `veeam_repository_online` | the same | 1 or 0. |
 | `veeam_config_backup_state` | `server`, `state` | 1 for the state it is in: `ok`, `never`, `failed`, `stale` or `unencrypted`. |

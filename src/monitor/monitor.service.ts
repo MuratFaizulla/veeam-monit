@@ -19,6 +19,7 @@ import { ServerEstate, ServerEstates, workingOn } from '../estate/server-estates
 import { RepositoryReports } from '../estate/repository-reports';
 import { ConfigBackup, configBackupOf, CONFIG_BACKUP_RUNS, explained, unexplained } from '../estate/config-backup';
 import { sendConfigBackupAlarm } from './config-backup-alarm';
+import { LastSessions } from '../estate/last-sessions';
 
 const HOUR = 3_600_000;
 
@@ -31,6 +32,12 @@ const DIGEST = 'digest';
  * hour.
  */
 const CONFIG_BACKUP_EVERY = 30 * 60_000;
+
+/**
+ * How often each server's newest sessions are read for /api/metrics: often
+ * enough that a running job's progress moves on a chart, one page a read.
+ */
+const SESSIONS_EVERY = 2 * 60_000;
 
 export type { MonitorHealth } from './monitor';
 
@@ -51,6 +58,12 @@ interface Watch {
   configBackupAskedAt?: number;
   /** Its configuration backup as last read; absent until read, or while the reading cannot be trusted. */
   configBackup?: ConfigBackup;
+  /** Each job's newest sessions, for /api/metrics; read only while it is on. */
+  sessions: LastSessions;
+  /** When they were last asked for, epoch ms. */
+  sessionsAskedAt?: number;
+  /** The read under way, so two never overlap. */
+  sessionsReading?: Promise<void>;
 }
 
 /** What one server's pass found, for the live slots when it is the one shown. */
@@ -78,6 +91,8 @@ type Pass = Omit<LiveCycle, 'health' | 'server'>;
 export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MonitorService.name);
   private readonly config: AppConfig['telegram'];
+  /** Whether /api/metrics is on, and so whether each job's sessions are read for it. */
+  private readonly charted: boolean;
   private readonly watches: Watch[];
   private timer?: NodeJS.Timeout;
   private running = false;
@@ -103,6 +118,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
     private readonly now: () => number = () => Date.now(),
   ) {
     this.config = config.getOrThrow<AppConfig['telegram']>('telegram');
+    this.charted = Boolean(config.getOrThrow<string>('metricsToken'));
     // Whether what is said names its server, and keeps its cooldowns apart:
     // only when there are several.
     const several = estates.all.length > 1;
@@ -122,6 +138,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         }),
         lastCheckAt: null,
         read: {},
+        sessions: new LastSessions(estate.reader, this.config.timezone, estate.name),
         alerts: new JobAlerts(
           estate,
           store.jobMemoryOf(estate.key),
@@ -189,6 +206,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
         authenticated,
         configBackup: watch.configBackup,
         ...watch.read,
+        ...(watch.sessionsAskedAt !== undefined ? { sessions: watch.sessions.jobs } : {}),
       };
     });
   }
@@ -315,6 +333,7 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       ...(jobs ? { jobs } : {}),
       ...(repositories ? { repositories } : {}),
     };
+    if (authenticated && this.charted) this.readSessions(watch);
     return { jobs, working, repositories, authenticated, evidence };
   }
 
@@ -384,6 +403,33 @@ export class MonitorService implements Monitor, OnModuleInit, OnModuleDestroy {
       );
       throw error;
     }
+  }
+
+  /**
+   * Reads each job's newest sessions for /api/metrics, beside the pass and
+   * never in its way: the first read after a start reaches back a month and
+   * can take a minute on a busy server, and no alert of the pass waits for it.
+   * Every two minutes, and the machines of the sessions still to be read a
+   * batch a pass. What goes wrong is logged and tried again; it is said
+   * nowhere else, since nothing but a chart reads it.
+   */
+  private readSessions(watch: Watch): void {
+    if (watch.sessionsReading) return;
+    const due = watch.sessionsAskedAt === undefined || this.now() - watch.sessionsAskedAt >= SESSIONS_EVERY;
+    if (!due && !watch.sessions.pending) return;
+    watch.sessionsReading = (async () => {
+      try {
+        if (due) {
+          watch.sessionsAskedAt = this.now();
+          await watch.sessions.refresh(this.now());
+        }
+        await watch.sessions.readDetails();
+      } catch (error) {
+        this.logger.warn(`Sessions for /api/metrics not read on ${watch.estate.name}: ${(error as Error).message}`);
+      } finally {
+        watch.sessionsReading = undefined;
+      }
+    })();
   }
 
   /** Whether this server's configuration backup is to be read this pass: when it is checked at all, half-hourly. */

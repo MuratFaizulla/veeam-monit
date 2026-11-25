@@ -216,3 +216,86 @@ test('/api/metrics answers on the real service, in the media type Prometheus rea
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a job's newest ended session and the one it runs now: times, sizes, machines and why", () => {
+  const job = { id: 'j1', name: 'OPS_Exchange', type: 'Backup', status: 'Running', result: 'none' };
+  const started = Date.parse('2026-11-24T23:04:00+05:00');
+  const text = metricsText(
+    [{
+      key: 'a', name: 'veeam01', reachable: true, authenticated: true, jobs: [job],
+      sessions: new Map([['j1', {
+        last: {
+          id: 's1', startedAt: started, endedAt: started + 8 * 3_600_000 + 51_000, result: 'failed',
+          message: 'db-01 — Failed to open VDDK disk "[ds01] db-01.vmdk"',
+          details: {
+            machines: [{ name: 'app-01', result: 'success' }, { name: 'db-01', result: 'failed', reason: 'Failed to open VDDK disk' }],
+            read: 1000, transferred: 400, processed: 5000, bottleneck: 'Source',
+          },
+        },
+        running: { id: 's2', startedAt: started + 86_400_000, progressPercent: 37 },
+      }]]),
+    }],
+    { delivered: 0, undelivered: 0 },
+    ZONE,
+  );
+  const lines = new Set(text.split('\n'));
+  const at = 'server="veeam01",job_name="OPS_Exchange",job_id="j1",job_type="Backup"';
+  for (const line of [
+    `veeam_job_last_session_start_timestamp_seconds{${at}} ${Math.floor(started / 1000)}`,
+    `veeam_job_last_session_duration_seconds{${at}} ${8 * 3600 + 51}`,
+    `veeam_job_last_session_result{${at}} 2`,
+    `veeam_job_last_session_message{${at},message="db-01 — Failed to open VDDK disk \\"[ds01] db-01.vmdk\\""} 1`,
+    `veeam_job_last_session_read_bytes{${at}} 1000`,
+    `veeam_job_last_session_transferred_bytes{${at}} 400`,
+    `veeam_job_last_session_processed_bytes{${at}} 5000`,
+    `veeam_job_last_session_bottleneck{${at},bottleneck="Source"} 1`,
+    `veeam_job_last_session_machines{${at},result="success"} 1`,
+    `veeam_job_last_session_machines{${at},result="failed"} 1`,
+    // A machine that did well needs no reason.
+    `veeam_job_last_session_machine_result{${at},machine="app-01",reason=""} 0`,
+    `veeam_job_last_session_machine_result{${at},machine="db-01",reason="Failed to open VDDK disk"} 2`,
+    `veeam_job_session_progress_percent{${at}} 37`,
+    `veeam_job_session_running_since_timestamp_seconds{${at}} ${Math.floor((started + 86_400_000) / 1000)}`,
+  ]) {
+    assert.ok(lines.has(line), `missing: ${line}\n\n${text}`);
+  }
+});
+
+test("each job's sessions are read for the metrics only while /api/metrics is on, and beside the pass", async () => {
+  const routes = (asked) => ({
+    '/api/v1/sessions': (req) => {
+      if (req.params?.createdAfterFilter) asked.push(req.params.createdAfterFilter);
+      return {
+        data: req.params?.createdAfterFilter
+          ? [{ id: 's1', jobId: 'j1', sessionType: 'BackupJob', state: 'Stopped', creationTime: '2026-11-24T23:04:00+05:00', endTime: '2026-11-25T07:56:00+05:00', result: { result: 'Failed' } }]
+          : [],
+      };
+    },
+    '/api/v1/sessions/s1/taskSessions': { data: [{ id: 't1', name: 'db-01', result: { result: 'Failed', message: 'Error: Failed to open VDDK disk' } }] },
+  });
+  const jobs = [{ id: 'j1', name: 'OPS_Exchange', type: 'Backup', status: 'Inactive', lastResult: 'Failed' }];
+
+  const quiet = [];
+  const off = monitorWorld({}, jobs, routes(quiet));
+  await off.monitor.check();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(quiet, [], 'no read for a chart nobody draws');
+  assert.equal(off.monitor.readings()[0].sessions, undefined);
+
+  const asked = [];
+  const on = monitorWorld({ METRICS_TOKEN: 'metrics-token-for-tests-0123456789' }, jobs, routes(asked));
+  await on.monitor.check();
+  // Beside the pass, not in it: the pass is over before the machines are read.
+  for (let i = 0; i < 50 && !on.monitor.readings()[0].sessions?.get('j1')?.last?.details; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(asked.length, 1);
+  const { last } = on.monitor.readings()[0].sessions.get('j1');
+  assert.equal(last.result, 'failed');
+  assert.deepEqual(last.details.machines, [{ name: 'db-01', result: 'failed', reason: 'Failed to open VDDK disk' }]);
+
+  // The next pass, a minute on, reads no sessions again: every two minutes.
+  await on.monitor.check();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(asked.length, 1);
+});

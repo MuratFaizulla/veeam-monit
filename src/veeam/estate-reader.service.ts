@@ -17,6 +17,7 @@ import {
   VeeamRepositoryState,
   VeeamRestorePoint,
   VeeamSession,
+  VeeamTaskProgress,
   VeeamTaskSession,
 } from './types';
 
@@ -53,6 +54,8 @@ export interface MachineResult {
   reason?: string;
   /** Lower-cased: `full`, `increment`. Only from the task sessions; a log does not say. */
   algorithm?: string;
+  /** What Veeam counted processing it: sizes, duration, bottleneck. Only from the task sessions. */
+  progress?: VeeamTaskProgress;
 }
 
 /**
@@ -169,6 +172,7 @@ export class VeeamEstateReader {
           result: task.result?.result ?? '',
           reason: machineLine(task.result?.message ?? '').reason,
           ...(task.algorithm ? { algorithm: task.algorithm.toLowerCase() } : {}),
+          ...(task.progress ? { progress: task.progress } : {}),
         }));
     } catch (error) {
       if (!(error instanceof VeeamApiError) || error.upstreamStatus !== 404) throw error;

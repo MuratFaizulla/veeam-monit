@@ -19,7 +19,17 @@
   "fiscalYearStartMonth": 0,
   "liveNow": false,
   "weekStart": "monday",
-  "links": [],
+  "links": [
+    {
+      "title": "Задание",
+      "type": "link",
+      "url": "/d/veeam-job/veeam-zadanie",
+      "icon": "dashboard",
+      "targetBlank": false,
+      "tooltip": "Подробности одного задания",
+      "keepTime": true
+    }
+  ],
   "annotations": {
     "list": []
   },
@@ -437,7 +447,7 @@
       "id": 6,
       "type": "stat",
       "title": "Бэкап конфигурации",
-      "description": "На скольких серверах с бэкапом конфигурации Veeam что-то не так: не делается, упал, устарел или без шифрования. Подробно — внизу страницы.",
+      "description": "На скольких серверах с бэкапом конфигурации Veeam что-то не так: не делается, упал, устарел или без шифрования. Подробно — ниже.",
       "datasource": {
         "type": "prometheus",
         "uid": "veeam-prometheus"
@@ -455,7 +465,7 @@
             "uid": "veeam-prometheus"
           },
           "refId": "A",
-          "expr": "count(veeam_config_backup_state{server=~\"$server\",state!=\"ok\"} == 1) or vector(0)",
+          "expr": "count(veeam_config_backup_state{server=~\"$server\", state!=\"ok\"} == 1) or vector(0)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -516,8 +526,8 @@
     {
       "id": 7,
       "type": "table",
-      "title": "Задания с ошибкой или предупреждением",
-      "description": "Последний результат каждого такого задания и когда оно запускалось. Задание, которое сейчас идёт, сюда не попадает: Veeam очищает его результат до конца запуска.",
+      "title": "Задания с ошибкой или предупреждением — нажмите на задание, чтобы открыть подробности",
+      "description": "Последний результат каждого такого задания, когда оно запускалось и что Veeam сказал о последней сессии. Задание, которое сейчас идёт, сюда не попадает: Veeam очищает его результат до конца запуска.",
       "datasource": {
         "type": "prometheus",
         "uid": "veeam-prometheus"
@@ -559,7 +569,19 @@
             "uid": "veeam-prometheus"
           },
           "refId": "C",
-          "expr": "veeam_job_next_run_timestamp_seconds{server=~\"$server\"} * 1000 and on (server, job_id) (veeam_job_last_result{server=~\"$server\"} >= 1)",
+          "expr": "veeam_job_last_session_machines{server=~\"$server\", result=\"failed\"} + 0 and on (server, job_id) (veeam_job_last_result{server=~\"$server\"} >= 1)",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "refId": "D",
+          "expr": "veeam_job_last_session_message{server=~\"$server\"} and on (server, job_id) (veeam_job_last_result{server=~\"$server\"} >= 1)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true,
@@ -580,7 +602,9 @@
               "instance": true,
               "job": true,
               "job_id": true,
-              "repository_id": true
+              "repository_id": true,
+              "result": true,
+              "Value #D": true
             },
             "indexByName": {
               "server": 0,
@@ -588,7 +612,8 @@
               "job_type": 2,
               "Value #A": 3,
               "Value #B": 4,
-              "Value #C": 5
+              "Value #C": 5,
+              "message": 6
             },
             "renameByName": {
               "server": "Сервер",
@@ -596,7 +621,8 @@
               "job_type": "Тип",
               "Value #A": "Результат",
               "Value #B": "Последний запуск",
-              "Value #C": "Следующий запуск"
+              "Value #C": "Машин с ошибкой",
+              "message": "Что сказал Veeam"
             }
           }
         },
@@ -625,7 +651,7 @@
               "type": "auto"
             },
             "filterable": true,
-            "inspect": false
+            "inspect": true
           },
           "thresholds": {
             "mode": "absolute",
@@ -640,6 +666,27 @@
           "noValue": "—"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Задание"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Подробнее о задании",
+                    "url": "/d/veeam-job/veeam-zadanie?var-server=${__data.fields.server:percentencode}&var-job=${__data.fields.job_name:percentencode}&${__url_time_range}"
+                  }
+                ]
+              },
+              {
+                "id": "custom.width",
+                "value": 260
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -685,7 +732,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 160
+                "value": 150
               }
             ]
           },
@@ -701,30 +748,14 @@
               },
               {
                 "id": "custom.width",
-                "value": 190
+                "value": 175
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "Следующий запуск"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "dateTimeAsLocal"
-              },
-              {
-                "id": "custom.width",
-                "value": 190
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Сервер"
+              "options": "Машин с ошибкой"
             },
             "properties": [
               {
@@ -736,12 +767,39 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "Что сказал Veeam"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Сервер"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "Тип"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 170
+                "value": 160
               }
             ]
           }
@@ -761,6 +819,258 @@
     },
     {
       "id": 8,
+      "type": "table",
+      "title": "Идут сейчас",
+      "description": "Сессии, которые Veeam выполняет сейчас, и как далеко они продвинулись. Обновляется раз в две минуты.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "veeam-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "refId": "A",
+          "expr": "veeam_job_session_progress_percent{server=~\"$server\"} + 0",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "refId": "B",
+          "expr": "veeam_job_session_running_since_timestamp_seconds{server=~\"$server\"} * 1000",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "refId": "C",
+          "expr": "time() - veeam_job_session_running_since_timestamp_seconds{server=~\"$server\"}",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "job_id": true,
+              "repository_id": true
+            },
+            "indexByName": {
+              "server": 0,
+              "job_name": 1,
+              "job_type": 2,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5
+            },
+            "renameByName": {
+              "server": "Сервер",
+              "job_name": "Задание",
+              "job_type": "Тип",
+              "Value #A": "Прогресс",
+              "Value #B": "Начат",
+              "Value #C": "Идёт"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Идёт",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "mappings": [],
+          "noValue": "—"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Задание"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Подробнее о задании",
+                    "url": "/d/veeam-job/veeam-zadanie?var-server=${__data.fields.server:percentencode}&var-job=${__data.fields.job_name:percentencode}&${__url_time_range}"
+                  }
+                ]
+              },
+              {
+                "id": "custom.width",
+                "value": 300
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прогресс"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-BlPu"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Начат"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              },
+              {
+                "id": "custom.width",
+                "value": 175
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Идёт"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdhms"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Сервер"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Тип"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 9,
       "type": "bargauge",
       "title": "Заполненность репозиториев",
       "description": "Сколько места занято, самые полные сверху. Жёлтый — от 80 %, красный — от 90 %.",
@@ -770,7 +1080,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 13,
+        "y": 20,
         "w": 12,
         "h": 14
       },
@@ -835,7 +1145,7 @@
       }
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "table",
       "title": "Репозитории",
       "description": "Ёмкость и свободное место каждого репозитория, как их сообщает Veeam.",
@@ -845,7 +1155,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 13,
+        "y": 20,
         "w": 12,
         "h": 14
       },
@@ -940,7 +1250,7 @@
               "type": "auto"
             },
             "filterable": true,
-            "inspect": false
+            "inspect": true
           },
           "thresholds": {
             "mode": "absolute",
@@ -1054,7 +1364,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "timeseries",
       "title": "Задания с ошибкой по серверам",
       "description": "Сколько заданий на каждом сервере стояло с ошибкой в каждый момент.",
@@ -1064,7 +1374,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 34,
         "w": 12,
         "h": 8
       },
@@ -1089,79 +1399,9 @@
             "lineWidth": 2,
             "fillOpacity": 25,
             "showPoints": "never",
+            "pointSize": 6,
             "spanNulls": false,
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "axisSoftMin": 0
-          },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "value": null,
-                "color": "green"
-              }
-            ]
-          },
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
-    },
-    {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Идущие задания по серверам",
-      "description": "Сколько заданий выполнялось одновременно: видно окно бэкапа и где оно перегружено.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "veeam-prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 27,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "veeam-prometheus"
-          },
-          "refId": "A",
-          "expr": "sum by (server) (veeam_job_running{server=~\"$server\"})",
-          "legendFormat": "{{server}}",
-          "range": true,
-          "instant": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 2,
-            "fillOpacity": 25,
-            "showPoints": "never",
-            "spanNulls": false,
+            "lineInterpolation": "linear",
             "stacking": {
               "mode": "normal",
               "group": "A"
@@ -1200,6 +1440,80 @@
     {
       "id": 12,
       "type": "timeseries",
+      "title": "Идущие задания по серверам",
+      "description": "Сколько заданий выполнялось одновременно: видно окно бэкапа и где оно перегружено.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "veeam-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 34,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (server) (veeam_job_running{server=~\"$server\"})",
+          "legendFormat": "{{server}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "showPoints": "never",
+            "pointSize": 6,
+            "spanNulls": false,
+            "lineInterpolation": "linear",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
       "title": "Свободное место: 10 самых заполненных",
       "description": "Свободное место в процентах у десяти репозиториев, где его меньше всего. По наклону видно, как быстро оно уходит.",
       "datasource": {
@@ -1208,7 +1522,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 42,
         "w": 12,
         "h": 9
       },
@@ -1233,7 +1547,9 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "pointSize": 6,
             "spanNulls": false,
+            "lineInterpolation": "linear",
             "stacking": {
               "mode": "none",
               "group": "A"
@@ -1274,7 +1590,7 @@
       }
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "stat",
       "title": "Бэкап конфигурации по серверам",
       "description": "Бэкап конфигурации Veeam — то, из чего восстанавливают сам сервер Veeam. «Без шифрования»: в нём нет паролей и сертификатов. «Устарел»: последний удачный старше, чем разрешает TELEGRAM_CONFIG_BACKUP_DAYS.",
@@ -1284,7 +1600,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 35,
+        "y": 42,
         "w": 12,
         "h": 4
       },
@@ -1295,7 +1611,7 @@
             "uid": "veeam-prometheus"
           },
           "refId": "A",
-          "expr": "4 * sum by (server) (veeam_config_backup_state{server=~\"$server\",state=\"never\"}) + 3 * sum by (server) (veeam_config_backup_state{server=~\"$server\",state=\"failed\"}) + 2 * sum by (server) (veeam_config_backup_state{server=~\"$server\",state=\"stale\"}) + 1 * sum by (server) (veeam_config_backup_state{server=~\"$server\",state=\"unencrypted\"})",
+          "expr": "4 * sum by (server) (veeam_config_backup_state{server=~\"$server\", state=\"never\"}) + 3 * sum by (server) (veeam_config_backup_state{server=~\"$server\", state=\"failed\"}) + 2 * sum by (server) (veeam_config_backup_state{server=~\"$server\", state=\"stale\"}) + 1 * sum by (server) (veeam_config_backup_state{server=~\"$server\", state=\"unencrypted\"})",
           "legendFormat": "{{server}}",
           "range": false,
           "instant": true
@@ -1382,7 +1698,7 @@
       }
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "stat",
       "title": "Последний удачный бэкап конфигурации",
       "description": "Сколько времени прошло с последнего бэкапа конфигурации, который удался (или прошёл с предупреждением).",
@@ -1392,7 +1708,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 39,
+        "y": 46,
         "w": 12,
         "h": 5
       },
@@ -1456,17 +1772,17 @@
       }
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "table",
       "title": "По расписанию, но не запускались больше 7 дней",
-      "description": "Включённые задания, у которых есть следующий запуск по расписанию, но последний был больше недели назад: расписание есть, а запусков нет. Ежемесячные задания попадают сюда законно.",
+      "description": "Включённые задания, у которых есть следующий запуск по расписанию, но последний был больше недели назад. Ежемесячные задания попадают сюда законно.",
       "datasource": {
         "type": "prometheus",
         "uid": "veeam-prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 51,
         "w": 24,
         "h": 7
       },
@@ -1486,10 +1802,6 @@
       ],
       "transformations": [
         {
-          "id": "merge",
-          "options": {}
-        },
-        {
           "id": "organize",
           "options": {
             "excludeByName": {
@@ -1504,15 +1816,13 @@
               "server": 0,
               "job_name": 1,
               "job_type": 2,
-              "Value": 3,
-              "Value #A": 4
+              "Value": 3
             },
             "renameByName": {
               "server": "Сервер",
               "job_name": "Задание",
               "job_type": "Тип",
-              "Value": "Дней без запуска",
-              "Value #A": "Дней без запуска"
+              "Value": "Дней без запуска"
             }
           }
         },
@@ -1537,7 +1847,7 @@
               "type": "auto"
             },
             "filterable": true,
-            "inspect": false
+            "inspect": true
           },
           "thresholds": {
             "mode": "absolute",
@@ -1552,6 +1862,23 @@
           "noValue": "—"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Задание"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Подробнее о задании",
+                    "url": "/d/veeam-job/veeam-zadanie?var-server=${__data.fields.server:percentencode}&var-job=${__data.fields.job_name:percentencode}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -1599,6 +1926,352 @@
           "fields": ""
         }
       }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Все задания",
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 17,
+          "type": "table",
+          "title": "Все задания",
+          "description": "Каждое задание выбранных серверов. Фильтр — значок у заголовка столбца; нажмите на задание, чтобы открыть подробности.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "veeam-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 59,
+            "w": 24,
+            "h": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "A",
+              "expr": "veeam_job_last_result{server=~\"$server\"} + 0",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "B",
+              "expr": "veeam_job_last_run_timestamp_seconds{server=~\"$server\"} * 1000",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "C",
+              "expr": "veeam_job_last_session_duration_seconds{server=~\"$server\"} + 0",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "D",
+              "expr": "veeam_job_last_session_transferred_bytes{server=~\"$server\"} + 0",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "E",
+              "expr": "veeam_job_next_run_timestamp_seconds{server=~\"$server\"} * 1000",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "veeam-prometheus"
+              },
+              "refId": "F",
+              "expr": "veeam_job_objects{server=~\"$server\"} + 0",
+              "legendFormat": "__auto",
+              "range": false,
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "instance": true,
+                  "job": true,
+                  "job_id": true,
+                  "repository_id": true
+                },
+                "indexByName": {
+                  "server": 0,
+                  "job_name": 1,
+                  "job_type": 2,
+                  "Value #A": 3,
+                  "Value #B": 4,
+                  "Value #C": 5,
+                  "Value #D": 6,
+                  "Value #E": 7,
+                  "Value #F": 8
+                },
+                "renameByName": {
+                  "server": "Сервер",
+                  "job_name": "Задание",
+                  "job_type": "Тип",
+                  "Value #A": "Результат",
+                  "Value #B": "Последний запуск",
+                  "Value #C": "Длилось",
+                  "Value #D": "Передано",
+                  "Value #E": "Следующий запуск",
+                  "Value #F": "Машин"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Сервер",
+                    "desc": false
+                  },
+                  {
+                    "field": "Задание",
+                    "desc": false
+                  }
+                ]
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": true
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  }
+                ]
+              },
+              "mappings": [],
+              "noValue": "—"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Задание"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Подробнее о задании",
+                        "url": "/d/veeam-job/veeam-zadanie?var-server=${__data.fields.server:percentencode}&var-job=${__data.fields.job_name:percentencode}&${__url_time_range}"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 300
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Результат"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "2": {
+                            "text": "Ошибка",
+                            "color": "red",
+                            "index": 0
+                          },
+                          "1": {
+                            "text": "Предупреждение",
+                            "color": "orange",
+                            "index": 1
+                          },
+                          "0": {
+                            "text": "Успешно",
+                            "color": "green",
+                            "index": 2
+                          },
+                          "-1": {
+                            "text": "Нет результата",
+                            "color": "text",
+                            "index": 3
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 140
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Последний запуск"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsLocal"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 175
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Длилось"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dtdhms"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 100
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Передано"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "bytes"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 110
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Следующий запуск"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsLocal"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 175
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Машин"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 80
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "fields": ""
+            }
+          }
+        }
+      ]
     }
   ]
 }
