@@ -62,7 +62,7 @@ telegram  TelegramModule          delivery: chats, topics, routing, the state fi
 config                            settings: one declaration per variable
 ```
 
-Two folders without a module of their own sit in the layers too: `logging` (the file log) at the bottom next to `config`, and `http` (`/api/health` and the API description) at the top next to `updates`. `veeam` and `telegram` are neighbours in one layer and do not import each other.
+Two folders without a module of their own sit in the layers too: `logging` (the file log) at the bottom next to `config`, and `http` (`/api/health`, `/api/metrics` and the API description) at the top next to `updates`. `/api/metrics` asks Veeam nothing: it renders `Monitor.readings()`, what each server's latest pass read, and the Prometheus and Grafana that chart it are a Compose project of their own in `deploy/grafana/` ([grafana.md](grafana.md)). `veeam` and `telegram` are neighbours in one layer and do not import each other.
 
 `test/architecture.test.cjs` fails if an import points up or sideways, or if the application stops building.
 

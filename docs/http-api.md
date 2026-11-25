@@ -2,11 +2,12 @@
 
 [← README](../README.md) · [Documentation](README.md)
 
-The service's port is open on the server itself only (`127.0.0.1:3000`). Everything except `/api/health` and the webhook needs the admin key in the `X-Telegram-Admin-Key` header.
+The service's port is open on the server itself only (`127.0.0.1:3000`). Everything except `/api/health`, `/api/metrics` and the webhook needs the admin key in the `X-Telegram-Admin-Key` header.
 
 | Route | Access | Purpose |
 | --- | --- | --- |
 | `GET /api/health` | open | Whether the Veeam servers can be reached, without their names, addresses or errors. Always 200. |
+| `GET /api/metrics` | `METRICS_TOKEN` as a bearer token | What the latest cycle read, for Prometheus: servers, jobs, repositories, the configuration backup. 404 while `METRICS_TOKEN` is not set. See [grafana.md](grafana.md). |
 | `GET /api/telegram/status` | admin key | State of the integration, the queues and the monitor. |
 | `GET /api/telegram/chats` | admin key | Known chats and topics. |
 | `GET /api/telegram/routes` | admin key | The routing rules in effect. |

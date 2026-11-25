@@ -109,15 +109,15 @@ test('invalid operator settings fail before the monitor starts', () => {
   });
 });
 
-test('an admin key or webhook secret short enough to guess is refused, without repeating it', () => {
-  for (const key of ['TELEGRAM_ADMIN_KEY', 'TELEGRAM_WEBHOOK_SECRET']) {
+test('an admin key, webhook secret or metrics token short enough to guess is refused, without repeating it', () => {
+  for (const key of ['TELEGRAM_ADMIN_KEY', 'TELEGRAM_WEBHOOK_SECRET', 'METRICS_TOKEN']) {
     const short = 'Sh0rtKey' + key.length;
     refused({ [key]: short }, new RegExp(`${key} must be at least 32 characters`));
     assert.throws(() => readConfig({ [key]: short }), (error) => !error.message.includes(short), 'the log never sees the key');
     accepted({ [key]: 'k'.repeat(32) });
   }
   // Empty is not weak: it closes what the key guards.
-  accepted({ TELEGRAM_ADMIN_KEY: '', TELEGRAM_WEBHOOK_SECRET: '' });
+  accepted({ TELEGRAM_ADMIN_KEY: '', TELEGRAM_WEBHOOK_SECRET: '', METRICS_TOKEN: '' });
 });
 
 test('every wrong setting is named at once, not one per restart', () => {
@@ -289,6 +289,8 @@ test('with nothing set, every setting has the default it has always had', () => 
   assert.deepEqual(accepted({}), {
     port: 3000,
     docs: false,
+    // /api/metrics off.
+    metricsToken: '',
     veeam: {
       servers: [{ key: 'localhost', name: 'localhost', baseUrl: 'https://localhost:9419', legacyTls: false }],
       apiVersion: '1.2-rev1',

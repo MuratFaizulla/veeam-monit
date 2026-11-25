@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# The one data source, with the uid the dashboard names, so the dashboard
+# finds it on any server it is provisioned on.
+datasources:
+  - name: Prometheus
+    uid: veeam-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 60s
