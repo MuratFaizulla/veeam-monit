@@ -265,6 +265,25 @@ either way.
 The reading is `src/estate/config-backup.ts`; the alarm
 `src/monitor/config-backup-alarm.ts`; 🩺 says when the latest good one was made.
 
+## Last sessions
+
+Each job's newest **session** that has ended — an attempt, the last one when
+Veeam retried, not a Run — with what its machines did, and the one it is
+running now: what Grafana's job page draws, on every server. Not the Session
+history: that keeps every session of the one server shown, for its Evidence,
+and reads it whole on start and daily. This keeps one session a job.
+
+Read only while `/api/metrics` is on, every two minutes, beside the cycle and
+never in its way: the first read after a start reaches back a month, and on a
+busy server takes a minute no alert should wait for. A later read reaches back
+two days before the previous one, or to the oldest session still running when
+that is further, so a session that ran for days still ends. A session's
+machines — each one's result, Veeam's reason, and the bytes and bottleneck its
+task counted — are read once, when it becomes its job's newest ended one, a
+batch at a time.
+
+`src/estate/last-sessions.ts`; the monitor reads it, and `/api/metrics` says it.
+
 ## Repository report
 
 Every repository of every server, as one PDF `/repos` sends: how full it is,

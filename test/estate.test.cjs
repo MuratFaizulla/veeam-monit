@@ -1018,3 +1018,147 @@ test('a job\'s points are read when asked: its backup files once, the machines o
   await (await w.answers.describePoints('edge')).later();
   assert.match(w.printer.pages[1], /<div class="tl-v">—<\/div><div class="tl-s">файлы не прочитаны<\/div>/, 'the report, without sizes');
 });
+
+/* ------------------------------------------------------------------ *
+ * Last sessions: each job's newest, for /api/metrics
+ * ------------------------------------------------------------------ */
+
+const { LastSessions, DETAILS_AT_A_TIME } = require('../dist/estate/last-sessions');
+const { VeeamEstateReader } = require('./world.cjs');
+const { VeeamApiError } = require('../dist/veeam/api.error');
+
+const READ_AT = Date.parse('2026-11-25T12:00:00+05:00');
+const ago = (hours) => new Date(READ_AT - hours * 3_600_000).toISOString();
+
+/** A reader over `routes`, recording what each read of the sessions asked for. */
+const sessionsReader = (routes) => {
+  const asked = [];
+  const veeam = veeamFake({
+    ...routes,
+    '/api/v1/sessions': (req) => {
+      asked.push(req.params);
+      return { data: typeof routes['/api/v1/sessions'] === 'function' ? routes['/api/v1/sessions'](req) : routes['/api/v1/sessions'] };
+    },
+  });
+  return { reader: new VeeamEstateReader(veeam, monitorAccount()), asked };
+};
+
+const session = (id, jobId, startedHoursAgo, endedHoursAgo, result, extra = {}) => ({
+  id, jobId, name: `job ${jobId}`, sessionType: 'BackupJob',
+  creationTime: ago(startedHoursAgo),
+  ...(endedHoursAgo === undefined ? { state: 'Working', progressPercent: 40 } : { state: 'Stopped', endTime: ago(endedHoursAgo), result: { result } }),
+  ...extra,
+});
+
+test("each job's newest ended session is kept with what its machines did, beside the one running", async () => {
+  const { reader, asked } = sessionsReader({
+    '/api/v1/sessions': [
+      session('s3', 'j1', 1, undefined),
+      session('s2', 'j1', 25, 24, 'Success'),
+      session('s1', 'j1', 49, 48, 'Failed'),
+      session('s4', 'j2', 10, 9, 'Warning', {
+        result: {
+          result: 'Warning',
+          message: 'Processing db-01 Error: Failed to open VDDK disk [ds01] db-01/db-01.vmdk\nLogon attempt with parameters [VC/ESX: [vc01];Login: [svc@example.com]]\nAgent failed to process method {DataTransfer.SyncDisk}.',
+        },
+      }),
+      // Neither is a job's: the configuration backup, and a session no job owns.
+      { id: 'c1', jobId: 'cfg', sessionType: 'ConfigurationBackup', creationTime: ago(3), endTime: ago(3), state: 'Stopped', result: { result: 'Failed' } },
+      { id: 'm1', sessionType: 'MalwareDetection', creationTime: ago(2), endTime: ago(2), state: 'Stopped', result: { result: 'Success' } },
+    ],
+    '/api/v1/sessions/s2/taskSessions': {
+      data: [
+        { id: 't1', name: 'app-01', result: { result: 'Success' }, progress: { readSize: 100, transferredSize: 40, processedSize: 500, bottleneck: 'Target' } },
+        { id: 't2', name: 'app-02', result: { result: 'Success' }, progress: { readSize: 50, transferredSize: 10, processedSize: 300, bottleneck: 'Target' } },
+        { id: 't3', name: 'app-03', result: { result: 'Success' }, progress: { readSize: 0, transferredSize: 0, processedSize: 100, bottleneck: 'Source' } },
+      ],
+    },
+    '/api/v1/sessions/s4/taskSessions': { data: [{ id: 't4', name: 'db-01', result: { result: 'Warning', message: 'Error: Failed to open VDDK disk' } }] },
+  });
+  const last = new LastSessions(reader, 'Asia/Qyzylorda');
+
+  await last.refresh(READ_AT);
+  // The first read reaches back a month, which a monthly job still reaches.
+  assert.equal(asked[0].createdAfterFilter, new Date(READ_AT - 32 * 86_400_000).toISOString());
+  assert.deepEqual([...last.jobs.keys()].sort(), ['j1', 'j2']);
+  const j1 = last.jobs.get('j1');
+  assert.equal(j1.last.id, 's2');
+  assert.equal(j1.last.result, 'success');
+  assert.equal(j1.last.endedAt - j1.last.startedAt, 3_600_000);
+  assert.deepEqual(j1.running, { id: 's3', startedAt: READ_AT - 3_600_000, progressPercent: 40 });
+  // Veeam's message in one line worth reading: the machine and why, two lines of it as every reason
+  // the bot gives, and the one naming the account it logged on with left out.
+  const message = last.jobs.get('j2').last.message;
+  assert.equal(message, 'db-01 — Failed to open VDDK disk [ds01] db-01/db-01.vmdk / Agent failed to process method {DataTransfer.SyncDisk}.');
+  assert.doesNotMatch(message, /svc@example\.com|Logon/);
+  assert.ok(last.pending);
+
+  await last.readDetails();
+  assert.deepEqual(j1.last.details, {
+    machines: [
+      { name: 'app-01', result: 'success' },
+      { name: 'app-02', result: 'success' },
+      { name: 'app-03', result: 'success' },
+    ],
+    read: 150,
+    transferred: 50,
+    processed: 900,
+    bottleneck: 'Target',
+  });
+  // Without progress there are no sizes to add up, rather than sizes of nought.
+  assert.deepEqual(last.jobs.get('j2').last.details, { machines: [{ name: 'db-01', result: 'warning', reason: 'Failed to open VDDK disk' }] });
+  assert.equal(last.pending, false);
+});
+
+test('a later read reaches back to the oldest session still running, and a session no longer running has ended', async () => {
+  let listed = [session('s3', 'j1', 5 * 24, undefined), session('s2', 'j1', 6 * 24, 6 * 24 - 1, 'Success')];
+  const { reader, asked } = sessionsReader({
+    '/api/v1/sessions': () => listed,
+    '/api/v1/sessions/s2/taskSessions': { data: [] },
+  });
+  const last = new LastSessions(reader, 'Asia/Qyzylorda');
+  await last.refresh(READ_AT);
+  await last.readDetails();
+
+  // Five days running: further back than the two days of overlap.
+  listed = [session('s3', 'j1', 5 * 24, 0.1, 'Failed', { result: { result: 'Failed', message: 'Error: VDDK operation timed out' } })];
+  await last.refresh(READ_AT + 120_000);
+  assert.equal(asked[1].createdAfterFilter, new Date(READ_AT - 5 * 86_400_000).toISOString());
+  const j1 = last.jobs.get('j1');
+  assert.equal(j1.running, undefined);
+  assert.equal(j1.last.id, 's3');
+  assert.equal(j1.last.message, 'VDDK operation timed out');
+  assert.ok(last.pending, 'the new newest session has its machines read in turn');
+
+  // Nothing running any more: two days before the previous read.
+  await last.refresh(READ_AT + 240_000);
+  assert.equal(asked[2].createdAfterFilter, new Date(READ_AT + 120_000 - 2 * 86_400_000).toISOString());
+});
+
+test("a session whose machines cannot be read goes without them after three tries, and the rest wait their turn", async () => {
+  const many = Array.from({ length: DETAILS_AT_A_TIME + 5 }, (_, index) => session(`s${index}`, `j${index}`, 10 + index, 9 + index, 'Success'));
+  let refused = 0;
+  const routes = { '/api/v1/sessions': many };
+  for (const { id } of many) {
+    routes[`/api/v1/sessions/${id}/taskSessions`] = () => {
+      if (id === 's0') {
+        refused += 1;
+        throw new VeeamApiError('Veeam API responded with HTTP 500', 500);
+      }
+      return { data: [] };
+    };
+  }
+  const { reader } = sessionsReader(routes);
+  const last = new LastSessions(reader, 'Asia/Qyzylorda');
+  await last.refresh(READ_AT);
+
+  await last.readDetails();
+  const read = () => [...last.jobs.values()].filter(({ last: newest }) => newest.details).length;
+  // The newest first, a batch at a time; s0, the newest, refused.
+  assert.equal(read(), DETAILS_AT_A_TIME - 1);
+  await last.readDetails();
+  await last.readDetails();
+  assert.equal(refused, 3);
+  assert.deepEqual(last.jobs.get('j0').last.details, { machines: [] });
+  assert.equal(last.pending, false);
+});

@@ -1,4 +1,5 @@
 import { ConfigBackup } from '../estate/config-backup';
+import { JobSessions } from '../estate/last-sessions';
 import { RepositoryCapacity } from '../estate/repository-capacity';
 import { Job } from '../veeam/estate';
 import { DeliveryOutcome } from '../telegram/telegram.service';
@@ -53,6 +54,12 @@ export interface ServerReading extends Pick<ServerStatus, 'key' | 'name' | 'reac
   jobs?: Job[];
   /** Its repositories, when the latest pass read them. */
   repositories?: RepositoryCapacity[];
+  /**
+   * Each job's newest ended session and the one running now, by job id: read
+   * beside the passes, every two minutes, and only while /api/metrics is on.
+   * Absent until first read.
+   */
+  sessions?: ReadonlyMap<string, JobSessions>;
 }
 
 /** What selecting a server came to. */
